@@ -15,8 +15,26 @@ fi
 INSTALL_DIR="/opt/agentpanel"
 GITHUB_REPO="https://github.com/magnusfroste/agentpanel.git"
 
-read -p "Enter your panel domain (e.g., panel.example.com): " PANEL_DOMAIN
-read -p "Enter admin password: " ADMIN_PASSWORD
+# Support command-line arguments, environment variables, or interactive input
+if [ -n "$1" ] && [ -n "$2" ]; then
+  PANEL_DOMAIN="$1"
+  ADMIN_PASSWORD="$2"
+elif [ -z "$PANEL_DOMAIN" ] || [ -z "$ADMIN_PASSWORD" ]; then
+  # Try interactive input if stdin is a terminal
+  if [ -t 0 ]; then
+    read -p "Enter your panel domain (e.g., panel.example.com): " PANEL_DOMAIN
+    read -sp "Enter admin password: " ADMIN_PASSWORD
+    echo ""
+  else
+    echo "Error: Domain and password are required"
+    echo ""
+    echo "Usage:"
+    echo "  Interactive:  curl -sSL https://raw.githubusercontent.com/magnusfroste/agentpanel/main/install.sh | bash"
+    echo "  With args:    bash install.sh panel.example.com mypassword"
+    echo "  With env:     PANEL_DOMAIN=panel.example.com ADMIN_PASSWORD=mypassword bash install.sh"
+    exit 1
+  fi
+fi
 
 if [ -z "$PANEL_DOMAIN" ] || [ -z "$ADMIN_PASSWORD" ]; then
   echo "Error: Domain and password are required"
