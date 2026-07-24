@@ -1,0 +1,21 @@
+{
+  "mcp": {
+    "agentpanel": {
+      "type": "local",
+      "command": [
+        "node",
+        "server.js"
+      ],
+      "workdir": "./backend/mcp",
+      "environment": {
+        "AGENTPANEL_URL": "http://localhost",
+        "AGENTPANEL_TOKEN": "324b85156e8b553d6f6bdd52d452a40998cba8e27c83cb6149db12c7f4da336c"
+      },
+      "enabled": true
+    }
+  },
+  "permission": {
+    "agentpanel_*": "allow"
+  },
+  "snapshot": false
+}

@@ -458,7 +458,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     const container = docker.getContainer(`agentpanel-${req.params.id}`);
     try { await container.stop(); await container.remove(); } catch (e) {}
 
-    if (agent.domain && agent.domain !== updatedDomain) {
+    if (agent.domain) {
       await removeCaddyRoute(agent.domain);
     }
 
@@ -483,6 +483,10 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
 
     const container = docker.getContainer(`agentpanel-${req.params.id}`);
     try { await container.stop(); await container.remove(); } catch (e) {}
+
+    if (agent.domain) {
+      await removeCaddyRoute(agent.domain);
+    }
 
     await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
 
