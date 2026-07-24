@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { authFetch } from '../lib/auth'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -11,7 +12,7 @@ function Dashboard() {
 
   async function fetchAgents() {
     try {
-      const res = await fetch('/api/agents')
+      const res = await authFetch('/api/agents')
       const data = await res.json()
       setAgents(data)
     } catch (err) {
@@ -25,7 +26,7 @@ function Dashboard() {
     if (!confirm(`Are you sure you want to delete ${name}?`)) return
     
     try {
-      await fetch(`/api/agents/${id}`, { method: 'DELETE' })
+      await authFetch(`/api/agents/${id}`, { method: 'DELETE' })
       fetchAgents()
     } catch (err) {
       console.error('Failed to delete agent:', err)

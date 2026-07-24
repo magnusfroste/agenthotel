@@ -9,8 +9,6 @@ services:
       - PORT=8080
       - DB_PATH=/data/agentpanel.db
       - CADDY_API_URL=http://caddy:2019
-      - PANEL_DOMAIN=${PANEL_DOMAIN}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agentpanel-data:/data
@@ -29,8 +27,6 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-    environment:
-      - PANEL_DOMAIN=${PANEL_DOMAIN}
     volumes:
       - ./docker/caddy.json:/etc/caddy/caddy.json:ro
       - caddy-data:/data

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { authFetch, getToken } from '../lib/auth'
 
 function AgentDetail() {
   const { id } = useParams()
@@ -20,7 +21,7 @@ function AgentDetail() {
 
   async function fetchAgent() {
     try {
-      const res = await fetch(`/api/agents/${id}`)
+      const res = await authFetch(`/api/agents/${id}`)
       const data = await res.json()
       setAgent(data)
     } catch (err) {
@@ -30,7 +31,7 @@ function AgentDetail() {
 
   async function fetchLogs() {
     try {
-      const res = await fetch(`/api/agents/${id}/logs?tail=100`)
+      const res = await authFetch(`/api/agents/${id}/logs?tail=100`)
       const text = await res.text()
       setLogs(text)
     } catch (err) {
@@ -42,7 +43,7 @@ function AgentDetail() {
     if (!confirm('Redeploy this agent?')) return
     
     try {
-      await fetch(`/api/agents/${id}/redeploy`, { method: 'POST' })
+      await authFetch(`/api/agents/${id}/redeploy`, { method: 'POST' })
       fetchAgent()
       fetchLogs()
     } catch (err) {
@@ -54,7 +55,7 @@ function AgentDetail() {
     if (!confirm('Delete this agent? This cannot be undone.')) return
     
     try {
-      await fetch(`/api/agents/${id}`, { method: 'DELETE' })
+      await authFetch(`/api/agents/${id}`, { method: 'DELETE' })
       navigate('/')
     } catch (err) {
       console.error('Failed to delete:', err)
@@ -87,8 +88,9 @@ function AgentDetail() {
     term.open(terminalRef.current)
     fitAddon.fit()
 
+    const token = getToken()
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/agents/${id}/terminal`)
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/agents/${id}/terminal?token=${token}`)
 
     ws.onopen = () => {
       term.writeln('Connected to agent terminal\r\n')

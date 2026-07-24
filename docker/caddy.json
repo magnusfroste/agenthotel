@@ -9,7 +9,6 @@
           "listen": [":80", ":443"],
           "routes": [
             {
-              "match": [{ "host": ["{$PANEL_DOMAIN}"] }],
               "handle": [{
                 "handler": "subroute",
                 "routes": [
@@ -32,6 +31,11 @@
           ],
           "automatic_https": {}
         }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": []
       }
     }
   }

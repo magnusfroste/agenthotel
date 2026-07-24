@@ -41,30 +41,6 @@ command_exists() {
 INSTALL_DIR="/opt/agentpanel"
 GITHUB_REPO="https://github.com/magnusfroste/agentpanel.git"
 
-if [ -n "$1" ] && [ -n "$2" ]; then
-  PANEL_DOMAIN="$1"
-  ADMIN_PASSWORD="$2"
-elif [ -z "$PANEL_DOMAIN" ] || [ -z "$ADMIN_PASSWORD" ]; then
-  if [ -t 0 ]; then
-    read -p "Enter your panel domain (e.g., panel.example.com): " PANEL_DOMAIN
-    read -sp "Enter admin password: " ADMIN_PASSWORD
-    echo ""
-  else
-    echo "Error: Domain and password are required"
-    echo ""
-    echo "Usage:"
-    echo "  Interactive:  curl -sSL https://raw.githubusercontent.com/magnusfroste/agentpanel/main/install.sh | bash"
-    echo "  With args:    bash install.sh panel.example.com mypassword"
-    echo "  With env:     PANEL_DOMAIN=panel.example.com ADMIN_PASSWORD=mypassword bash install.sh"
-    exit 1
-  fi
-fi
-
-if [ -z "$PANEL_DOMAIN" ] || [ -z "$ADMIN_PASSWORD" ]; then
-  echo "Error: Domain and password are required"
-  exit 1
-fi
-
 echo ""
 echo "Installing Docker..."
 if command_exists docker; then
@@ -126,15 +102,6 @@ fi
 cd "$INSTALL_DIR"
 
 echo ""
-echo "Creating .env file..."
-cat > .env << EOF
-PANEL_DOMAIN=$PANEL_DOMAIN
-ADMIN_PASSWORD=$ADMIN_PASSWORD
-EOF
-
-echo "✓ .env created"
-
-echo ""
 echo "Building and starting AgentPanel..."
 docker compose build
 docker compose up -d
@@ -150,12 +117,12 @@ echo "╔═══════════════════════�
 echo "║     Installation Complete!             ║"
 echo "╠════════════════════════════════════════╣"
 echo "║                                        ║"
-echo "║  Panel: https://$PANEL_DOMAIN         ║"
-echo "║  User: admin                           ║"
-echo "║  Password: (your admin password)       ║"
+echo "║  Open in browser:                      ║"
+echo "║  http://$SERVER_IP                     ║"
 echo "║                                        ║"
-echo "║  Make sure DNS points $PANEL_DOMAIN   ║"
-echo "║  to this server's IP ($SERVER_IP).     ║"
+echo "║  Create your admin account on first    ║"
+echo "║  visit. You can configure a domain     ║"
+echo "║  later in Settings.                    ║"
 echo "║                                        ║"
 echo "╚════════════════════════════════════════╝"
 echo ""

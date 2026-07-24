@@ -4,7 +4,7 @@ module.exports = {
   defaultImage: 'ghcr.io/openclaw/openclaw:latest',
   defaultPort: 18789,
   configFields: [
-    { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: true },
+    { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
     { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-4.1' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
@@ -15,11 +15,13 @@ module.exports = {
   ],
 
   buildConfig({ name, domain, image, port, config }) {
-    return { ...config, domain };
+    const crypto = require('crypto');
+    const autoToken = config.OPENCLAW_GATEWAY_TOKEN || crypto.randomBytes(32).toString('hex');
+    return { ...config, domain, OPENCLAW_GATEWAY_TOKEN: autoToken };
   },
 
   buildEnv(config) {
-    const env = [];
+    const env = ['OPENCLAW_GATEWAY_MODE=local'];
     const keys = [
       'OPENCLAW_GATEWAY_TOKEN', 'OPENCLAW_MODEL_PRIMARY',
       'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',

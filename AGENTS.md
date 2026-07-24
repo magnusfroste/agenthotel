@@ -36,7 +36,25 @@ Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-a
 
 ## Install Script
 
-`install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). Supports interactive, argument, or environment variable input.
+`install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). **No parameters required** - just run as root.
+
+## Authentication & Setup Flow
+
+Following Easypanel's pattern, the panel uses a web-based setup flow:
+
+1. **First visit via IP** - User accesses `http://server-ip`
+2. **Setup page** - Creates admin account (email + password, min 8 chars)
+3. **Login** - Subsequent visits require authentication
+4. **Token-based auth** - JWT-like tokens stored in localStorage, sent via `Authorization: Bearer <token>` header or `?token=` query param for WebSocket
+
+Backend stores in SQLite `settings` table:
+- `admin_email`, `admin_password_hash`, `admin_password_salt`, `auth_token`
+
+Endpoints:
+- `GET /api/setup` - Returns `{configured: boolean}`
+- `POST /api/setup` - Creates admin account, returns token
+- `POST /api/login` - Validates credentials, returns token
+- All `/api/agents/*` routes require auth via `requireAuth` middleware
 
 ## Local Development
 

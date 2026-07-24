@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { authFetch } from '../lib/auth'
 
 function CreateAgent() {
   const navigate = useNavigate()
@@ -21,7 +22,7 @@ function CreateAgent() {
 
   async function fetchRuntimes() {
     try {
-      const res = await fetch('/api/runtimes')
+      const res = await authFetch('/api/runtimes')
       const data = await res.json()
       setRuntimes(data)
       if (data.length > 0) {
@@ -61,7 +62,7 @@ function CreateAgent() {
         config: formData.config
       }
 
-      const res = await fetch('/api/agents', {
+      const res = await authFetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
