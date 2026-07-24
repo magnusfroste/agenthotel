@@ -1,0 +1,58 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agentpanel-backend
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - DB_PATH=/data/agentpanel.db
+      - CADDY_API_URL=http://caddy:2019
+      - PANEL_DOMAIN=${PANEL_DOMAIN}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agentpanel-data:/data
+      - ./templates:/templates
+    depends_on:
+      - caddy
+    networks:
+      - agentpanel
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: agentpanel-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - PANEL_DOMAIN=${PANEL_DOMAIN}
+    volumes:
+      - ./docker/caddy.json:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - agentpanel
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: agentpanel-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - agentpanel
+
+volumes:
+  agentpanel-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  agentpanel:
+    driver: bridge
