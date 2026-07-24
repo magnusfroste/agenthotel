@@ -18,7 +18,7 @@ Frontend Dockerfile: `npm install` then `npm run build`
 
 ## Caddy Configuration
 
-Caddy uses JSON config (`docker/caddy.json`), loaded via `caddy run --config /etc/caddy/caddy.json`. The `caddy:2-alpine` image does not include the `letsencrypt` TLS module - rely on `automatic_https: {}` instead of explicit TLS policies.
+Caddy uses JSON config (`docker/caddy.json`), loaded via `caddy run --config /etc/caddy/caddy.json`. Uses `caddy:2` (full image, not alpine) because the alpine variant lacks the `letsencrypt` TLS module required for automatic HTTPS.
 
 Backend dynamically adds/removes agent routes via Caddy admin API:
 - Add: `POST http://caddy:2019/config/apps/http/servers/srv0/routes` with `@id: "agent-${domain}"`

@@ -21,7 +21,7 @@ services:
       - agentpanel
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2
     container_name: agentpanel-caddy
     restart: unless-stopped
     command: caddy run --config /etc/caddy/caddy.json
