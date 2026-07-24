@@ -1,0 +1,8 @@
+{
+    admin 0.0.0.0:2019
+}
+
+{$PANEL_DOMAIN} {
+    reverse_proxy /api/* backend:8080
+    reverse_proxy frontend:80
+}

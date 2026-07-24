@@ -1,38 +1,37 @@
 {
   "admin": {
-    "disabled": false,
     "listen": "0.0.0.0:2019"
   },
   "apps": {
     "http": {
       "servers": {
-        "panel": {
+        "srv0": {
           "listen": [":80", ":443"],
           "routes": [
             {
               "match": [{ "host": ["{$PANEL_DOMAIN}"] }],
               "handle": [{
-                "handler": "reverse_proxy",
-                "upstreams": [{ "dial": "backend:8080" }]
+                "handler": "subroute",
+                "routes": [
+                  {
+                    "match": [{ "path": ["/api/*"] }],
+                    "handle": [{
+                      "handler": "reverse_proxy",
+                      "upstreams": [{ "dial": "backend:8080" }]
+                    }]
+                  },
+                  {
+                    "handle": [{
+                      "handler": "reverse_proxy",
+                      "upstreams": [{ "dial": "frontend:80" }]
+                    }]
+                  }
+                ]
               }]
             }
           ],
           "automatic_https": {}
-        },
-        "agents": {
-          "@id": "agentpanel-routes",
-          "listen": [":443"],
-          "routes": [],
-          "automatic_https": {}
         }
-      }
-    },
-    "tls": {
-      "automation": {
-        "policies": [
-          { "subjects": ["{$PANEL_DOMAIN}"], "issuers": [{ "module": "letsencrypt" }] },
-          { "issuers": [{ "module": "letsencrypt" }] }
-        ]
       }
     }
   }

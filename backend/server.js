@@ -126,8 +126,8 @@ async function addCaddyRoute(domain, containerName, port) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
 
-  const reverseProxy = {
-    '@id': `agentpanel-${domain}`,
+  const route = {
+    '@id': `agent-${domain}`,
     match: [{ host: [domain] }],
     handle: [{
       handler: 'reverse_proxy',
@@ -135,13 +135,16 @@ async function addCaddyRoute(domain, containerName, port) {
     }]
   };
 
-  await fetch(`${caddyApiUrl}/id/agentpanel-routes/routes`, {
+  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reverseProxy)
+    body: JSON.stringify(route)
   });
 
-  await fetch(`${caddyApiUrl}/load`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to add Caddy route: ${err}`);
+  }
 }
 
 app.delete('/api/agents/:id', async (req, res) => {
@@ -169,8 +172,7 @@ app.delete('/api/agents/:id', async (req, res) => {
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
-  await fetch(`${caddyApiUrl}/id/agentpanel-${domain}`, { method: 'DELETE' });
-  await fetch(`${caddyApiUrl}/load`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  await fetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' });
 }
 
 app.post('/api/agents/:id/redeploy', async (req, res) => {

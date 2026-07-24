@@ -13,3 +13,5 @@ RUN mkdir -p /data /config
 VOLUME ["/data", "/config"]
 
 EXPOSE 18789
+
+CMD ["openclaw"]

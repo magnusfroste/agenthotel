@@ -24,6 +24,7 @@ services:
     image: caddy:2-alpine
     container_name: agentpanel-caddy
     restart: unless-stopped
+    command: caddy run --config /etc/caddy/caddy.json
     ports:
       - "80:80"
       - "443:443"
@@ -31,7 +32,7 @@ services:
     environment:
       - PANEL_DOMAIN=${PANEL_DOMAIN}
     volumes:
-      - ./docker/caddy.json:/etc/caddy/Caddyfile:ro
+      - ./docker/caddy.json:/etc/caddy/caddy.json:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
