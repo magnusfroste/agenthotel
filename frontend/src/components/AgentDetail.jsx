@@ -124,9 +124,41 @@ function AgentDetail() {
     }
   }, [])
 
+  function getCredentials(agent) {
+    const config = agent.config || {}
+    const creds = []
+
+    if (agent.runtime === 'openclaw') {
+      if (config.OPENCLAW_GATEWAY_TOKEN) {
+        creds.push({ label: 'Gateway Token', value: config.OPENCLAW_GATEWAY_TOKEN, sensitive: true })
+      }
+    } else if (agent.runtime === 'hermes') {
+      creds.push({ label: 'Dashboard Username', value: 'admin', sensitive: false })
+      creds.push({ label: 'Dashboard Password', value: config.HERMES_DASHBOARD_PASSWORD || 'agentpanel', sensitive: true })
+    }
+
+    if (config.OPENAI_API_KEY) {
+      creds.push({ label: 'OpenAI API Key', value: config.OPENAI_API_KEY, sensitive: true })
+    }
+    if (config.ANTHROPIC_API_KEY) {
+      creds.push({ label: 'Anthropic API Key', value: config.ANTHROPIC_API_KEY, sensitive: true })
+    }
+    if (config.OPENROUTER_API_KEY) {
+      creds.push({ label: 'OpenRouter API Key', value: config.OPENROUTER_API_KEY, sensitive: true })
+    }
+
+    return creds
+  }
+
+  function copyToClipboard(text) {
+    navigator.clipboard.writeText(text)
+  }
+
   if (!agent) {
     return <div className="loading">Loading agent details...</div>
   }
+
+  const credentials = getCredentials(agent)
 
   return (
     <div>
@@ -150,6 +182,46 @@ function AgentDetail() {
             </button>
           </div>
         </div>
+
+        {credentials.length > 0 && (
+          <div style={{
+            background: 'var(--bg-secondary, #1e293b)',
+            borderRadius: '0.5rem',
+            padding: '1rem',
+            marginBottom: '1.5rem'
+          }}>
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>🔑 Credentials</h3>
+            {credentials.map((cred, i) => (
+              <div key={i} style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '0.5rem 0',
+                borderBottom: i < credentials.length - 1 ? '1px solid var(--border, #334155)' : 'none'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>{cred.label}</div>
+                  <div style={{
+                    fontFamily: 'monospace',
+                    fontSize: '0.875rem',
+                    marginTop: '0.25rem',
+                    wordBreak: 'break-all'
+                  }}>
+                    {cred.sensitive ? '••••••••' + cred.value.slice(-8) : cred.value}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}
+                  onClick={() => copyToClipboard(cred.value)}
+                  title="Copy to clipboard"
+                >
+                  📋 Copy
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="agent-detail-info">
           <div className="info-item">
