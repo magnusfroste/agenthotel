@@ -418,6 +418,10 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     }
   };
 
+  if (runtime === 'hermes') {
+    containerConfig.Cmd = ['gateway', 'run'];
+  }
+
   if (domain) {
     containerConfig.Labels['agentpanel.domain'] = domain;
   }

@@ -19,7 +19,11 @@ module.exports = {
   },
 
   buildEnv(config) {
-    const env = ['HERMES_DASHBOARD=1', 'HERMES_DASHBOARD_INSECURE=1'];
+    const env = [
+      'HERMES_DASHBOARD=1',
+      'HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin',
+      `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${config.HERMES_DASHBOARD_PASSWORD || 'agentpanel'}`
+    ];
     const keys = [
       'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL',
       'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY',
