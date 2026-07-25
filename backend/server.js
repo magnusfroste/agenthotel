@@ -497,13 +497,22 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   if (runtime !== 'docker-app') {
     const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
     if (fs.existsSync(dockerfilePath)) {
-      const buildContext = path.join('/templates', runtime);
-      const tarStream = tar.pack(buildContext);
-      const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
-      await new Promise((resolve, reject) => {
-        docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
-      });
-      imageToRun = baseImage;
+      // Check if image already exists
+      try {
+        await docker.getImage(baseImage).inspect();
+        console.log(`Using existing image: ${baseImage}`);
+        imageToRun = baseImage;
+      } catch (e) {
+        // Image doesn't exist, build it
+        console.log(`Building image: ${baseImage}`);
+        const buildContext = path.join('/templates', runtime);
+        const tarStream = tar.pack(buildContext);
+        const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
+        await new Promise((resolve, reject) => {
+          docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
+        });
+        imageToRun = baseImage;
+      }
     }
     
     if (fs.existsSync(dockerfilePath)) {
