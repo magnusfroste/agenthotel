@@ -8,7 +8,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const tar = require('tar-fs');
-const pty = require('node-pty');
 
 const app = express();
 expressWs(app);
@@ -907,69 +906,6 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
       ws.close();
     }
   })();
-});
-
-// Host terminal with node-pty (real PTY support)
-app.ws('/api/system/host-terminal', (ws, req) => {
-  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
-  
-  if (!token || !storedToken || token !== storedToken.value) {
-    ws.send('Authentication failed\r\n');
-    ws.close();
-    return;
-  }
-  
-  console.log('[Host Terminal] WebSocket connection established');
-  
-  const shell = process.env.SHELL || '/bin/bash';
-  const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-256color',
-    cols: 120,
-    rows: 30,
-    cwd: process.env.HOME || '/root',
-    env: process.env
-  });
-  
-  ptyProcess.onData((data) => {
-    try {
-      ws.send(data);
-    } catch (err) {
-      console.error('[Host Terminal] WebSocket send error:', err.message);
-    }
-  });
-  
-  ptyProcess.onExit(({ exitCode, signal }) => {
-    console.log('[Host Terminal] Process exited:', exitCode, signal);
-    ws.close();
-  });
-  
-  ws.on('message', (msg) => {
-    const message = msg.toString();
-    
-    // Handle resize messages
-    if (message.startsWith('{"cols"')) {
-      try {
-        const { cols, rows } = JSON.parse(message);
-        ptyProcess.resize(cols, rows);
-        console.log('[Host Terminal] Resized to', cols, 'x', rows);
-      } catch (err) {
-        console.error('[Host Terminal] Resize error:', err.message);
-      }
-    } else {
-      ptyProcess.write(message);
-    }
-  });
-  
-  ws.on('close', () => {
-    console.log('[Host Terminal] WebSocket closed, killing process');
-    ptyProcess.kill();
-  });
-  
-  ws.on('error', (err) => {
-    console.error('[Host Terminal] WebSocket error:', err.message);
-    ptyProcess.kill();
-  });
 });
 
 app.get('/api/runtimes', requireAuth, (req, res) => {
