@@ -13,7 +13,7 @@ module.exports = {
   configFields: [
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'Custom Base URL', type: 'text', required: false },
-    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'gpt-4o' },
+    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4' },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
     { key: 'GEMINI_API_KEY', label: 'Gemini Key', type: 'password', required: false },

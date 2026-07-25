@@ -73,14 +73,30 @@ const essentials = {
   browser: { noSandbox: true }
 };
 
+const PROVIDER_MAP = {
+  openai:     { baseUrl: 'https://api.openai.com/v1',                               api: 'openai-completions',    keyEnv: 'OPENAI_API_KEY' },
+  anthropic:  { baseUrl: 'https://api.anthropic.com',                                api: 'anthropic-messages',    keyEnv: 'ANTHROPIC_API_KEY' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1',                             api: 'openai-completions',    keyEnv: 'OPENROUTER_API_KEY' },
+  gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',  api: 'openai-completions',    keyEnv: 'GEMINI_API_KEY' },
+};
+
 const providers = {};
-if (e.OPENAI_API_KEY) providers.openai = { apiKey: e.OPENAI_API_KEY };
-if (e.ANTHROPIC_API_KEY) providers.anthropic = { apiKey: e.ANTHROPIC_API_KEY };
-if (e.OPENROUTER_API_KEY) providers.openrouter = { apiKey: e.OPENROUTER_API_KEY };
+const primary = (e.OPENCLAW_MODEL_PRIMARY || '').trim();
+
+for (const [name, conf] of Object.entries(PROVIDER_MAP)) {
+  const key = e[conf.keyEnv];
+  if (key) {
+    const providerEntry = { baseUrl: conf.baseUrl, apiKey: key, api: conf.api };
+    if (primary.startsWith(name + '/')) {
+      const modelId = primary.slice(name.length + 1);
+      providerEntry.models = [{ id: modelId, name: modelId }];
+    }
+    providers[name] = providerEntry;
+  }
+}
 
 if (Object.keys(providers).length) essentials.models = { providers };
 
-const primary = (e.OPENCLAW_MODEL_PRIMARY || '').trim();
 const fallbacks = (e.OPENCLAW_MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean);
 if (primary) {
   const model = { primary };
