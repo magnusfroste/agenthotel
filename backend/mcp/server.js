@@ -207,6 +207,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      {
+        name: 'get_system_stats',
+        description: 'Get system resource usage (CPU, memory, disk)',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
     ],
   };
 });
@@ -281,6 +289,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'docker_prune':
         result = await apiRequest('/api/docker/prune', 'POST');
+        break;
+
+      case 'get_system_stats':
+        result = await apiRequest('/api/system/stats');
         break;
 
       default:

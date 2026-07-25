@@ -192,6 +192,47 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
   }
 });
 
+function readProcStat() {
+  const line = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0];
+  const vals = line.trim().split(/\s+/).slice(1).map(Number);
+  const idle = vals[3] + (vals[4] || 0);
+  const total = vals.reduce((a, b) => a + b, 0);
+  return { idle, total };
+}
+
+app.get('/api/system/stats', requireAuth, async (req, res) => {
+  try {
+    const t1 = readProcStat();
+    await new Promise(r => setTimeout(r, 300));
+    const t2 = readProcStat();
+    const idleDelta = t2.idle - t1.idle;
+    const totalDelta = t2.total - t1.total;
+    const cpuPct = totalDelta > 0 ? Math.round((1 - idleDelta / totalDelta) * 1000) / 10 : 0;
+
+    const memData = fs.readFileSync('/proc/meminfo', 'utf8');
+    const getKB = key => parseInt(memData.match(new RegExp(key + ':\\s+(\\d+)'))?.[1] || 0) * 1024;
+    const memTotal = getKB('MemTotal');
+    const memUsed = memTotal - getKB('MemAvailable');
+
+    let diskUsed = 0, diskTotal = 1;
+    try {
+      const { execSync } = require('child_process');
+      const dfLine = execSync('df -B1 / 2>/dev/null | tail -1').toString().trim().split(/\s+/);
+      diskTotal = parseInt(dfLine[1]) || 1;
+      diskUsed = parseInt(dfLine[2]) || 0;
+    } catch {}
+
+    res.json({
+      cpu: { pct: cpuPct },
+      mem: { used: memUsed, total: memTotal, pct: Math.round(memUsed / memTotal * 100) },
+      disk: { used: diskUsed, total: diskTotal, pct: Math.round(diskUsed / diskTotal * 100) }
+    });
+  } catch (err) {
+    console.error('System stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function updatePanelCaddyRoute(oldDomain, newDomain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
