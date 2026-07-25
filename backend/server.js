@@ -682,6 +682,25 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const container = await docker.createContainer(containerConfig);
   await container.start();
   
+  // Generate and write config.yaml for Hermes
+  if (runtime === 'hermes' && plugin.generateConfig) {
+    try {
+      const configYaml = plugin.generateConfig(config);
+      const exec = await container.exec({
+        Cmd: ['sh', '-c', `mkdir -p /opt/data && cat > /opt/data/config.yaml << 'EOF'
+${configYaml}
+EOF`],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      const stream = await exec.start();
+      await new Promise((resolve) => stream.on('end', resolve));
+      console.log('Config.yaml written to container');
+    } catch (err) {
+      console.error('Failed to write config.yaml:', err.message);
+    }
+  }
+  
   const network = docker.getNetwork('agentpanel_agentpanel');
   await network.connect({ Container: containerName });
 
@@ -906,6 +925,70 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
       ws.close();
     }
   })();
+});
+
+// Host terminal with node-pty (real PTY support)
+app.ws('/api/system/host-terminal', (ws, req) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
+  
+  if (!token || !storedToken || token !== storedToken.value) {
+    ws.send('Authentication failed\r\n');
+    ws.close();
+    return;
+  }
+  
+  console.log('[Host Terminal] WebSocket connection established');
+  
+  const pty = require('node-pty');
+  const shell = process.env.SHELL || '/bin/bash';
+  const ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 30,
+    cwd: process.env.HOME || '/root',
+    env: process.env
+  });
+  
+  ptyProcess.onData((data) => {
+    try {
+      ws.send(data);
+    } catch (err) {
+      console.error('[Host Terminal] WebSocket send error:', err.message);
+    }
+  });
+  
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    console.log('[Host Terminal] Process exited:', exitCode, signal);
+    ws.close();
+  });
+  
+  ws.on('message', (msg) => {
+    const message = msg.toString();
+    
+    // Handle resize messages
+    if (message.startsWith('{"cols"')) {
+      try {
+        const { cols, rows } = JSON.parse(message);
+        ptyProcess.resize(cols, rows);
+        console.log('[Host Terminal] Resized to', cols, 'x', rows);
+      } catch (err) {
+        console.error('[Host Terminal] Resize error:', err.message);
+      }
+    } else {
+      ptyProcess.write(message);
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log('[Host Terminal] WebSocket closed, killing process');
+    ptyProcess.kill();
+  });
+  
+  ws.on('error', (err) => {
+    console.error('[Host Terminal] WebSocket error:', err.message);
+    ptyProcess.kill();
+  });
 });
 
 app.get('/api/runtimes', requireAuth, (req, res) => {
