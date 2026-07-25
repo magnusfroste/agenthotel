@@ -13,6 +13,14 @@ function System() {
   const [consoleLoading, setConsoleLoading] = useState(false)
   const consoleRef = useRef(null)
 
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
   useEffect(() => {
     fetchSystemInfo()
     fetchSystemStats()
@@ -193,7 +201,7 @@ function System() {
               <div>
                 <div style={{ fontSize: '0.875rem', marginBottom: '0.5rem', fontWeight: '600' }}>Memory</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.25rem' }}>
-                  {systemStats.memory.used} / {systemStats.memory.total}
+                  {formatBytes(systemStats.mem.used)} / {formatBytes(systemStats.mem.total)}
                 </div>
                 <div style={{ 
                   background: 'var(--bg-primary, #0f172a)', 
@@ -202,21 +210,21 @@ function System() {
                   overflow: 'hidden'
                 }}>
                   <div style={{ 
-                    width: `${systemStats.memory.percent}%`,
+                    width: `${systemStats.mem.pct}%`,
                     height: '100%',
-                    background: systemStats.memory.percent > 80 ? '#ef4444' : '#10b981',
+                    background: systemStats.mem.pct > 80 ? '#ef4444' : '#10b981',
                     transition: 'width 0.3s'
                   }} />
                 </div>
                 <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                  {systemStats.memory.percent}% used
+                  {systemStats.mem.pct}% used
                 </div>
               </div>
 
               <div>
                 <div style={{ fontSize: '0.875rem', marginBottom: '0.5rem', fontWeight: '600' }}>Disk</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.25rem' }}>
-                  {systemStats.disk.used} / {systemStats.disk.total}
+                  {formatBytes(systemStats.disk.used)} / {formatBytes(systemStats.disk.total)}
                 </div>
                 <div style={{ 
                   background: 'var(--bg-primary, #0f172a)', 
@@ -225,14 +233,14 @@ function System() {
                   overflow: 'hidden'
                 }}>
                   <div style={{ 
-                    width: `${systemStats.disk.percent}%`,
+                    width: `${systemStats.disk.pct}%`,
                     height: '100%',
-                    background: systemStats.disk.percent > 80 ? '#ef4444' : '#10b981',
+                    background: systemStats.disk.pct > 80 ? '#ef4444' : '#10b981',
                     transition: 'width 0.3s'
                   }} />
                 </div>
                 <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                  {systemStats.disk.percent}% used
+                  {systemStats.disk.pct}% used
                 </div>
               </div>
             </div>
