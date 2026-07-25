@@ -9,6 +9,8 @@ services:
       - PORT=8080
       - DB_PATH=/data/agentpanel.db
       - CADDY_API_URL=http://caddy:2019
+      - GIT_COMMIT=${GIT_COMMIT:-unknown}
+      - GIT_VERSION=${GIT_VERSION:-unknown}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agentpanel-data:/data

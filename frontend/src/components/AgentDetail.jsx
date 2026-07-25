@@ -51,6 +51,26 @@ function AgentDetail() {
     }
   }
 
+  async function handleStop() {
+    if (!confirm('Stop this agent?')) return
+    
+    try {
+      await authFetch(`/api/agents/${id}/stop`, { method: 'POST' })
+      fetchAgent()
+    } catch (err) {
+      console.error('Failed to stop agent:', err)
+    }
+  }
+
+  async function handleStart() {
+    try {
+      await authFetch(`/api/agents/${id}/start`, { method: 'POST' })
+      fetchAgent()
+    } catch (err) {
+      console.error('Failed to start agent:', err)
+    }
+  }
+
   async function handleDelete() {
     if (!confirm('Delete this agent? This cannot be undone.')) return
     
@@ -172,8 +192,17 @@ function AgentDetail() {
           </div>
           <div className="agent-detail-actions">
             <button className="btn btn-secondary" onClick={toggleTerminal}>
-              {showTerminal ? 'Hide Terminal' : 'Show Terminal'}
+              {showTerminal ? 'Hide Console' : 'Show Console'}
             </button>
+            {agent.status === 'running' ? (
+              <button className="btn btn-warning" onClick={handleStop} style={{ background: '#f59e0b', color: 'white' }}>
+                Stop
+              </button>
+            ) : (
+              <button className="btn btn-success" onClick={handleStart} style={{ background: '#10b981', color: 'white' }}>
+                Start
+              </button>
+            )}
             <button className="btn btn-primary" onClick={handleRedeploy}>
               Redeploy
             </button>

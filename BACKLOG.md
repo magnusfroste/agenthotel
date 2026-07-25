@@ -107,7 +107,41 @@ Terminal-funktionen i AgentDetail-vyn fungerar inte korrekt. Behöver kunna:
 ---
 
 ## Nästa steg
-1. Fixa terminal/CLI access till containrar
-2. Fixa Hermes gateway mode
-3. Verifiera claw.froste.eu och hermes.froste.eu fungerar
-4. Påbörja template system implementation
+1. Lägg till IP-adress och version i sidebar (likt Easypanel)
+2. Visa om det finns ny version tillgänglig
+3. Implementera upgrade-knapp i UI
+4. Fixa terminal/CLI access till containrar
+5. Fixa Hermes gateway mode
+6. Verifiera claw.froste.eu och hermes.froste.eu fungerar
+7. Påbörja template system implementation
+
+## Easypanel-liknande funktioner
+
+### Sidebar Information
+Easypanel visar följande i sidebar:
+- Serverns IP-adress
+- Nuvarande version (git commit/tag)
+- Indikator om ny version finns tillgänglig
+- Upgrade-knapp för att uppgradera direkt från UI
+
+### Implementation
+
+#### Backend
+- `GET /api/system/version` - Hämta nuvarande version (git describe)
+- `GET /api/system/check-update` - Kolla om ny version finns (git fetch + jämför)
+- `POST /api/system/upgrade` - Uppgradera till senaste versionen (git pull + rebuild + restart)
+- `GET /api/system/ip` - Hämta serverns publika IP-adress
+
+#### Frontend
+- Uppdatera Sidebar-komponent att visa:
+  - IP-adress (från /api/system/ip)
+  - Version (från /api/system/version)
+  - "New version available" badge om check-update returnerar ny version
+  - Upgrade-knapp som anropar /api/system/upgrade
+- Visa upgrade-status (downloading, building, restarting)
+
+#### Prioritet
+**Hög** - Smidigt att kunna se version och uppgradera direkt från UI
+
+### Status
+- ⏳ Inte påbörjat

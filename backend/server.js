@@ -582,6 +582,36 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/agents/:id/stop', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    await container.stop();
+
+    db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    res.json({ stopped: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    await container.start();
+
+    db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    res.json({ started: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
@@ -838,6 +868,224 @@ app.post('/api/system/reboot', requireAuth, (req, res) => {
     }, 100);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/console/execute', requireAuth, (req, res) => {
+  try {
+    const { command } = req.body;
+    if (!command) return res.status(400).json({ error: 'Command required' });
+    
+    const output = execSync(command, { 
+      cwd: '/app',
+      timeout: 30000,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    res.json({ output, success: true });
+  } catch (err) {
+    res.json({ 
+      output: err.stdout + err.stderr, 
+      success: false,
+      error: err.message 
+    });
+  }
+});
+
+app.get('/api/certificates', requireAuth, async (req, res) => {
+  try {
+    const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+    const fetch = require('node-fetch');
+    
+    const certsRes = await fetch(`${caddyApiUrl}/pki/certificates/local`);
+    const certs = await certsRes.json();
+    
+    const certificates = Object.values(certs).map(cert => ({
+      domain: cert.sans?.[0] || 'unknown',
+      issuer: cert.issuer,
+      notBefore: cert.notBefore ? new Date(cert.notBefore * 1000).toISOString() : null,
+      notAfter: cert.notAfter ? new Date(cert.notAfter * 1000).toISOString() : null,
+      hash: cert.hash
+    }));
+    
+    res.json(certificates);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/domains', requireAuth, async (req, res) => {
+  try {
+    const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+    const fetch = require('node-fetch');
+    
+    const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+    const routes = await routesRes.json();
+    
+    const domains = routes
+      .filter(r => r['@id'] && r['@id'].startsWith('agent-'))
+      .map(r => {
+        const host = r.match?.[0]?.host?.[0] || 'unknown';
+        const upstream = r.handle?.[0]?.upstreams?.[0]?.dial || 'unknown';
+        const [container, port] = upstream.split(':');
+        
+        const agent = db.prepare('SELECT name, runtime, status FROM agents WHERE domain = ?').get(host);
+        
+        return {
+          id: r['@id'],
+          domain: host,
+          container: container,
+          port: port,
+          agentName: agent?.name || 'unknown',
+          runtime: agent?.runtime || 'unknown',
+          status: agent?.status || 'unknown'
+        };
+      });
+    
+    const panelRoute = routes.find(r => r['@id'] === 'panel-route');
+    if (panelRoute) {
+      const panelHost = panelRoute.match?.[0]?.host?.[0] || 'panel';
+      domains.unshift({
+        id: 'panel-route',
+        domain: panelHost,
+        container: 'backend:8080 / frontend:80',
+        port: '8080/80',
+        agentName: 'AgentPanel',
+        runtime: 'panel',
+        status: 'running'
+      });
+    }
+    
+    res.json(domains);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/profile', requireAuth, (req, res) => {
+  const email = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
+  res.json({ email: email?.value || 'admin@example.com' });
+});
+
+app.put('/api/profile/email', requireAuth, (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    const storedHash = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_hash');
+    const storedSalt = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_salt');
+    
+    const hash = hashPassword(password, storedSalt.value);
+    if (hash !== storedHash.value) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+    
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(email, 'admin_email');
+    res.json({ success: true, email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/profile/password', requireAuth, (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password required' });
+    }
+    
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+    
+    const storedHash = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_hash');
+    const storedSalt = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_salt');
+    
+    const currentHash = hashPassword(currentPassword, storedSalt.value);
+    if (currentHash !== storedHash.value) {
+      return res.status(401).json({ error: 'Invalid current password' });
+    }
+    
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    const newHash = hashPassword(newPassword, newSalt);
+    
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(newHash, 'admin_password_hash');
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(newSalt, 'admin_password_salt');
+    
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/system/version', requireAuth, (req, res) => {
+  try {
+    const commit = process.env.GIT_COMMIT || 'unknown';
+    const version = process.env.GIT_VERSION || commit;
+    res.json({ version, commit });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/system/check-update', requireAuth, async (req, res) => {
+  try {
+    const currentCommit = process.env.GIT_COMMIT || 'unknown';
+    
+    const fetch = require('node-fetch');
+    const githubRes = await fetch('https://api.github.com/repos/magnusfroste/agentpanel/commits/main');
+    const githubData = await githubRes.json();
+    
+    const latestCommit = githubData.sha.substring(0, 7);
+    const hasUpdate = currentCommit !== 'unknown' && currentCommit !== latestCommit;
+    
+    res.json({
+      hasUpdate,
+      currentVersion: currentCommit.substring(0, 7),
+      latestVersion: latestCommit,
+      remoteCommit: latestCommit
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/upgrade', requireAuth, async (req, res) => {
+  try {
+    res.json({ message: 'Upgrading AgentPanel...' });
+    
+    setTimeout(() => {
+      try {
+        execSync('git pull origin main', { cwd: '/app', stdio: 'pipe' });
+        execSync('docker compose build', { cwd: '/app', stdio: 'pipe' });
+        execSync('docker compose up -d', { cwd: '/app', stdio: 'pipe' });
+      } catch (err) {
+        console.error('Upgrade failed:', err);
+      }
+    }, 100);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/system/ip', requireAuth, async (req, res) => {
+  try {
+    const fetch = require('node-fetch');
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    res.json({ ip: data.ip });
+  } catch (err) {
+    try {
+      const ip = execSync("hostname -I | awk '{print $1}'").toString().trim();
+      res.json({ ip });
+    } catch (err2) {
+      res.status(500).json({ error: 'Could not determine IP address' });
+    }
   }
 });
 
