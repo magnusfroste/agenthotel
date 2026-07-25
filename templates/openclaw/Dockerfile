@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --break-system-packages uv \
     || (curl -LsSf https://astral.sh/uv/install.sh | sh)
 
+# Always install latest OpenClaw on image build
+RUN npm install -g openclaw@latest
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN node /app/node_modules/playwright-core/cli.js install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
