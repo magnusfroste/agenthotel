@@ -137,7 +137,7 @@ function Sidebar({ onLogout }) {
           <span>Providers</span>
         </Link>
         <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}>
-          <span className="sidebar-icon"><Settings size={18} color="white" /></span>
+          <span className="sidebar-icon"><SettingsIcon size={18} color="white" /></span>
           <span>Settings</span>
         </Link>
         <a href="https://github.com/magnusfroste/agentpanel" target="_blank" rel="noopener noreferrer" className="sidebar-link">
