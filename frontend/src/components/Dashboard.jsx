@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
+import { Trash2, Settings, Globe, Package, Plug } from 'lucide-react'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -86,9 +87,10 @@ function Dashboard() {
             className="btn" 
             onClick={handlePrune}
             disabled={pruning}
-            style={{ background: '#f59e0b', color: 'white' }}
+            style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
           >
-            {pruning ? 'Pruning...' : '🧹 Prune Docker'}
+            <Trash2 size={18} color="white" />
+            {pruning ? 'Pruning...' : 'Prune Docker'}
           </button>
           <Link to="/create" className="btn btn-primary">+ Create Agent</Link>
         </div>
@@ -189,19 +191,19 @@ function Dashboard() {
                 </div>
                 <div className="agent-info">
                   <div className="agent-info-item">
-                    <span>🔧</span>
+                    <Settings size={16} color="white" />
                     <span>{agent.runtime}</span>
                   </div>
                   <div className="agent-info-item">
-                    <span>🌐</span>
+                    <Globe size={16} color="white" />
                     <span>{agent.domain || 'No domain'}</span>
                   </div>
                   <div className="agent-info-item">
-                    <span>📦</span>
+                    <Package size={16} color="white" />
                     <span>{agent.image}</span>
                   </div>
                   <div className="agent-info-item">
-                    <span>🔌</span>
+                    <Plug size={16} color="white" />
                     <span>Port {agent.port}</span>
                   </div>
                 </div>

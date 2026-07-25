@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
+import { Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle, Copy, Check } from 'lucide-react'
 
 function Connect() {
   const [token, setToken] = useState('')
@@ -34,7 +35,7 @@ function Connect() {
   const configs = {
     claude: {
       name: 'Claude Desktop',
-      icon: '🤖',
+      icon: Bot,
       description: 'Claude med MCP-stöd via desktop-appen',
       config: {
         mcpServers: {
@@ -50,7 +51,7 @@ function Connect() {
     },
     openclaw: {
       name: 'OpenClaw',
-      icon: '🐾',
+      icon: PawPrint,
       description: 'OpenClaw agent med MCP-koppling',
       config: {
         mcp: {
@@ -69,7 +70,7 @@ function Connect() {
     },
     hermes: {
       name: 'Hermes',
-      icon: '🏛️',
+      icon: Landmark,
       description: 'NousResearch Hermes med MCP-tools',
       config: {
         mcp_servers: {
@@ -85,7 +86,7 @@ function Connect() {
     },
     codex: {
       name: 'Codex',
-      icon: '💻',
+      icon: Terminal,
       description: 'OpenAI Codex med MCP-integration',
       config: {
         mcp: {
@@ -103,7 +104,7 @@ function Connect() {
     },
     kilo: {
       name: 'Kilo',
-      icon: '⚡',
+      icon: Zap,
       description: 'Kilo CLI med MCP-stöd',
       config: {
         mcp: {
@@ -122,7 +123,7 @@ function Connect() {
     },
     antigravity: {
       name: 'Antigravity',
-      icon: '🚀',
+      icon: Rocket,
       description: 'Antigravity agent med MCP-koppling',
       config: {
         mcp: {
@@ -141,7 +142,7 @@ function Connect() {
     },
     cursor: {
       name: 'Cursor',
-      icon: '📝',
+      icon: PenTool,
       description: 'Cursor IDE med MCP-tools',
       config: {
         mcpServers: {
@@ -166,7 +167,10 @@ function Connect() {
         padding: '1.5rem',
         marginBottom: '2rem'
       }}>
-        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🔌 MCP Endpoint</h2>
+        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Plug size={20} color="white" />
+          MCP Endpoint
+        </h2>
         <div style={{ marginBottom: '1rem' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.5rem' }}>
             Endpoint URL
@@ -228,7 +232,7 @@ function Connect() {
             color: '#f59e0b',
             fontSize: '0.875rem'
           }}>
-            ⚠️ Token not found in cookies. Please log in again or check your browser settings.
+            <AlertTriangle size={16} color="#f59e0b" /> Token not found in cookies. Please log in again or check your browser settings.
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { authFetch, getToken } from '../lib/auth'
+import { Key, Copy } from 'lucide-react'
 
 function AgentDetail() {
   const { id } = useParams()
@@ -219,7 +220,10 @@ function AgentDetail() {
             padding: '1rem',
             marginBottom: '1.5rem'
           }}>
-            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>🔑 Credentials</h3>
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Key size={18} color="white" />
+              Credentials
+            </h3>
             {credentials.map((cred, i) => (
               <div key={i} style={{
                 display: 'flex',
@@ -245,7 +249,8 @@ function AgentDetail() {
                   onClick={() => copyToClipboard(cred.value)}
                   title="Copy to clipboard"
                 >
-                  📋 Copy
+                  <Copy size={14} color="white" />
+                  Copy
                 </button>
               </div>
             ))}

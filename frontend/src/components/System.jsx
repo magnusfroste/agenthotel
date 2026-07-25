@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { authFetch } from '../lib/auth'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle, Key, Copy } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
@@ -171,7 +172,10 @@ function System() {
           padding: '1.5rem',
           marginBottom: '2rem'
         }}>
-          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🖥️ System Information</h2>
+          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Monitor size={20} color="white" />
+            System Information
+          </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             <div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Hostname</div>
@@ -209,7 +213,10 @@ function System() {
             padding: '1.5rem',
             marginBottom: '2rem'
           }}>
-            <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>📊 Resource Usage</h2>
+            <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <BarChart3 size={20} color="white" />
+              Resource Usage
+            </h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
               <div>
                 <div style={{ fontSize: '0.875rem', marginBottom: '0.5rem', fontWeight: '600' }}>CPU</div>
@@ -281,7 +288,10 @@ function System() {
               padding: '1.5rem',
               marginBottom: '2rem'
             }}>
-              <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🌐 Network</h2>
+              <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Globe size={20} color="white" />
+                Network
+              </h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
                 {Object.entries(systemStats.network).map(([iface, info]) => (
                   <div key={iface} style={{ 
@@ -308,7 +318,10 @@ function System() {
           padding: '1.5rem',
           marginBottom: '2rem'
         }}>
-          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🔌 MCP Server</h2>
+          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Plug size={20} color="white" />
+            MCP Server
+          </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             <div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Status</div>
@@ -384,7 +397,10 @@ function System() {
         marginBottom: '2rem'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1.25rem' }}>🧹 Docker Cleanup</h2>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Trash2 size={20} color="white" />
+          Docker Cleanup
+        </h2>
           <button
             onClick={runCleanup}
             className="btn btn-secondary"
@@ -447,7 +463,10 @@ function System() {
         padding: '1.5rem',
         marginBottom: '2rem'
       }}>
-        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>💻 Console</h2>
+        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Terminal size={20} color="white" />
+          Console
+        </h2>
         <div 
           ref={consoleRef}
           style={{
@@ -496,7 +515,10 @@ function System() {
         padding: '1.5rem',
         marginBottom: '2rem'
       }}>
-        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔧 System Controls</h2>
+        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Settings size={20} color="white" />
+          System Controls
+        </h2>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
           <button
@@ -504,7 +526,8 @@ function System() {
             onClick={() => setConfirmAction('restart-panel')}
             style={{ background: '#3b82f6', color: 'white' }}
           >
-            🔄 Restart AgentPanel
+            <RefreshCw size={18} color="white" />
+            Restart AgentPanel
           </button>
 
           <button
@@ -520,14 +543,16 @@ function System() {
             onClick={() => setConfirmAction('update')}
             style={{ background: '#10b981', color: 'white' }}
           >
-            ⬆️ Update AgentPanel
+            <Download size={18} color="white" />
+            Update AgentPanel
           </button>
 
           <button
             className="btn btn-danger"
             onClick={() => setConfirmAction('reboot')}
           >
-            ⚠️ Reboot Server
+            <AlertTriangle size={18} color="white" />
+            Reboot Server
           </button>
         </div>
       </div>
@@ -557,7 +582,7 @@ function System() {
               {confirmAction === 'restart-panel' && 'Are you sure you want to restart AgentPanel? This will briefly interrupt service.'}
               {confirmAction === 'restart-docker' && 'Are you sure you want to restart Docker? All containers will be affected.'}
               {confirmAction === 'update' && 'Are you sure you want to update AgentPanel to the latest version?'}
-              {confirmAction === 'reboot' && '⚠️ WARNING: This will reboot the entire server. All services will be interrupted.'}
+              {confirmAction === 'reboot' && 'WARNING: This will reboot the entire server. All services will be interrupted.'}
             </p>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button

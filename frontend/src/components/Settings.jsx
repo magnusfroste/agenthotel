@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
+import { Settings as SettingsIcon, Lock } from 'lucide-react'
 
 function Settings() {
   const [settings, setSettings] = useState({})
@@ -78,7 +79,10 @@ function Settings() {
           padding: '1.5rem',
           marginBottom: '2rem'
         }}>
-          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>⚙️ General Settings</h2>
+          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <SettingsIcon size={20} color="white" />
+            General Settings
+          </h2>
 
           <div className="form-group">
             <label>Panel Domain</label>
@@ -177,7 +181,10 @@ function Settings() {
           padding: '1.5rem',
           marginBottom: '2rem'
         }}>
-          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔒 Security</h2>
+          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Lock size={20} color="white" />
+            Security
+          </h2>
 
           <div className="form-group">
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

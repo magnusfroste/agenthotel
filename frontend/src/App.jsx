@@ -100,47 +100,47 @@ function Sidebar({ onLogout }) {
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <Link to="/" className="sidebar-brand">🤖 AgentPanel</Link>
+        <Link to="/" className="sidebar-brand"><Bot size={24} color="white" /> AgentPanel</Link>
       </div>
       <nav className="sidebar-nav">
         <Link to="/" className={`sidebar-link ${isActive('/')}`}>
-          <span className="sidebar-icon">📊</span>
+          <span className="sidebar-icon"><BarChart3 size={18} color="white" /></span>
           <span>Dashboard</span>
         </Link>
         <Link to="/create" className={`sidebar-link ${isActive('/create')}`}>
-          <span className="sidebar-icon">➕</span>
+          <span className="sidebar-icon"><Plus size={18} color="white" /></span>
           <span>Create Agent</span>
         </Link>
         <Link to="/domains" className={`sidebar-link ${isActive('/domains')}`}>
-          <span className="sidebar-icon">🌐</span>
+          <span className="sidebar-icon"><Globe size={18} color="white" /></span>
           <span>Domains</span>
         </Link>
         <Link to="/certificates" className={`sidebar-link ${isActive('/certificates')}`}>
-          <span className="sidebar-icon">🔒</span>
+          <span className="sidebar-icon"><Lock size={18} color="white" /></span>
           <span>Certificates</span>
         </Link>
         <Link to="/console" className={`sidebar-link ${isActive('/console')}`}>
-          <span className="sidebar-icon">💻</span>
+          <span className="sidebar-icon"><Terminal size={18} color="white" /></span>
           <span>Console</span>
         </Link>
         <Link to="/system" className={`sidebar-link ${isActive('/system')}`}>
-          <span className="sidebar-icon">🖥️</span>
+          <span className="sidebar-icon"><Monitor size={18} color="white" /></span>
           <span>System</span>
         </Link>
         <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}>
-          <span className="sidebar-icon">🔗</span>
+          <span className="sidebar-icon"><Link2 size={18} color="white" /></span>
           <span>Connect</span>
         </Link>
         <Link to="/providers" className={`sidebar-link ${isActive('/providers')}`}>
-          <span className="sidebar-icon">🔑</span>
+          <span className="sidebar-icon"><Key size={18} color="white" /></span>
           <span>Providers</span>
         </Link>
         <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}>
-          <span className="sidebar-icon">⚙️</span>
+          <span className="sidebar-icon"><Settings size={18} color="white" /></span>
           <span>Settings</span>
         </Link>
         <a href="https://github.com/magnusfroste/agentpanel" target="_blank" rel="noopener noreferrer" className="sidebar-link">
-          <span className="sidebar-icon">📚</span>
+          <span className="sidebar-icon"><BookOpen size={18} color="white" /></span>
           <span>Docs</span>
         </a>
       </nav>
@@ -228,12 +228,12 @@ function Sidebar({ onLogout }) {
               fontSize: '0.875rem'
             }}
           >
-            {upgrading ? '⏳ Upgrading...' : `⬆️ Upgrade to ${updateInfo.latestVersion}`}
+            {upgrading ? 'Upgrading...' : <><Download size={16} color="white" /> Upgrade to {updateInfo.latestVersion}</>}
           </button>
         )}
         {ip && (
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-            🌐 IP: {ip}
+            <Globe size={16} color="white" /> IP: {ip}
           </div>
         )}
         {version && version !== 'unknown' && (

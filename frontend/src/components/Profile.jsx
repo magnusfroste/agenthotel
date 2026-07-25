@@ -167,7 +167,10 @@ function Profile() {
         borderRadius: '0.5rem',
         padding: '1.5rem'
       }}>
-        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔒 Change Password</h2>
+        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Lock size={20} color="white" />
+          Change Password
+        </h2>
         <form onSubmit={handleUpdatePassword}>
           <div className="form-group">
             <label>Current Password</label>

@@ -1,5 +1,5 @@
 FROM node:20-alpine
-RUN apk add --no-cache git docker-cli
+RUN apk add --no-cache git docker-cli python3 make g++
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
