@@ -51,6 +51,20 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS cleanup_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    success INTEGER NOT NULL,
+    containers_deleted INTEGER DEFAULT 0,
+    images_deleted INTEGER DEFAULT 0,
+    networks_deleted INTEGER DEFAULT 0,
+    volumes_deleted INTEGER DEFAULT 0,
+    space_reclaimed INTEGER DEFAULT 0,
+    error TEXT
+  )
+`);
+
 function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
@@ -205,6 +219,19 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
                            (results.imagesSpaceReclaimed || 0) + 
                            (results.volumesSpaceReclaimed || 0);
     
+    // Log to database
+    db.prepare(`
+      INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      1,
+      results.containers.length,
+      results.images.length,
+      results.networks.length,
+      results.volumes.length,
+      totalReclaimed
+    );
+    
     res.json({
       success: true,
       results,
@@ -213,9 +240,86 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('Docker prune error:', err);
+    
+    // Log error to database
+    db.prepare(`
+      INSERT INTO cleanup_logs (success, error)
+      VALUES (?, ?)
+    `).run(0, err.message);
+    
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get('/api/docker/cleanup-history', requireAuth, (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const logs = db.prepare(`
+      SELECT * FROM cleanup_logs 
+      ORDER BY executed_at DESC 
+      LIMIT ?
+    `).all(limit);
+    
+    res.json(logs.map(log => ({
+      ...log,
+      success: log.success === 1,
+      space_reclaimed_mb: (log.space_reclaimed / 1024 / 1024).toFixed(2)
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Scheduled daily cleanup (runs every 24 hours)
+async function runScheduledCleanup() {
+  try {
+    console.log('[Cleanup] Running scheduled Docker cleanup...');
+    
+    const results = {};
+    const containersPrune = await docker.pruneContainers();
+    results.containers = containersPrune.ContainersDeleted || [];
+    results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
+    
+    const imagesPrune = await docker.pruneImages();
+    results.images = imagesPrune.ImagesDeleted || [];
+    results.imagesSpaceReclaimed = imagesPrune.SpaceReclaimed || 0;
+    
+    const networksPrune = await docker.pruneNetworks();
+    results.networks = networksPrune.NetworksDeleted || [];
+    
+    const volumesPrune = await docker.pruneVolumes();
+    results.volumes = volumesPrune.VolumesDeleted || [];
+    results.volumesSpaceReclaimed = volumesPrune.SpaceReclaimed || 0;
+    
+    const totalReclaimed = (results.containersSpaceReclaimed || 0) + 
+                           (results.imagesSpaceReclaimed || 0) + 
+                           (results.volumesSpaceReclaimed || 0);
+    
+    db.prepare(`
+      INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      1,
+      results.containers.length,
+      results.images.length,
+      results.networks.length,
+      results.volumes.length,
+      totalReclaimed
+    );
+    
+    console.log(`[Cleanup] Success: Reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
+  } catch (err) {
+    console.error('[Cleanup] Error:', err.message);
+    db.prepare(`
+      INSERT INTO cleanup_logs (success, error)
+      VALUES (?, ?)
+    `).run(0, err.message);
+  }
+}
+
+// Schedule cleanup to run every 24 hours
+setInterval(runScheduledCleanup, 24 * 60 * 60 * 1000);
+console.log('[Cleanup] Scheduled daily Docker cleanup enabled');
 
 function readProcStat() {
   const line = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0];
@@ -739,20 +843,56 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
 });
 
 app.ws('/api/agents/:id/terminal', requireAuth, (ws, req) => {
+  console.log('[Terminal] WebSocket connection attempt for agent:', req.params.id);
   (async () => {
+    let stream = null;
     try {
       const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      console.log('[Terminal] Got container, creating exec...');
       const exec = await container.exec({
         AttachStdin: true, AttachStdout: true, AttachStderr: true,
         Tty: true,
-        Cmd: [process.env.DEFAULT_SHELL || '/bin/bash']
+        Cmd: [process.env.DEFAULT_SHELL || '/bin/sh']
       });
-      const stream = await exec.start({ Tty: true });
-      stream.pipe(ws);
-      ws.on('message', (msg) => stream.write(msg));
-      ws.on('close', () => { try { stream.destroy(); } catch (e) {} });
+      console.log('[Terminal] Exec created, starting...');
+      stream = await exec.start({ Tty: true });
+      console.log('[Terminal] Exec started, listening for data...');
+      
+      stream.on('data', (chunk) => {
+        const data = chunk.toString('utf8');
+        console.log('[Terminal] Data received:', data.substring(0, 50));
+        ws.send(data);
+      });
+      
+      stream.on('end', () => {
+        console.log('[Terminal] Stream ended');
+        ws.close();
+      });
+      
+      stream.on('error', (err) => {
+        console.error('[Terminal] Stream error:', err.message);
+        ws.send(`\r\nStream error: ${err.message}\r\n`);
+      });
+      
+      ws.on('message', (msg) => {
+        if (stream && !stream.destroyed) {
+          stream.write(msg.toString());
+        }
+      });
+      
+      ws.on('close', () => {
+        console.log('[Terminal] WebSocket closed');
+        if (stream) {
+          try { stream.destroy(); } catch (e) {}
+        }
+      });
+      
+      ws.on('error', (err) => {
+        console.error('[Terminal] WebSocket error:', err.message);
+      });
     } catch (err) {
-      ws.send(`Terminal error: ${err.message}`);
+      console.error('[Terminal] Error:', err.message);
+      ws.send(`Terminal error: ${err.message}\r\n`);
       ws.close();
     }
   })();

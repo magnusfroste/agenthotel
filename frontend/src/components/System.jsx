@@ -5,6 +5,7 @@ function System() {
   const [systemInfo, setSystemInfo] = useState(null)
   const [systemStats, setSystemStats] = useState(null)
   const [mcpStatus, setMcpStatus] = useState(null)
+  const [cleanupHistory, setCleanupHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [confirmAction, setConfirmAction] = useState(null)
@@ -25,6 +26,7 @@ function System() {
     fetchSystemInfo()
     fetchSystemStats()
     fetchMcpStatus()
+    fetchCleanupHistory()
     const interval = setInterval(fetchSystemStats, 5000)
     return () => clearInterval(interval)
   }, [])
@@ -58,6 +60,32 @@ function System() {
       setMcpStatus(data)
     } catch (err) {
       console.error('Failed to fetch MCP status:', err)
+    }
+  }
+
+  async function fetchCleanupHistory() {
+    try {
+      const res = await authFetch('/api/docker/cleanup-history?limit=10')
+      const data = await res.json()
+      setCleanupHistory(data)
+    } catch (err) {
+      console.error('Failed to fetch cleanup history:', err)
+    }
+  }
+
+  async function runCleanup() {
+    try {
+      setMessage('Running Docker cleanup...')
+      const res = await authFetch('/api/docker/prune', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setMessage(`Cleanup completed! Reclaimed ${data.totalSpaceReclaimedMB} MB`)
+        fetchCleanupHistory()
+      } else {
+        setMessage('Cleanup failed: ' + (data.error || 'Unknown error'))
+      }
+    } catch (err) {
+      setMessage('Error: ' + err.message)
     }
   }
 
@@ -348,6 +376,70 @@ function System() {
           )}
         </div>
       )}
+
+      <div style={{
+        background: 'var(--bg-secondary, #1e293b)',
+        borderRadius: '0.5rem',
+        padding: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem' }}>🧹 Docker Cleanup</h2>
+          <button
+            onClick={runCleanup}
+            className="btn btn-secondary"
+            style={{ background: '#10b981', color: 'white' }}
+          >
+            Run Cleanup Now
+          </button>
+        </div>
+        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary, #94a3b8)', marginBottom: '1rem' }}>
+          Automatic daily cleanup runs at midnight. Removes unused containers, images, networks, and volumes.
+        </div>
+        {cleanupHistory.length > 0 ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border, #334155)' }}>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Time</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Status</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right' }}>Containers</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right' }}>Images</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right' }}>Networks</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right' }}>Volumes</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right' }}>Space Reclaimed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cleanupHistory.map((log) => (
+                  <tr key={log.id} style={{ borderBottom: '1px solid var(--border, #334155)' }}>
+                    <td style={{ padding: '0.5rem' }}>
+                      {new Date(log.executed_at).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.5rem' }}>
+                      <span style={{
+                        color: log.success ? '#10b981' : '#ef4444',
+                        fontWeight: '600'
+                      }}>
+                        {log.success ? '✓ Success' : '✗ Failed'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{log.containers_deleted}</td>
+                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{log.images_deleted}</td>
+                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{log.networks_deleted}</td>
+                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{log.volumes_deleted}</td>
+                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{log.space_reclaimed_mb} MB</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary, #94a3b8)' }}>
+            No cleanup history yet
+          </div>
+        )}
+      </div>
 
       <div style={{
         background: 'var(--bg-secondary, #1e293b)',
