@@ -1,8 +1,8 @@
 const Database = require('better-sqlite3');
 const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
 
-function getProvider(type) {
-  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE type = ?').get(type);
+function getProvider(name) {
+  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
 }
 
 module.exports = {
@@ -12,7 +12,7 @@ module.exports = {
   defaultPort: 18789,
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
-    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'gpt-4.1' },
+    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'gpt-4o' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI Base URL', type: 'text', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
@@ -28,17 +28,17 @@ module.exports = {
     
     const autoConfig = { ...config, domain, OPENCLAW_GATEWAY_TOKEN: autoToken };
     
-    const openai = getProvider('openai');
+    const openai = getProvider('OpenAI');
     if (!autoConfig.OPENAI_API_KEY && openai?.apiKey) autoConfig.OPENAI_API_KEY = openai.apiKey;
     if (!autoConfig.OPENAI_BASE_URL && openai?.baseUrl) autoConfig.OPENAI_BASE_URL = openai.baseUrl;
     
-    const anthropic = getProvider('anthropic');
+    const anthropic = getProvider('Anthropic');
     if (!autoConfig.ANTHROPIC_API_KEY && anthropic?.apiKey) autoConfig.ANTHROPIC_API_KEY = anthropic.apiKey;
     
-    const openrouter = getProvider('openrouter');
+    const openrouter = getProvider('OpenRouter');
     if (!autoConfig.OPENROUTER_API_KEY && openrouter?.apiKey) autoConfig.OPENROUTER_API_KEY = openrouter.apiKey;
     
-    const zai = getProvider('zai');
+    const zai = getProvider('ZAI');
     if (!autoConfig.ZAI_API_KEY && zai?.apiKey) autoConfig.ZAI_API_KEY = zai.apiKey;
     if (!autoConfig.OPENCLAW_ZAI_BASE_URL && zai?.baseUrl) autoConfig.OPENCLAW_ZAI_BASE_URL = zai.baseUrl;
     

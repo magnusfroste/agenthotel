@@ -1,8 +1,8 @@
 const Database = require('better-sqlite3');
 const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
 
-function getProvider(type) {
-  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE type = ?').get(type);
+function getProvider(name) {
+  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
 }
 
 module.exports = {
@@ -13,7 +13,7 @@ module.exports = {
   configFields: [
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'Custom Base URL', type: 'text', required: false },
-    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-4.1' },
+    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'gpt-4o' },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
     { key: 'GEMINI_API_KEY', label: 'Gemini Key', type: 'password', required: false },
@@ -24,23 +24,23 @@ module.exports = {
   buildConfig({ name, domain, image, port, config }) {
     const autoConfig = { ...config };
     
-    const openai = getProvider('openai');
+    const openai = getProvider('OpenAI');
     if (!autoConfig.OPENAI_API_KEY && openai?.apiKey) autoConfig.OPENAI_API_KEY = openai.apiKey;
     if (!autoConfig.OPENAI_BASE_URL && openai?.baseUrl) autoConfig.OPENAI_BASE_URL = openai.baseUrl;
     
-    const openrouter = getProvider('openrouter');
+    const openrouter = getProvider('OpenRouter');
     if (!autoConfig.OPENROUTER_API_KEY && openrouter?.apiKey) autoConfig.OPENROUTER_API_KEY = openrouter.apiKey;
     
-    const anthropic = getProvider('anthropic');
+    const anthropic = getProvider('Anthropic');
     if (!autoConfig.ANTHROPIC_API_KEY && anthropic?.apiKey) autoConfig.ANTHROPIC_API_KEY = anthropic.apiKey;
     
-    const gemini = getProvider('gemini');
+    const gemini = getProvider('Gemini');
     if (!autoConfig.GEMINI_API_KEY && gemini?.apiKey) autoConfig.GEMINI_API_KEY = gemini.apiKey;
     
-    const deepseek = getProvider('deepseek');
+    const deepseek = getProvider('DeepSeek');
     if (!autoConfig.DEEPSEEK_API_KEY && deepseek?.apiKey) autoConfig.DEEPSEEK_API_KEY = deepseek.apiKey;
     
-    const groq = getProvider('groq');
+    const groq = getProvider('Groq');
     if (!autoConfig.GROQ_API_KEY && groq?.apiKey) autoConfig.GROQ_API_KEY = groq.apiKey;
     
     return autoConfig;
