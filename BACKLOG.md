@@ -63,21 +63,24 @@
 **Prioritet:** Hög
 
 ### Daily Docker Cleanup
-**Status:** ⏳ Inte påbörjat
+**Status:** ✅ Implementerad
 
-**Vision:**
-- Automatisk daglig rensning av oanvända Docker-resurser
-- Ta bort dangling images, stopped containers, unused networks
-- Konfigurerbart intervall (daglig, veckovis, etc.)
-- Visa senaste cleanup-resultat i UI
+**Funktioner:**
+- Automatisk daglig rensning (var 24:e timme)
+- Tar bort dangling images, stopped containers, unused networks, unused volumes
+- Loggar alla cleanup-resultat till databas
+- Visa cleanup-historik i System-vyn (senaste 10 körningar)
+- Manuell cleanup-knapp för att köra rensning on-demand
+- Visar antal borttagna resurser och återvunnet utrymme
 
 **Implementation:**
-- Cron-job eller scheduled task i backend
-- Anropa befintliga `/api/docker/prune` endpoint
-- Logga resultat till databas
-- Visa i Settings eller Dashboard
+- Backend: Scheduled task med setInterval (24h)
+- API: `/api/docker/cleanup-history` för att hämta historik
+- API: `/api/docker/prune` loggar nu till databas
+- Frontend: Tabell i System-vyn som visar historik
+- Database: cleanup_logs tabell med alla körningar
 
-**Prioritet:** Medium
+**Prioritet:** Medium ✅ Klar
 
 ---
 
