@@ -41,26 +41,27 @@
 ## ⏳ Pågående / Att Fixa
 
 ### Terminal/CLI Access till Containrar
-**Status:** ⚠️ Delvis implementerad (WebSocket finns men fungerar inte korrekt)
+**Status:** ✅ Implementerad
 
-**Problem:**
-- Terminal-funktionen i AgentDetail-vyn ansluter inte korrekt
-- Behöver kunna köra kommandon inuti agent-containrar
-- Viktigt för felsökning och administration
-
-**Krav:**
-- WebSocket-baserad terminal (xterm.js)
-- Stöd för interaktiva kommandon
+**Funktioner:**
+- WebSocket-baserad terminal med xterm.js
+- Interaktiva kommandon i agent-containrar
+- Full TTY-stöd för shell-sessioner
+- Autentisering via token i query parameter
 - Korrekt hantering av stdin/stdout/stderr
-- TTY-stöd för full-screen applikationer (vim, htop, etc.)
-- Autentisering via befintlig token-mekanism
 
 **Implementation:**
 - Backend: `/api/agents/:id/terminal` WebSocket endpoint
-- Frontend: xterm.js terminal-komponent
+- Frontend: xterm.js terminal-komponent i AgentDetail-vyn
 - Docker: `docker exec` med TTY och attach
+- Auth: Manuell token-validering i WebSocket-handler (kringgår requireAuth middleware)
 
-**Prioritet:** Hög
+**Fixat:**
+- requireAuth middleware fungerade inte för WebSocket - ersatt med manuell auth
+- Stream-hantering med explicita data/end/error events
+- Shell fallback till `/bin/sh` om `/bin/bash` saknas
+
+**Prioritet:** Hög ✅ Klar
 
 ### Daily Docker Cleanup
 **Status:** ✅ Implementerad

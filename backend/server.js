@@ -842,7 +842,17 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
   }
 });
 
-app.ws('/api/agents/:id/terminal', requireAuth, (ws, req) => {
+app.ws('/api/agents/:id/terminal', (ws, req) => {
+  // Handle authentication manually for WebSocket
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
+  
+  if (!token || !storedToken || token !== storedToken.value) {
+    ws.send('Authentication failed\r\n');
+    ws.close();
+    return;
+  }
+  
   console.log('[Terminal] WebSocket connection attempt for agent:', req.params.id);
   (async () => {
     let stream = null;
