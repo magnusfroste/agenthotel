@@ -7,28 +7,7 @@
       "servers": {
         "srv0": {
           "listen": [":80", ":443"],
-          "routes": [
-            {
-              "handle": [{
-                "handler": "subroute",
-                "routes": [
-                  {
-                    "match": [{ "path": ["/api/*"] }],
-                    "handle": [{
-                      "handler": "reverse_proxy",
-                      "upstreams": [{ "dial": "backend:8080" }]
-                    }]
-                  },
-                  {
-                    "handle": [{
-                      "handler": "reverse_proxy",
-                      "upstreams": [{ "dial": "frontend:80" }]
-                    }]
-                  }
-                ]
-              }]
-            }
-          ],
+          "routes": [],
           "automatic_https": {}
         }
       }

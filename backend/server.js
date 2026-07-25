@@ -443,10 +443,26 @@ async function addCaddyRoute(domain, containerName, port) {
     }]
   };
 
+  const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+  const routes = await routesRes.json();
+  
+  const panelRouteIndex = routes.findIndex(r => r['@id'] === 'panel-route');
+  let panelRoute = null;
+  if (panelRouteIndex !== -1) {
+    panelRoute = routes[panelRouteIndex];
+    routes.splice(panelRouteIndex, 1);
+  }
+  
+  routes.push(route);
+  
+  if (panelRoute) {
+    routes.push(panelRoute);
+  }
+  
   const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
-    method: 'POST',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(route)
+    body: JSON.stringify(routes)
   });
 
   if (!res.ok) {
@@ -662,6 +678,43 @@ app.get('/api/providers/:id/models', requireAuth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`AgentPanel backend running on port ${PORT}`);
+  await initPanelRoute();
 });
+
+async function initPanelRoute() {
+  try {
+    const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
+    if (panelDomain?.value) {
+      await updatePanelCaddyRoute(null, panelDomain.value);
+      console.log(`Panel route created for ${panelDomain.value}`);
+    } else {
+      const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+      const fetch = require('node-fetch');
+      const route = {
+        '@id': 'panel-route',
+        handle: [{
+          handler: 'subroute',
+          routes: [
+            {
+              match: [{ path: ['/api/*'] }],
+              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'backend:8080' }] }]
+            },
+            {
+              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'frontend:80' }] }]
+            }
+          ]
+        }]
+      };
+      await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(route)
+      });
+      console.log('Panel catch-all route created (no domain configured)');
+    }
+  } catch (err) {
+    console.error('Failed to init panel route:', err);
+  }
+}
