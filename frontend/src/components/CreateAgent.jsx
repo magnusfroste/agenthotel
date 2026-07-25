@@ -13,6 +13,7 @@ function CreateAgent() {
     port: '',
     config: {}
   })
+  const [quickStart, setQuickStart] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -57,9 +58,13 @@ function CreateAgent() {
         name: formData.name,
         runtime: formData.runtime,
         domain: formData.domain || undefined,
-        image: formData.image || undefined,
-        port: formData.port ? parseInt(formData.port) : undefined,
-        config: formData.config
+        quickStart: quickStart
+      }
+
+      if (!quickStart) {
+        payload.image = formData.image || undefined
+        payload.port = formData.port ? parseInt(formData.port) : undefined
+        payload.config = formData.config
       }
 
       const res = await authFetch('/api/agents', {
@@ -116,19 +121,34 @@ function CreateAgent() {
           </select>
         </div>
 
-        {selectedRuntime && (
-          <>
-            <div className="form-group">
-              <label>Domain (optional)</label>
-              <input
-                type="text"
-                name="domain"
-                value={formData.domain}
-                onChange={handleChange}
-                placeholder="agent.example.com"
-              />
-            </div>
+        <div className="form-group">
+          <label>Domain (optional)</label>
+          <input
+            type="text"
+            name="domain"
+            value={formData.domain}
+            onChange={handleChange}
+            placeholder="agent.example.com"
+          />
+        </div>
 
+        <div className="form-group" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={quickStart}
+              onChange={(e) => setQuickStart(e.target.checked)}
+              style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+            />
+            <span style={{ fontWeight: '600' }}>Quick Start</span>
+            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary, #94a3b8)' }}>
+              — Auto-config with API keys from providers
+            </span>
+          </label>
+        </div>
+
+        {!quickStart && selectedRuntime && (
+          <>
             <div className="form-group">
               <label>Image (default: {selectedRuntime.defaultImage})</label>
               <input
@@ -186,6 +206,28 @@ function CreateAgent() {
               </div>
             ))}
           </>
+        )}
+
+        {quickStart && (
+          <div style={{
+            background: 'var(--bg-secondary, #1e293b)',
+            borderRadius: '0.5rem',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            fontSize: '0.875rem',
+            color: 'var(--text-secondary, #94a3b8)'
+          }}>
+            <strong style={{ color: 'var(--text-primary, #e2e8f0)' }}>Quick Start aktiverad</strong>
+            <p style={{ margin: '0.5rem 0 0 0' }}>
+              Agenten skapas med automatisk konfiguration:
+            </p>
+            <ul style={{ margin: '0.5rem 0 0 1.5rem', padding: 0 }}>
+              <li>API-nycklar injiceras från providers</li>
+              <li>Standardmodell väljs automatiskt</li>
+              <li>Gateway-token genereras automatiskt</li>
+              <li>Full shell-behörighet och förinstallerade verktyg</li>
+            </ul>
+          </div>
         )}
 
         <div className="form-actions">

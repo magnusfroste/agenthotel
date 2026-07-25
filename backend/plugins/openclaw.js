@@ -1,3 +1,11 @@
+const Database = require('better-sqlite3');
+const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+
+function getProviderApiKey(type) {
+  const provider = db.prepare('SELECT apiKey FROM providers WHERE type = ?').get(type);
+  return provider?.apiKey || null;
+}
+
 module.exports = {
   name: 'OpenClaw',
   description: 'OpenClaw — persistent AI agent with gateway, tools and browser',
@@ -17,7 +25,14 @@ module.exports = {
   buildConfig({ name, domain, image, port, config }) {
     const crypto = require('crypto');
     const autoToken = config.OPENCLAW_GATEWAY_TOKEN || crypto.randomBytes(32).toString('hex');
-    return { ...config, domain, OPENCLAW_GATEWAY_TOKEN: autoToken };
+    
+    // Auto-inject API keys from providers if not in config
+    const autoConfig = { ...config, domain, OPENCLAW_GATEWAY_TOKEN: autoToken };
+    if (!autoConfig.OPENAI_API_KEY) autoConfig.OPENAI_API_KEY = getProviderApiKey('openai');
+    if (!autoConfig.ANTHROPIC_API_KEY) autoConfig.ANTHROPIC_API_KEY = getProviderApiKey('anthropic');
+    if (!autoConfig.OPENROUTER_API_KEY) autoConfig.OPENROUTER_API_KEY = getProviderApiKey('openrouter');
+    
+    return autoConfig;
   },
 
   buildEnv(config) {

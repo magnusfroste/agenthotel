@@ -3,13 +3,15 @@ import { authFetch } from '../lib/auth'
 
 function Settings() {
   const [settings, setSettings] = useState({})
-  const [domain, setDomain] = useState('')
+  const [systemInfo, setSystemInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState({ type: '', text: '' })
+  const [message, setMessage] = useState('')
+  const [confirmAction, setConfirmAction] = useState(null)
 
   useEffect(() => {
     fetchSettings()
+    fetchSystemInfo()
   }, [])
 
   async function fetchSettings() {
@@ -17,36 +19,58 @@ function Settings() {
       const res = await authFetch('/api/settings')
       const data = await res.json()
       setSettings(data)
-      setDomain(data.panel_domain || '')
     } catch (err) {
       console.error('Failed to fetch settings:', err)
-      setMessage({ type: 'error', text: 'Failed to load settings' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function fetchSystemInfo() {
+    try {
+      const res = await authFetch('/api/system/status')
+      const data = await res.json()
+      setSystemInfo(data)
+    } catch (err) {
+      console.error('Failed to fetch system info:', err)
     }
   }
 
   async function handleSave(e) {
     e.preventDefault()
     setSaving(true)
-    setMessage({ type: '', text: '' })
+    setMessage('')
 
     try {
       const res = await authFetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ panel_domain: domain })
+        body: JSON.stringify(settings)
       })
 
-      if (!res.ok) {
-        throw new Error('Failed to save settings')
-      }
-
-      setMessage({ type: 'success', text: 'Settings saved successfully' })
+      if (!res.ok) throw new Error('Failed to save settings')
+      setMessage('Settings saved successfully!')
+      setTimeout(() => setMessage(''), 3000)
     } catch (err) {
-      setMessage({ type: 'error', text: err.message })
+      setMessage('Error: ' + err.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  function handleChange(e) {
+    const { name, value } = e.target
+    setSettings(prev => ({ ...prev, [name]: value }))
+  }
+
+  async function executeSystemAction(action) {
+    try {
+      const res = await authFetch(`/api/system/${action}`, { method: 'POST' })
+      const data = await res.json()
+      setMessage(data.message || 'Action executed')
+      setConfirmAction(null)
+    } catch (err) {
+      setMessage('Error: ' + err.message)
     }
   }
 
@@ -55,50 +79,305 @@ function Settings() {
   }
 
   return (
-    <div className="settings-container">
-      <div className="dashboard-header">
-        <h1>Settings</h1>
-      </div>
+    <div>
+      <h1 style={{ marginBottom: '2rem' }}>Settings</h1>
 
-      {message.text && (
-        <div className={message.type}>{message.text}</div>
+      {message && (
+        <div style={{
+          padding: '1rem',
+          marginBottom: '1.5rem',
+          background: message.startsWith('Error') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+          border: `1px solid ${message.startsWith('Error') ? '#ef4444' : '#10b981'}`,
+          borderRadius: '0.5rem',
+          color: message.startsWith('Error') ? '#ef4444' : '#10b981'
+        }}>
+          {message}
+        </div>
+      )}
+
+      {systemInfo && (
+        <div style={{
+          background: 'var(--bg-secondary, #1e293b)',
+          borderRadius: '0.5rem',
+          padding: '1.5rem',
+          marginBottom: '2rem'
+        }}>
+          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🖥️ System Information</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Hostname</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.hostname}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>OS</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.os}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Kernel</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.kernel}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Uptime</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.uptime}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Docker</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.dockerVersion}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>AgentPanel</div>
+              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.agentpanel.branch} ({systemInfo.agentpanel.commit})</div>
+            </div>
+          </div>
+        </div>
       )}
 
       <form onSubmit={handleSave}>
-        <div className="settings-section">
-          <h2>Panel Domain</h2>
-          <p className="settings-info">
-            Configure the domain for accessing this panel. Leave empty to access via IP address.
-            After setting a domain, ensure DNS points to this server's IP address.
-          </p>
+        <div style={{
+          background: 'var(--bg-secondary, #1e293b)',
+          borderRadius: '0.5rem',
+          padding: '1.5rem',
+          marginBottom: '2rem'
+        }}>
+          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>⚙️ General Settings</h2>
 
           <div className="form-group">
-            <label>Domain</label>
+            <label>Panel Domain</label>
             <input
               type="text"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
+              name="panel_domain"
+              value={settings.panel_domain || ''}
+              onChange={handleChange}
               placeholder="panel.example.com"
             />
           </div>
 
-          <div className="form-actions">
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
+          <div className="form-group">
+            <label>Caddy Email (Let's Encrypt)</label>
+            <input
+              type="email"
+              name="caddy_email"
+              value={settings.caddy_email || ''}
+              onChange={handleChange}
+              placeholder="admin@example.com"
+            />
           </div>
+
+          <div className="form-group">
+            <label>Default Timeout (seconds)</label>
+            <input
+              type="number"
+              name="default_timeout"
+              value={settings.default_timeout || '30'}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Default Docker Network</label>
+            <input
+              type="text"
+              name="default_network"
+              value={settings.default_network || 'agentpanel_agentpanel'}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Container Restart Policy</label>
+            <select
+              name="container_restart_policy"
+              value={settings.container_restart_policy || 'unless-stopped'}
+              onChange={handleChange}
+            >
+              <option value="unless-stopped">Unless Stopped</option>
+              <option value="always">Always</option>
+              <option value="on-failure">On Failure</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Theme</label>
+            <select
+              name="theme"
+              value={settings.theme || 'dark'}
+              onChange={handleChange}
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Language</label>
+            <select
+              name="language"
+              value={settings.language || 'sv'}
+              onChange={handleChange}
+            >
+              <option value="sv">Svenska</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Timezone</label>
+            <input
+              type="text"
+              name="timezone"
+              value={settings.timezone || 'Europe/Stockholm'}
+              onChange={handleChange}
+            />
+          </div>
+        </div>
+
+        <div style={{
+          background: 'var(--bg-secondary, #1e293b)',
+          borderRadius: '0.5rem',
+          padding: '1.5rem',
+          marginBottom: '2rem'
+        }}>
+          <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔒 Security</h2>
+
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                name="rate_limit_enabled"
+                checked={settings.rate_limit_enabled === 'true'}
+                onChange={(e) => setSettings(prev => ({ ...prev, rate_limit_enabled: e.target.checked ? 'true' : 'false' }))}
+              />
+              Enable Rate Limiting
+            </label>
+          </div>
+
+          <div className="form-group">
+            <label>Rate Limit (requests/minute)</label>
+            <input
+              type="number"
+              name="rate_limit_requests"
+              value={settings.rate_limit_requests || '100'}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                name="require_https"
+                checked={settings.require_https === 'true'}
+                onChange={(e) => setSettings(prev => ({ ...prev, require_https: e.target.checked ? 'true' : 'false' }))}
+              />
+              Require HTTPS
+            </label>
+          </div>
+
+          <div className="form-group">
+            <label>Session Timeout (minutes)</label>
+            <input
+              type="number"
+              name="session_timeout"
+              value={settings.session_timeout || '60'}
+              onChange={handleChange}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
       </form>
 
-      <div className="settings-section">
-        <h2>Account Information</h2>
-        <div className="agent-detail-info">
-          <div className="info-item">
-            <div className="info-label">Email</div>
-            <div className="info-value">{settings.admin_email || 'Not set'}</div>
-          </div>
+      <div style={{
+        background: 'var(--bg-secondary, #1e293b)',
+        borderRadius: '0.5rem',
+        padding: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔧 System Controls</h2>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setConfirmAction('restart-panel')}
+            style={{ background: '#3b82f6', color: 'white' }}
+          >
+            🔄 Restart AgentPanel
+          </button>
+
+          <button
+            className="btn btn-secondary"
+            onClick={() => setConfirmAction('restart-docker')}
+            style={{ background: '#f59e0b', color: 'white' }}
+          >
+            🐳 Restart Docker
+          </button>
+
+          <button
+            className="btn btn-secondary"
+            onClick={() => setConfirmAction('update')}
+            style={{ background: '#10b981', color: 'white' }}
+          >
+            ⬆️ Update AgentPanel
+          </button>
+
+          <button
+            className="btn btn-danger"
+            onClick={() => setConfirmAction('reboot')}
+          >
+            ⚠️ Reboot Server
+          </button>
         </div>
       </div>
+
+      {confirmAction && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'var(--bg-primary, #0f172a)',
+            borderRadius: '0.5rem',
+            padding: '2rem',
+            maxWidth: '500px',
+            border: '1px solid var(--border, #334155)'
+          }}>
+            <h3 style={{ margin: '0 0 1rem 0' }}>Confirm Action</h3>
+            <p style={{ marginBottom: '1.5rem' }}>
+              {confirmAction === 'restart-panel' && 'Are you sure you want to restart AgentPanel? This will briefly interrupt service.'}
+              {confirmAction === 'restart-docker' && 'Are you sure you want to restart Docker? All containers will be affected.'}
+              {confirmAction === 'update' && 'Are you sure you want to update AgentPanel to the latest version?'}
+              {confirmAction === 'reboot' && '⚠️ WARNING: This will reboot the entire server. All services will be interrupted.'}
+            </p>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => executeSystemAction(confirmAction)}
+              >
+                Confirm
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmAction(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

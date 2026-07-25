@@ -119,6 +119,22 @@ app.get('/api/settings', requireAuth, (req, res) => {
       settings[row.key] = row.value;
     }
   }
+  
+  // Default values for new settings
+  if (!settings.caddy_email) settings.caddy_email = '';
+  if (!settings.default_timeout) settings.default_timeout = '30';
+  if (!settings.default_network) settings.default_network = 'agentpanel_agentpanel';
+  if (!settings.rate_limit_enabled) settings.rate_limit_enabled = 'false';
+  if (!settings.rate_limit_requests) settings.rate_limit_requests = '100';
+  if (!settings.require_https) settings.require_https = 'true';
+  if (!settings.session_timeout) settings.session_timeout = '60';
+  if (!settings.container_restart_policy) settings.container_restart_policy = 'unless-stopped';
+  if (!settings.default_memory_limit) settings.default_memory_limit = '';
+  if (!settings.default_cpu_limit) settings.default_cpu_limit = '';
+  if (!settings.theme) settings.theme = 'dark';
+  if (!settings.language) settings.language = 'sv';
+  if (!settings.timezone) settings.timezone = 'Europe/Stockholm';
+  
   res.json(settings);
 });
 
@@ -127,6 +143,7 @@ app.put('/api/settings', requireAuth, async (req, res) => {
     let domainChanged = false;
     let newDomain = null;
     let oldDomain = null;
+    let caddyEmailChanged = false;
 
     for (const [key, value] of Object.entries(req.body)) {
       if (['admin_password_hash', 'admin_password_salt', 'auth_token'].includes(key)) continue;
@@ -136,6 +153,10 @@ app.put('/api/settings', requireAuth, async (req, res) => {
         oldDomain = existing?.value || null;
         newDomain = value || null;
         if (oldDomain !== newDomain) domainChanged = true;
+      }
+
+      if (key === 'caddy_email') {
+        caddyEmailChanged = true;
       }
 
       const existing = db.prepare('SELECT key FROM settings WHERE key = ?').get(key);
@@ -148,6 +169,10 @@ app.put('/api/settings', requireAuth, async (req, res) => {
 
     if (domainChanged) {
       await updatePanelCaddyRoute(oldDomain, newDomain);
+    }
+
+    if (caddyEmailChanged) {
+      await updateCaddyEmail();
     }
 
     res.json({ updated: true });
@@ -294,11 +319,43 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
   }
 }
 
+async function updateCaddyEmail() {
+  const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+  const fetch = require('node-fetch');
+  
+  const emailRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('caddy_email');
+  const email = emailRow?.value;
+  
+  if (!email) return;
+  
+  try {
+    const res = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issuers: [{
+          module: 'acme',
+          ca: 'https://acme-v02.api.letsencrypt.org/directory',
+          contact: [`mailto:${email}`]
+        }]
+      })
+    });
+    
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('Failed to update Caddy email:', err);
+    }
+  } catch (err) {
+    console.error('Failed to update Caddy email:', err);
+  }
+}
+
 const runtimes = {
   hermes: require('./plugins/hermes'),
   openclaw: require('./plugins/openclaw'),
   odysseus: require('./plugins/odysseus'),
-  'docker-app': require('./plugins/docker-app')
+  'docker-app': require('./plugins/docker-app'),
+  compose: require('./plugins/compose')
 };
 
 app.get('/api/agents', requireAuth, (req, res) => {
@@ -314,19 +371,51 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
 
 app.post('/api/agents', requireAuth, async (req, res) => {
   try {
-    const { name, runtime, domain, image, port, config } = req.body;
+    const { name, runtime, domain, image, port, config, quickStart } = req.body;
     const plugin = runtimes[runtime];
     if (!plugin) return res.status(400).json({ error: `Unknown runtime: ${runtime}` });
 
     const id = `${runtime}-${name}-${Date.now()}`;
-    const agentConfig = plugin.buildConfig({ name, domain, image, port, config });
+    
+    // Quick start: auto-populate config from providers
+    let finalConfig = config || {};
+    if (quickStart) {
+      finalConfig = { ...finalConfig };
+      
+      // Auto-inject API keys from providers
+      const providers = db.prepare('SELECT type, apiKey FROM providers').all();
+      for (const provider of providers) {
+        const envKey = `${provider.type.toUpperCase()}_API_KEY`;
+        if (!finalConfig[envKey] && provider.apiKey) {
+          finalConfig[envKey] = provider.apiKey;
+        }
+      }
+      
+      // Set default model if not specified
+      if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
+        if (finalConfig.OPENAI_API_KEY) {
+          finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4.1';
+          finalConfig.HERMES_MODEL = 'openai/gpt-4.1';
+        } else if (finalConfig.OPENROUTER_API_KEY) {
+          finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/anthropic/claude-3.5-sonnet';
+          finalConfig.HERMES_MODEL = 'openrouter/anthropic/claude-3.5-sonnet';
+        }
+      }
+    }
+    
+    const agentConfig = plugin.buildConfig({ name, domain, image, port, config: finalConfig });
 
     db.prepare(`
       INSERT INTO agents (id, name, runtime, domain, image, port, config, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'creating')
     `).run(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, JSON.stringify(agentConfig));
 
-    await deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin);
+    // Handle compose runtime separately
+    if (runtime === 'compose') {
+      await plugin.deploy(id, name, agentConfig, plugin);
+    } else {
+      await deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin);
+    }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     res.json({ id, name, status: 'running' });
@@ -672,6 +761,81 @@ app.get('/api/providers/:id/models', requireAuth, async (req, res) => {
     } else {
       res.json([]);
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// System control endpoints
+const { execSync } = require('child_process');
+
+app.get('/api/system/status', requireAuth, (req, res) => {
+  try {
+    const uptime = execSync('uptime -p').toString().trim();
+    const hostname = execSync('hostname').toString().trim();
+    const kernel = execSync('uname -r').toString().trim();
+    const os = execSync('cat /etc/os-release | grep PRETTY_NAME | cut -d\\" -f2').toString().trim();
+    const dockerVersion = execSync('docker --version').toString().trim();
+    const gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: '/app' }).toString().trim();
+    const gitCommit = execSync('git rev-parse --short HEAD', { cwd: '/app' }).toString().trim();
+    
+    res.json({
+      hostname,
+      kernel,
+      os,
+      uptime,
+      dockerVersion,
+      agentpanel: {
+        branch: gitBranch,
+        commit: gitCommit
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/restart-panel', requireAuth, (req, res) => {
+  try {
+    res.json({ message: 'Restarting AgentPanel...' });
+    setTimeout(() => {
+      execSync('docker compose restart', { cwd: '/app' });
+    }, 100);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/restart-docker', requireAuth, (req, res) => {
+  try {
+    res.json({ message: 'Restarting Docker...' });
+    setTimeout(() => {
+      execSync('systemctl restart docker');
+    }, 100);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/update', requireAuth, async (req, res) => {
+  try {
+    res.json({ message: 'Updating AgentPanel...' });
+    setTimeout(() => {
+      execSync('git pull', { cwd: '/app' });
+      execSync('docker compose build', { cwd: '/app' });
+      execSync('docker compose up -d', { cwd: '/app' });
+    }, 100);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/reboot', requireAuth, (req, res) => {
+  try {
+    res.json({ message: 'Rebooting server...' });
+    setTimeout(() => {
+      execSync('reboot');
+    }, 100);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
