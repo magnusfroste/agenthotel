@@ -885,6 +885,16 @@ app.post('/api/providers/:id/test', requireAuth, async (req, res) => {
       body
     });
     
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errData = await response.json();
+        errorMsg = errData.error?.message || errData.message || errData.error || errorMsg;
+      } catch {}
+      res.json({ success: false, error: errorMsg });
+      return;
+    }
+    
     const data = await response.json();
     
     if (data.error) {
