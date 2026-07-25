@@ -599,10 +599,6 @@ async function addCaddyRoute(domain, containerName, port) {
     }]
   };
 
-  try {
-    await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
-  } catch (e) { }
-  
   const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -612,11 +608,6 @@ async function addCaddyRoute(domain, containerName, port) {
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Failed to add Caddy route: ${err}`);
-  }
-  
-  const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
-  if (panelDomain?.value) {
-    await updatePanelCaddyRoute(null, panelDomain.value);
   }
 }
 
@@ -1295,15 +1286,31 @@ async function initPanelRoute() {
     const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
     const fetch = require('node-fetch');
     
-    // First, try to delete any existing panel-route to avoid duplicates
-    try {
-      await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
-      console.log('Removed existing panel-route');
-    } catch (e) {
-      // Route doesn't exist, which is fine
+    const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
+    
+    // Check if panel-route already exists with correct domain
+    const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+    if (routesRes.ok) {
+      const routes = await routesRes.json();
+      const panelRoute = routes.find(r => r['@id'] === 'panel-route');
+      
+      if (panelRoute) {
+        const existingDomain = panelRoute.match?.[0]?.host?.[0];
+        const expectedDomain = panelDomain?.value || null;
+        
+        if (existingDomain === expectedDomain) {
+          console.log(`Panel route already exists for ${existingDomain || 'catch-all'}`);
+          return;
+        }
+        
+        // Domain changed, remove old route
+        console.log(`Panel domain changed from ${existingDomain} to ${expectedDomain}, updating...`);
+        try {
+          await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+        } catch (e) { /* ignore */ }
+      }
     }
     
-    const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
     if (panelDomain?.value) {
       await updatePanelCaddyRoute(null, panelDomain.value);
       console.log(`Panel route created for ${panelDomain.value}`);

@@ -14,7 +14,7 @@ RUN pip3 install --no-cache-dir --break-system-packages uv \
     || (curl -LsSf https://astral.sh/uv/install.sh | sh)
 
 # Always install latest OpenClaw on image build
-RUN npm install -g openclaw@latest
+RUN rm -f /usr/local/bin/openclaw && npm install -g openclaw@latest
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN node /app/node_modules/playwright-core/cli.js install --with-deps chromium \
@@ -111,9 +111,24 @@ merge(config, essentials);
 config.meta = Object.assign({}, config.meta, { lastTouchedAt: new Date().toISOString() });
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 console.log('openclaw.json written successfully');
+
+// OpenClaw's embedded agent runtime auto-enables the 'codex' harness when
+// OpenAI auth is detected. The codex harness reads its own auth.json from
+// codex-home instead of the OPENAI_API_KEY env var, so we must pre-seed it
+// BEFORE the gateway starts (same pattern as clawclass bootstrap).
+if (e.OPENAI_API_KEY) {
+  const codexHomeDir = '/home/node/.openclaw/agents/main/agent/codex-home';
+  fs.mkdirSync(codexHomeDir, { recursive: true });
+  fs.writeFileSync(
+    codexHomeDir + '/auth.json',
+    JSON.stringify({ OPENAI_API_KEY: e.OPENAI_API_KEY }, null, 2)
+  );
+  console.log('codex-home/auth.json written successfully');
+}
 "
 
-chown node:node "$CONFIG_PATH"
+mkdir -p /home/node/.openclaw/agents/main/agent/codex-home
+chown -R node:node /home/node/.openclaw
 exec sudo -u node openclaw gateway --bind lan --port 18789
 ENTRYPOINT
 
