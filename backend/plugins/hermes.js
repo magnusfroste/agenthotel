@@ -1,10 +1,17 @@
+const Database = require('better-sqlite3');
+const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+
+function getProvider(type) {
+  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE type = ?').get(type);
+}
+
 module.exports = {
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
   defaultPort: 9119,
   configFields: [
-    { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: true },
+    { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'Custom Base URL', type: 'text', required: false },
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-4.1' },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
@@ -15,7 +22,28 @@ module.exports = {
   ],
 
   buildConfig({ name, domain, image, port, config }) {
-    return { ...config };
+    const autoConfig = { ...config };
+    
+    const openai = getProvider('openai');
+    if (!autoConfig.OPENAI_API_KEY && openai?.apiKey) autoConfig.OPENAI_API_KEY = openai.apiKey;
+    if (!autoConfig.OPENAI_BASE_URL && openai?.baseUrl) autoConfig.OPENAI_BASE_URL = openai.baseUrl;
+    
+    const openrouter = getProvider('openrouter');
+    if (!autoConfig.OPENROUTER_API_KEY && openrouter?.apiKey) autoConfig.OPENROUTER_API_KEY = openrouter.apiKey;
+    
+    const anthropic = getProvider('anthropic');
+    if (!autoConfig.ANTHROPIC_API_KEY && anthropic?.apiKey) autoConfig.ANTHROPIC_API_KEY = anthropic.apiKey;
+    
+    const gemini = getProvider('gemini');
+    if (!autoConfig.GEMINI_API_KEY && gemini?.apiKey) autoConfig.GEMINI_API_KEY = gemini.apiKey;
+    
+    const deepseek = getProvider('deepseek');
+    if (!autoConfig.DEEPSEEK_API_KEY && deepseek?.apiKey) autoConfig.DEEPSEEK_API_KEY = deepseek.apiKey;
+    
+    const groq = getProvider('groq');
+    if (!autoConfig.GROQ_API_KEY && groq?.apiKey) autoConfig.GROQ_API_KEY = groq.apiKey;
+    
+    return autoConfig;
   },
 
   buildEnv(config) {

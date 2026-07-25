@@ -94,7 +94,7 @@ function Dashboard() {
         </div>
       </div>
 
-      {systemStats && (
+      {systemStats && systemStats.cpu && systemStats.mem && systemStats.disk && (
         <div className="system-stats" style={{ 
           display: 'grid', 
           gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 

@@ -57,7 +57,9 @@ const merge = (t, s) => {
 const essentials = {
   gateway: {
     mode: 'local',
-    token: e.OPENCLAW_GATEWAY_TOKEN || '',
+    auth: {
+      token: e.OPENCLAW_GATEWAY_TOKEN || ''
+    },
     trustedProxies: (e.OPENCLAW_TRUSTED_PROXIES || '127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16')
       .split(',').map(s => s.trim()),
     controlUi: {
@@ -93,7 +95,7 @@ console.log('openclaw.json written successfully');
 "
 
 chown node:node "$CONFIG_PATH"
-exec gosu node openclaw gateway --bind lan --port 18789
+exec sudo -u node openclaw gateway --bind lan --port 18789
 ENTRYPOINT
 
 ENTRYPOINT ["/entrypoint.sh"]

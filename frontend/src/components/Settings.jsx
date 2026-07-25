@@ -3,15 +3,12 @@ import { authFetch } from '../lib/auth'
 
 function Settings() {
   const [settings, setSettings] = useState({})
-  const [systemInfo, setSystemInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
-  const [confirmAction, setConfirmAction] = useState(null)
 
   useEffect(() => {
     fetchSettings()
-    fetchSystemInfo()
   }, [])
 
   async function fetchSettings() {
@@ -23,16 +20,6 @@ function Settings() {
       console.error('Failed to fetch settings:', err)
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function fetchSystemInfo() {
-    try {
-      const res = await authFetch('/api/system/status')
-      const data = await res.json()
-      setSystemInfo(data)
-    } catch (err) {
-      console.error('Failed to fetch system info:', err)
     }
   }
 
@@ -63,17 +50,6 @@ function Settings() {
     setSettings(prev => ({ ...prev, [name]: value }))
   }
 
-  async function executeSystemAction(action) {
-    try {
-      const res = await authFetch(`/api/system/${action}`, { method: 'POST' })
-      const data = await res.json()
-      setMessage(data.message || 'Action executed')
-      setConfirmAction(null)
-    } catch (err) {
-      setMessage('Error: ' + err.message)
-    }
-  }
-
   if (loading) {
     return <div className="loading">Loading settings...</div>
   }
@@ -92,43 +68,6 @@ function Settings() {
           color: message.startsWith('Error') ? '#ef4444' : '#10b981'
         }}>
           {message}
-        </div>
-      )}
-
-      {systemInfo && (
-        <div style={{
-          background: 'var(--bg-secondary, #1e293b)',
-          borderRadius: '0.5rem',
-          padding: '1.5rem',
-          marginBottom: '2rem'
-        }}>
-          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem' }}>🖥️ System Information</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Hostname</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.hostname}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>OS</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.os}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Kernel</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.kernel}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Uptime</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.uptime}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>Docker</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.dockerVersion}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>AgentPanel</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{systemInfo.agentpanel.branch} ({systemInfo.agentpanel.commit})</div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -291,93 +230,6 @@ function Settings() {
           </button>
         </div>
       </form>
-
-      <div style={{
-        background: 'var(--bg-secondary, #1e293b)',
-        borderRadius: '0.5rem',
-        padding: '1.5rem',
-        marginBottom: '2rem'
-      }}>
-        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>🔧 System Controls</h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-          <button
-            className="btn btn-secondary"
-            onClick={() => setConfirmAction('restart-panel')}
-            style={{ background: '#3b82f6', color: 'white' }}
-          >
-            🔄 Restart AgentPanel
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={() => setConfirmAction('restart-docker')}
-            style={{ background: '#f59e0b', color: 'white' }}
-          >
-            🐳 Restart Docker
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={() => setConfirmAction('update')}
-            style={{ background: '#10b981', color: 'white' }}
-          >
-            ⬆️ Update AgentPanel
-          </button>
-
-          <button
-            className="btn btn-danger"
-            onClick={() => setConfirmAction('reboot')}
-          >
-            ⚠️ Reboot Server
-          </button>
-        </div>
-      </div>
-
-      {confirmAction && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.7)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'var(--bg-primary, #0f172a)',
-            borderRadius: '0.5rem',
-            padding: '2rem',
-            maxWidth: '500px',
-            border: '1px solid var(--border, #334155)'
-          }}>
-            <h3 style={{ margin: '0 0 1rem 0' }}>Confirm Action</h3>
-            <p style={{ marginBottom: '1.5rem' }}>
-              {confirmAction === 'restart-panel' && 'Are you sure you want to restart AgentPanel? This will briefly interrupt service.'}
-              {confirmAction === 'restart-docker' && 'Are you sure you want to restart Docker? All containers will be affected.'}
-              {confirmAction === 'update' && 'Are you sure you want to update AgentPanel to the latest version?'}
-              {confirmAction === 'reboot' && '⚠️ WARNING: This will reboot the entire server. All services will be interrupted.'}
-            </p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button
-                className="btn btn-primary"
-                onClick={() => executeSystemAction(confirmAction)}
-              >
-                Confirm
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setConfirmAction(null)}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

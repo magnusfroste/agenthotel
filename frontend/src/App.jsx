@@ -5,6 +5,9 @@ import Dashboard from './components/Dashboard'
 import CreateAgent from './components/CreateAgent'
 import AgentDetail from './components/AgentDetail'
 import Settings from './components/Settings'
+import System from './components/System'
+import Connect from './components/Connect'
+import Providers from './components/Providers'
 import Console from './components/Console'
 import Certificates from './components/Certificates'
 import Profile from './components/Profile'
@@ -119,6 +122,18 @@ function Sidebar({ onLogout }) {
         <Link to="/console" className={`sidebar-link ${isActive('/console')}`}>
           <span className="sidebar-icon">💻</span>
           <span>Console</span>
+        </Link>
+        <Link to="/system" className={`sidebar-link ${isActive('/system')}`}>
+          <span className="sidebar-icon">🖥️</span>
+          <span>System</span>
+        </Link>
+        <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}>
+          <span className="sidebar-icon">🔗</span>
+          <span>Connect</span>
+        </Link>
+        <Link to="/providers" className={`sidebar-link ${isActive('/providers')}`}>
+          <span className="sidebar-icon">🔑</span>
+          <span>Providers</span>
         </Link>
         <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}>
           <span className="sidebar-icon">⚙️</span>
@@ -289,6 +304,9 @@ function App() {
             <Route path="/create" element={<CreateAgent />} />
             <Route path="/agent/:id" element={<AgentDetail />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/system" element={<System />} />
+            <Route path="/connect" element={<Connect />} />
+            <Route path="/providers" element={<Providers />} />
             <Route path="/console" element={<Console />} />
             <Route path="/certificates" element={<Certificates />} />
             <Route path="/profile" element={<Profile />} />

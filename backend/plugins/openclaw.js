@@ -1,9 +1,8 @@
 const Database = require('better-sqlite3');
 const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
 
-function getProviderApiKey(type) {
-  const provider = db.prepare('SELECT apiKey FROM providers WHERE type = ?').get(type);
-  return provider?.apiKey || null;
+function getProvider(type) {
+  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE type = ?').get(type);
 }
 
 module.exports = {
@@ -13,8 +12,9 @@ module.exports = {
   defaultPort: 18789,
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
-    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-4.1' },
+    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'gpt-4.1' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },
+    { key: 'OPENAI_BASE_URL', label: 'OpenAI Base URL', type: 'text', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
     { key: 'ZAI_API_KEY', label: 'Z.ai Key', type: 'password', required: false },
@@ -26,11 +26,21 @@ module.exports = {
     const crypto = require('crypto');
     const autoToken = config.OPENCLAW_GATEWAY_TOKEN || crypto.randomBytes(32).toString('hex');
     
-    // Auto-inject API keys from providers if not in config
     const autoConfig = { ...config, domain, OPENCLAW_GATEWAY_TOKEN: autoToken };
-    if (!autoConfig.OPENAI_API_KEY) autoConfig.OPENAI_API_KEY = getProviderApiKey('openai');
-    if (!autoConfig.ANTHROPIC_API_KEY) autoConfig.ANTHROPIC_API_KEY = getProviderApiKey('anthropic');
-    if (!autoConfig.OPENROUTER_API_KEY) autoConfig.OPENROUTER_API_KEY = getProviderApiKey('openrouter');
+    
+    const openai = getProvider('openai');
+    if (!autoConfig.OPENAI_API_KEY && openai?.apiKey) autoConfig.OPENAI_API_KEY = openai.apiKey;
+    if (!autoConfig.OPENAI_BASE_URL && openai?.baseUrl) autoConfig.OPENAI_BASE_URL = openai.baseUrl;
+    
+    const anthropic = getProvider('anthropic');
+    if (!autoConfig.ANTHROPIC_API_KEY && anthropic?.apiKey) autoConfig.ANTHROPIC_API_KEY = anthropic.apiKey;
+    
+    const openrouter = getProvider('openrouter');
+    if (!autoConfig.OPENROUTER_API_KEY && openrouter?.apiKey) autoConfig.OPENROUTER_API_KEY = openrouter.apiKey;
+    
+    const zai = getProvider('zai');
+    if (!autoConfig.ZAI_API_KEY && zai?.apiKey) autoConfig.ZAI_API_KEY = zai.apiKey;
+    if (!autoConfig.OPENCLAW_ZAI_BASE_URL && zai?.baseUrl) autoConfig.OPENCLAW_ZAI_BASE_URL = zai.baseUrl;
     
     return autoConfig;
   },
@@ -47,7 +57,7 @@ module.exports = {
     ];
     const keys = [
       'OPENCLAW_GATEWAY_TOKEN', 'OPENCLAW_MODEL_PRIMARY',
-      'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
+      'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
       'ZAI_API_KEY', 'OPENCLAW_ZAI_BASE_URL', 'OPENCLAW_MODEL_FALLBACKS'
     ];
     for (const key of keys) {

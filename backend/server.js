@@ -227,6 +227,8 @@ function readProcStat() {
 
 app.get('/api/system/stats', requireAuth, async (req, res) => {
   try {
+    const { execSync } = require('child_process');
+    
     const t1 = readProcStat();
     await new Promise(r => setTimeout(r, 300));
     const t2 = readProcStat();
@@ -241,22 +243,62 @@ app.get('/api/system/stats', requireAuth, async (req, res) => {
 
     let diskUsed = 0, diskTotal = 1;
     try {
-      const { execSync } = require('child_process');
       const dfLine = execSync('df -B1 / 2>/dev/null | tail -1').toString().trim().split(/\s+/);
       diskTotal = parseInt(dfLine[1]) || 1;
       diskUsed = parseInt(dfLine[2]) || 0;
     } catch {}
 
+    let cpuCores = 1;
+    let cpuFreq = 0;
+    let cpuLoad = [0, 0, 0];
+    try {
+      const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+      cpuCores = (cpuinfo.match(/processor\s*:/g) || []).length || 1;
+      const freqMatch = cpuinfo.match(/cpu MHz\s*:\s*(\d+)/);
+      cpuFreq = freqMatch ? parseInt(freqMatch[1]) : 0;
+      const loadavg = fs.readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/);
+      cpuLoad = [parseFloat(loadavg[0]), parseFloat(loadavg[1]), parseFloat(loadavg[2])];
+    } catch {}
+
+    let network = {};
+    try {
+      const netData = fs.readFileSync('/proc/net/dev', 'utf8');
+      const lines = netData.split('\n').slice(2);
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 10 && parts[0] !== 'lo:') {
+          const iface = parts[0].replace(':', '');
+          const rx = parseInt(parts[1]) || 0;
+          const tx = parseInt(parts[9]) || 0;
+          if (rx > 0 || tx > 0) {
+            network[iface] = {
+              rx: formatBytes(rx),
+              tx: formatBytes(tx)
+            };
+          }
+        }
+      }
+    } catch {}
+
     res.json({
-      cpu: { pct: cpuPct },
+      cpu: { pct: cpuPct, cores: cpuCores, frequency: cpuFreq, load: cpuLoad },
       mem: { used: memUsed, total: memTotal, pct: Math.round(memUsed / memTotal * 100) },
-      disk: { used: diskUsed, total: diskTotal, pct: Math.round(diskUsed / diskTotal * 100) }
+      disk: { used: diskUsed, total: diskTotal, pct: Math.round(diskUsed / diskTotal * 100) },
+      network
     });
   } catch (err) {
     console.error('System stats error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
 
 async function updatePanelCaddyRoute(oldDomain, newDomain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
@@ -303,18 +345,29 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
       throw new Error(`Failed to update Caddy panel route: ${err}`);
     }
 
-    const tlsRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subjects: [newDomain],
-        issuers: [{ module: 'acme', ca: 'https://acme-v02.api.letsencrypt.org/directory' }]
-      })
-    });
+    // Check if TLS policy already exists for this domain
+    const existingPoliciesRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
+    if (existingPoliciesRes.ok) {
+      const existingPolicies = await existingPoliciesRes.json();
+      const policyExists = existingPolicies.some(policy => 
+        policy.subjects && policy.subjects.includes(newDomain)
+      );
+      
+      if (!policyExists) {
+        const tlsRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subjects: [newDomain],
+            issuers: [{ module: 'acme', ca: 'https://acme-v02.api.letsencrypt.org/directory' }]
+          })
+        });
 
-    if (!tlsRes.ok) {
-      const err = await tlsRes.text();
-      console.error('Failed to update Caddy TLS policy:', err);
+        if (!tlsRes.ok) {
+          const err = await tlsRes.text();
+          console.error('Failed to update Caddy TLS policy:', err);
+        }
+      }
     }
   }
 }
@@ -357,6 +410,11 @@ const runtimes = {
   'docker-app': require('./plugins/docker-app'),
   compose: require('./plugins/compose')
 };
+
+const { createMcpServer } = require('./mcp');
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute);
+
+app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
 app.get('/api/agents', requireAuth, (req, res) => {
   const agents = db.prepare('SELECT * FROM agents ORDER BY created_at DESC').all();
@@ -437,24 +495,17 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   let volumes = [];
   
   if (runtime !== 'docker-app') {
-    const existingImage = await docker.getImage(baseImage).get().catch(() => null);
-    
-    if (!existingImage) {
-      const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
-      if (fs.existsSync(dockerfilePath)) {
-        const buildContext = path.join('/templates', runtime);
-        const tarStream = tar.pack(buildContext);
-        const stream = await docker.buildImage(tarStream, { t: baseImage });
-        await new Promise((resolve, reject) => {
-          docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
-        });
-        imageToRun = baseImage;
-      }
-    } else {
+    const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
+    if (fs.existsSync(dockerfilePath)) {
+      const buildContext = path.join('/templates', runtime);
+      const tarStream = tar.pack(buildContext);
+      const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
+      await new Promise((resolve, reject) => {
+        docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
+      });
       imageToRun = baseImage;
     }
     
-    const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
     if (fs.existsSync(dockerfilePath)) {
       const dockerfileContent = fs.readFileSync(dockerfilePath, 'utf8');
       const volumeMatches = dockerfileContent.match(/^VOLUME\s+(.+)$/gm);
@@ -796,18 +847,66 @@ app.get('/api/providers/:id/models', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/providers/:id/test', requireAuth, async (req, res) => {
+  try {
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+    if (!provider) return res.status(404).json({ error: 'Provider not found' });
+    
+    const { model, prompt } = req.body;
+    const testPrompt = prompt || 'Say hello in one word';
+    const testModel = model || (provider.models && provider.models !== '[]' ? JSON.parse(provider.models)[0] : 'gpt-3.5-turbo');
+    
+    const fetch = require('node-fetch');
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (provider.apiKey) {
+      headers['Authorization'] = `Bearer ${provider.apiKey}`;
+    }
+    
+    const body = JSON.stringify({
+      model: testModel,
+      messages: [{ role: 'user', content: testPrompt }],
+      max_tokens: 50
+    });
+    
+    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      res.json({ success: false, error: data.error.message || data.error });
+    } else {
+      const reply = data.choices?.[0]?.message?.content || 'No response';
+      res.json({ success: true, response: reply, model: testModel });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // System control endpoints
 const { execSync } = require('child_process');
 
 app.get('/api/system/status', requireAuth, (req, res) => {
   try {
-    const uptime = execSync('uptime -p').toString().trim();
+    const uptimeRaw = execSync('uptime').toString().trim();
+    const uptimeMatch = uptimeRaw.match(/up\s+(.+?),\s+\d+\s+user/);
+    const uptime = uptimeMatch ? uptimeMatch[1].trim() : uptimeRaw;
     const hostname = execSync('hostname').toString().trim();
     const kernel = execSync('uname -r').toString().trim();
     const os = execSync('cat /etc/os-release | grep PRETTY_NAME | cut -d\\" -f2').toString().trim();
     const dockerVersion = execSync('docker --version').toString().trim();
-    const gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: '/app' }).toString().trim();
-    const gitCommit = execSync('git rev-parse --short HEAD', { cwd: '/app' }).toString().trim();
+    let gitBranch = 'unknown';
+    let gitCommit = 'unknown';
+    try {
+      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: '/app' }).toString().trim();
+      gitCommit = execSync('git rev-parse --short HEAD', { cwd: '/app' }).toString().trim();
+    } catch (e) {}
     
     res.json({
       hostname,
@@ -890,6 +989,83 @@ app.post('/api/console/execute', requireAuth, (req, res) => {
       success: false,
       error: err.message 
     });
+  }
+});
+
+app.get('/api/system/mcp-status', requireAuth, (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const mcpDir = '/app/mcp';
+    const mcpServerFile = path.join(mcpDir, 'server.js');
+    const mcpConfigFile = path.join(mcpDir, 'config.json');
+    
+    let mcpInstalled = fs.existsSync(mcpServerFile);
+    let mcpConfigured = fs.existsSync(mcpConfigFile);
+    let mcpRunning = false;
+    let mcpEndpoint = null;
+    let mcpToken = null;
+    
+    if (mcpConfigured) {
+      try {
+        const config = JSON.parse(fs.readFileSync(mcpConfigFile, 'utf8'));
+        mcpEndpoint = config.endpoint || null;
+        mcpToken = config.token ? '***' + config.token.slice(-4) : null;
+      } catch (e) {}
+    }
+    
+    try {
+      const ps = execSync('ps aux | grep -E "node.*mcp.*server" | grep -v grep', { encoding: 'utf8' });
+      mcpRunning = ps.trim().length > 0;
+    } catch (e) {}
+    
+    res.json({
+      installed: mcpInstalled,
+      configured: mcpConfigured,
+      running: mcpRunning,
+      endpoint: mcpEndpoint,
+      token: mcpToken
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/mcp-enable', requireAuth, async (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const { execSync } = require('child_process');
+    
+    const mcpDir = '/app/mcp';
+    if (!fs.existsSync(mcpDir)) {
+      fs.mkdirSync(mcpDir, { recursive: true });
+    }
+    
+    const db = require('better-sqlite3')('/data/agentpanel.db');
+    const authToken = db.prepare("SELECT value FROM settings WHERE key = 'auth_token'").get()?.value;
+    
+    if (!authToken) {
+      return res.status(500).json({ error: 'No auth token found' });
+    }
+    
+    const config = {
+      endpoint: '/mcp',
+      token: authToken,
+      enabled: true,
+      createdAt: new Date().toISOString()
+    };
+    
+    fs.writeFileSync(path.join(mcpDir, 'config.json'), JSON.stringify(config, null, 2));
+    
+    res.json({ 
+      message: 'MCP enabled',
+      endpoint: config.endpoint,
+      token: '***' + authToken.slice(-4)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1097,13 +1273,22 @@ app.listen(PORT, '0.0.0.0', async () => {
 
 async function initPanelRoute() {
   try {
+    const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+    const fetch = require('node-fetch');
+    
+    // First, try to delete any existing panel-route to avoid duplicates
+    try {
+      await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+      console.log('Removed existing panel-route');
+    } catch (e) {
+      // Route doesn't exist, which is fine
+    }
+    
     const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
     if (panelDomain?.value) {
       await updatePanelCaddyRoute(null, panelDomain.value);
       console.log(`Panel route created for ${panelDomain.value}`);
     } else {
-      const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
-      const fetch = require('node-fetch');
       const route = {
         '@id': 'panel-route',
         handle: [{
