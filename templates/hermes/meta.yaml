@@ -1,0 +1,80 @@
+name: Hermes Agent
+description: |
+  NousResearch Hermes Agent — multi-tool AI agent with MCP support,
+  dashboard interface, and extensive skill library. Deploy a powerful
+  AI assistant with 26+ tools and 65+ skills.
+
+instructions: |
+  After deployment, access the Hermes dashboard at the assigned domain.
+  Login with username "admin" and the configured password. Set your
+  OpenAI API key to enable LLM functionality.
+
+changeLog:
+  - date: 2025-01-25
+    description: Initial template with dashboard mode
+
+links:
+  - label: Website
+    url: https://nousresearch.com
+  - label: Documentation
+    url: https://docs.nousresearch.com/hermes
+
+schema:
+  type: object
+  required:
+    - appServiceName
+    - appServiceImage
+  properties:
+    appServiceName:
+      type: string
+      title: Service Name
+      default: hermes
+    appServiceImage:
+      type: string
+      title: Docker Image
+      default: nousresearch/hermes-agent:latest
+    dashboardPassword:
+      type: string
+      title: Dashboard Password
+      default: agentpanel
+    hermesModel:
+      type: string
+      title: Model
+      default: openai/gpt-4.1
+    openaiApiKey:
+      type: string
+      title: OpenAI API Key
+      default: ""
+    anthropicApiKey:
+      type: string
+      title: Anthropic API Key
+      default: ""
+    openrouterApiKey:
+      type: string
+      title: OpenRouter API Key
+      default: ""
+
+benefits:
+  - title: Extensive Tool Library
+    description: 26+ built-in tools for various tasks
+  - title: Skill System
+    description: 65+ pre-configured skills for common workflows
+  - title: MCP Support
+    description: Model Context Protocol integration for extensibility
+
+features:
+  - title: Dashboard UI
+    description: Web-based interface for chat and configuration
+  - title: Multi-Provider
+    description: Support for OpenAI, Anthropic, OpenRouter, Gemini, and more
+  - title: Browser Integration
+    description: Playwright-based browser automation
+  - title: MCP Tools
+    description: Extensible tool system via Model Context Protocol
+
+tags:
+  - AI
+  - Agent
+  - Self-Hosted
+  - MCP
+  - LLM

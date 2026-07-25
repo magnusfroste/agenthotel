@@ -3,34 +3,38 @@
 ## Template System (Easypanel-inspiration)
 
 ### Vision
-Skapa ett template-system liknande Easypanel där användare kan:
-1. Välja från fördefinierade templates (OpenClaw, Hermes, Odysseus, etc.)
-2. Ladda templates direkt från Git-repositories
-3. Pasta egen docker-compose.yml för custom deployments
-4. Konfigurera templates via UI istället för att redigera filer
+Skapa ett template-system som liknar Easypanel för bättre igenkänning:
+- Använda `meta.yaml` format för template-metadata (likt Easypanel)
+- Varje template har: name, description, instructions, schema, benefits, features, tags
+- Standardiserad struktur som gör det enkelt att lägga till nya templates
+- Admin-gränssnitt som liknar Easypanel's template-browser
+
+### Nuvarande struktur
+Varje template i `templates/` har:
+- `meta.yaml` - Metadata och konfigurationsschema (Easypanel-format)
+- `template.json` - Legacy JSON-format (fasas ut)
+- `Dockerfile` - Docker-byggfil
+- `README.md` - Dokumentation
 
 ### Funktioner att implementera
 
-#### 1. Template Library
-- Fördefinierade templates för populära AI-agenter
-- Varje template har:
-  - Dockerfile eller image reference
-  - Standard environment variables
-  - Konfigurerbara fält (API keys, models, etc.)
-  - Volumes och ports
-  - Health checks
+#### 1. Template Library (Admin UI)
+- Visa alla templates i ett grid/list-vy
+- Filter på tags (AI, Self-Hosted, etc.)
+- Preview av template-detaljer
+- One-click deploy från template
 
-#### 2. Custom Templates
+#### 2. Template Schema
+- JSON Schema-baserat konfigurationsformulär
+- Auto-generera UI från schema
+- Validering av användarinput
+- Default-värden och beskrivningar
+
+#### 3. Custom Templates
 - Importera från Git URL
 - Pasta docker-compose.yml
 - Importera från lokal fil
 - Preview innan deployment
-
-#### 3. Template Editor
-- Redigera Dockerfile
-- Redigera environment variables
-- Redigera volumes och ports
-- Spara som custom template
 
 #### 4. Template Marketplace (framtid)
 - Dela templates med community
@@ -40,35 +44,31 @@ Skapa ett template-system liknande Easypanel där användare kan:
 ### Implementation
 
 #### Backend
-- `templates` table i SQLite
+- Läs templates från `templates/` katalogen
 - API endpoints:
   - `GET /api/templates` - lista alla templates
-  - `POST /api/templates` - skapa template
-  - `PUT /api/templates/:id` - uppdatera template
-  - `DELETE /api/templates/:id` - ta bort template
-  - `POST /api/templates/import` - importera från Git/compose
-- Template parsing logic
-- Git clone/pull functionality
+  - `GET /api/templates/:id` - hämta template-detaljer
+  - `POST /api/templates/import` - importera template
+- Parse meta.yaml och generera schema
 
 #### Frontend
-- Template library page
-- Template editor page
-- Import modal (Git URL, paste compose, upload file)
-- Template preview before deployment
+- Template library page (likt Easypanel)
+- Template detail page med schema-formulär
+- Deploy modal med konfigurationsformulär
+- Tags och filter
 
 #### MCP Tools
 - `list_templates` - lista templates
-- `create_template` - skapa template
-- `import_template` - importera template
+- `get_template` - hämta template-detaljer
 - `deploy_from_template` - deploya från template
 
 ### Prioritet
-- **Hög**: Grundläggande template library med fördefinierade templates
-- **Medium**: Custom template import (Git, paste)
+- **Hög**: Admin UI för template library
+- **Medium**: Schema-baserat konfigurationsformulär
 - **Låg**: Template marketplace
 
 ### Inspiration
-- Easypanel's template system
+- Easypanel's template system (meta.yaml + index.ts)
 - Coolify's application templates
 - Dokku's buildpacks
 
@@ -80,7 +80,34 @@ Skapa ett template-system liknande Easypanel där användare kan:
 - ✅ MCP tools för agent administration
 - ✅ Caddy routing fixad
 
+## Terminal/CLI Access till Containrar
+
+### Problem
+Terminal-funktionen i AgentDetail-vyn fungerar inte korrekt. Behöver kunna:
+1. Öppna CLI/terminal direkt till agent-containrar
+2. Köra kommandon inuti containern
+3. Felsöka problem med agenter
+4. Installera paket eller göra konfigurationsändringar
+
+### Krav
+- WebSocket-baserad terminal (xterm.js)
+- Stöd för interaktiva kommandon
+- Korrekt hantering av stdin/stdout/stderr
+- TTY-stöd för full-screen applikationer (vim, htop, etc.)
+- Autentisering via befintlig token-mekanism
+
+### Implementation
+- Backend: `/api/agents/:id/terminal` WebSocket endpoint (finns redan men fungerar inte)
+- Frontend: xterm.js terminal-komponent (finns redan men ansluter inte korrekt)
+- Docker: `docker exec` med TTY och attach
+
+### Prioritet
+**Hög** - Kritiskt för felsökning och administration
+
+---
+
 ## Nästa steg
-1. Fixa Hermes gateway mode
-2. Verifiera claw.froste.eu och hermes.froste.eu fungerar
-3. Påbörja template system implementation
+1. Fixa terminal/CLI access till containrar
+2. Fixa Hermes gateway mode
+3. Verifiera claw.froste.eu och hermes.froste.eu fungerar
+4. Påbörja template system implementation

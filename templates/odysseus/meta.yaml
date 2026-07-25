@@ -1,0 +1,72 @@
+name: Odysseus
+description: |
+  Self-hosted AI workspace with chat, agents, deep research, and memory.
+  A comprehensive platform for AI-powered workflows and knowledge management.
+
+instructions: |
+  After deployment, access Odysseus at the assigned domain. Login with
+  the configured admin password. Set your OpenAI API key to enable
+  LLM functionality.
+
+changeLog:
+  - date: 2025-01-25
+    description: Initial template
+
+links:
+  - label: Website
+    url: https://odysseus.ai
+  - label: Documentation
+    url: https://docs.odysseus.ai
+
+schema:
+  type: object
+  required:
+    - appServiceName
+    - appServiceImage
+    - adminPassword
+  properties:
+    appServiceName:
+      type: string
+      title: Service Name
+      default: odysseus
+    appServiceImage:
+      type: string
+      title: Docker Image
+      default: odysseus:latest
+    adminPassword:
+      type: string
+      title: Admin Password
+      default: ""
+    authEnabled:
+      type: boolean
+      title: Enable Authentication
+      default: true
+    openaiApiKey:
+      type: string
+      title: OpenAI API Key
+      default: ""
+
+benefits:
+  - title: All-in-One Workspace
+    description: Chat, agents, research, and memory in one platform
+  - title: Self-Hosted
+    description: Full control over your data and infrastructure
+  - title: Deep Research
+    description: Advanced research capabilities with AI assistance
+
+features:
+  - title: Multi-Agent
+    description: Create and manage multiple AI agents
+  - title: Memory System
+    description: Persistent knowledge base and conversation history
+  - title: Research Tools
+    description: Deep research with web search and document analysis
+  - title: Chat Interface
+    description: Intuitive chat interface for AI interactions
+
+tags:
+  - AI
+  - Workspace
+  - Self-Hosted
+  - Research
+  - Knowledge Management

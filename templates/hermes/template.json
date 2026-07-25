@@ -1,0 +1,44 @@
+{
+  "id": "hermes",
+  "name": "Hermes Agent",
+  "description": "NousResearch Hermes Agent — multi-tool AI agent with MCP support",
+  "version": "1.0.0",
+  "author": "AgentPanel",
+  "defaultImage": "nousresearch/hermes-agent:latest",
+  "defaultPort": 9119,
+  "configFields": [
+    {
+      "key": "HERMES_MODEL",
+      "label": "Model",
+      "type": "text",
+      "default": "openai/gpt-4.1",
+      "description": "Primär modell att använda"
+    },
+    {
+      "key": "HERMES_DASHBOARD_PASSWORD",
+      "label": "Dashboard Password",
+      "type": "password",
+      "default": "agentpanel",
+      "description": "Lösenord för dashboard (användarnamn: admin)"
+    }
+  ],
+  "providers": ["openai", "anthropic", "openrouter", "gemini", "deepseek", "groq"],
+  "volumes": ["/data", "/config"],
+  "healthCheck": {
+    "path": "/",
+    "port": 9119,
+    "interval": 30,
+    "timeout": 5,
+    "retries": 5
+  },
+  "resources": {
+    "memory": "2g",
+    "cpu": "2"
+  },
+  "features": [
+    "dashboard",
+    "mcp",
+    "browser",
+    "tools"
+  ]
+}

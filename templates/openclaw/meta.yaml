@@ -1,0 +1,81 @@
+name: OpenClaw
+description: |
+  OpenClaw is a persistent AI agent with gateway, tools and browser. 
+  Deploy a fully autonomous AI assistant with multi-provider support,
+  persistent memory, and browser automation capabilities.
+
+instructions: |
+  After deployment, access OpenClaw at the assigned domain. Configure your
+  LLM provider API keys in the agent settings. The gateway token is 
+  auto-generated and shown in the AgentPanel credentials section.
+
+changeLog:
+  - date: 2025-01-25
+    description: Initial template with device auth disabled
+
+links:
+  - label: Website
+    url: https://github.com/openclaw/openclaw
+  - label: Documentation
+    url: https://docs.openclaw.io
+
+schema:
+  type: object
+  required:
+    - appServiceName
+    - appServiceImage
+  properties:
+    appServiceName:
+      type: string
+      title: Service Name
+      default: openclaw
+    appServiceImage:
+      type: string
+      title: Docker Image
+      default: ghcr.io/openclaw/openclaw:latest
+    gatewayToken:
+      type: string
+      title: Gateway Token
+      description: Auto-generated if empty
+      default: ""
+    modelPrimary:
+      type: string
+      title: Primary Model
+      default: openai/gpt-4.1
+    openaiApiKey:
+      type: string
+      title: OpenAI API Key
+      default: ""
+    anthropicApiKey:
+      type: string
+      title: Anthropic API Key
+      default: ""
+    openrouterApiKey:
+      type: string
+      title: OpenRouter API Key
+      default: ""
+
+benefits:
+  - title: Persistent Agent
+    description: Long-running AI agent with memory and context persistence
+  - title: Multi-Provider
+    description: Support for OpenAI, Anthropic, OpenRouter, and custom providers
+  - title: Browser Automation
+    description: Built-in Chromium for web browsing and automation
+
+features:
+  - title: Gateway Mode
+    description: Local gateway with REST API and WebSocket support
+  - title: Device Pairing
+    description: Connect multiple devices with automatic acceptance
+  - title: Tool Integration
+    description: File operations, web search, shell commands, and more
+  - title: Memory Core
+    description: Persistent conversation history and knowledge base
+
+tags:
+  - AI
+  - Agent
+  - Self-Hosted
+  - Automation
+  - LLM

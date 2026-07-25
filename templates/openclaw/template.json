@@ -1,0 +1,56 @@
+{
+  "id": "openclaw",
+  "name": "OpenClaw",
+  "description": "Persistent AI agent with gateway, tools and browser",
+  "version": "1.0.0",
+  "author": "AgentPanel",
+  "defaultImage": "ghcr.io/openclaw/openclaw:latest",
+  "defaultPort": 18789,
+  "configFields": [
+    {
+      "key": "OPENCLAW_GATEWAY_TOKEN",
+      "label": "Gateway Token",
+      "type": "password",
+      "required": false,
+      "autoGenerate": true,
+      "description": "Token för att autentisera mot gateway"
+    },
+    {
+      "key": "OPENCLAW_MODEL_PRIMARY",
+      "label": "Primary Model",
+      "type": "text",
+      "default": "openai/gpt-4.1",
+      "description": "Primär modell att använda"
+    },
+    {
+      "key": "OPENCLAW_MODEL_FALLBACKS",
+      "label": "Fallback Models",
+      "type": "text",
+      "required": false,
+      "description": "Kommaseparerad lista av fallback-modeller"
+    }
+  ],
+  "providers": ["openai", "anthropic", "openrouter", "zai"],
+  "volumes": [
+    "/home/node/.openclaw",
+    "/home/node/.cache",
+    "/home/node/.local"
+  ],
+  "healthCheck": {
+    "path": "/healthz",
+    "port": 18789,
+    "interval": 30,
+    "timeout": 5,
+    "retries": 5
+  },
+  "resources": {
+    "memory": "2g",
+    "cpu": "2"
+  },
+  "features": [
+    "browser",
+    "file-transfer",
+    "memory-core",
+    "device-pair"
+  ]
+}

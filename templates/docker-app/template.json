@@ -1,0 +1,53 @@
+{
+  "id": "docker-app",
+  "name": "Docker App",
+  "description": "Generic Docker image deployment",
+  "version": "1.0.0",
+  "author": "AgentPanel",
+  "defaultImage": "",
+  "defaultPort": 80,
+  "configFields": [
+    {
+      "key": "IMAGE",
+      "label": "Docker Image",
+      "type": "text",
+      "required": true,
+      "description": "Full Docker image name (t.ex. nginx:latest)"
+    },
+    {
+      "key": "PORT",
+      "label": "Container Port",
+      "type": "number",
+      "default": 80,
+      "description": "Port som containern lyssnar på"
+    },
+    {
+      "key": "VOLUMES",
+      "label": "Volumes",
+      "type": "textarea",
+      "required": false,
+      "description": "Volumes (host:container per rad)"
+    },
+    {
+      "key": "CUSTOM_ENV",
+      "label": "Environment Variables",
+      "type": "textarea",
+      "required": false,
+      "description": "Extra env vars (KEY=VALUE per rad)"
+    }
+  ],
+  "providers": [],
+  "volumes": [],
+  "healthCheck": {
+    "path": "/",
+    "port": 80,
+    "interval": 30,
+    "timeout": 5,
+    "retries": 5
+  },
+  "resources": {
+    "memory": "512m",
+    "cpu": "1"
+  },
+  "features": []
+}
