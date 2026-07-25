@@ -424,6 +424,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
 
   const container = await docker.createContainer(containerConfig);
   await container.start();
+  
+  const network = docker.getNetwork('agentpanel_agentpanel');
+  await network.connect({ Container: containerName });
 
   if (domain) {
     await addCaddyRoute(domain, containerName, port);
@@ -443,31 +446,24 @@ async function addCaddyRoute(domain, containerName, port) {
     }]
   };
 
-  const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
-  const routes = await routesRes.json();
-  
-  const panelRouteIndex = routes.findIndex(r => r['@id'] === 'panel-route');
-  let panelRoute = null;
-  if (panelRouteIndex !== -1) {
-    panelRoute = routes[panelRouteIndex];
-    routes.splice(panelRouteIndex, 1);
-  }
-  
-  routes.push(route);
-  
-  if (panelRoute) {
-    routes.push(panelRoute);
-  }
+  try {
+    await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+  } catch (e) { }
   
   const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
-    method: 'PUT',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(routes)
+    body: JSON.stringify(route)
   });
 
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Failed to add Caddy route: ${err}`);
+  }
+  
+  const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
+  if (panelDomain?.value) {
+    await updatePanelCaddyRoute(null, panelDomain.value);
   }
 }
 

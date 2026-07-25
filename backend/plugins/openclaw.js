@@ -21,7 +21,15 @@ module.exports = {
   },
 
   buildEnv(config) {
-    const env = ['OPENCLAW_GATEWAY_MODE=local'];
+    const env = [
+      'OPENCLAW_GATEWAY_MODE=local',
+      'HOME=/home/node',
+      'TERM=xterm-256color',
+      'OPENCLAW_STATE_DIR=/home/node/.openclaw',
+      'OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json',
+      'OPENCLAW_DISABLE_BONJOUR=1',
+      'OPENCLAW_DISABLE_DEVICE_AUTH=1'
+    ];
     const keys = [
       'OPENCLAW_GATEWAY_TOKEN', 'OPENCLAW_MODEL_PRIMARY',
       'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',

@@ -2,7 +2,7 @@ module.exports = {
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
-  defaultPort: 3000,
+  defaultPort: 9119,
   configFields: [
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: true },
     { key: 'OPENAI_BASE_URL', label: 'Custom Base URL', type: 'text', required: false },
@@ -19,7 +19,7 @@ module.exports = {
   },
 
   buildEnv(config) {
-    const env = [];
+    const env = ['HERMES_DASHBOARD=1', 'HERMES_DASHBOARD_INSECURE=1'];
     const keys = [
       'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL',
       'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY',
