@@ -14,6 +14,7 @@ import Profile from './components/Profile'
 import Domains from './components/Domains'
 import Setup from './components/Setup'
 import Login from './components/Login'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen } from 'lucide-react'
 import './index.css'
 
 function Sidebar({ onLogout }) {
