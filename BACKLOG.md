@@ -161,8 +161,8 @@ Varje template i `templates/` har:
 
 ## 🎯 Nästa Steg (Prioriterade)
 
-1. **Fixa Terminal/CLI** - Få container-terminal att fungera korrekt
-2. **Daily Docker Cleanup** - Implementera automatisk rensning
+1. ~~**Fixa Terminal/CLI**~~ ✅ Klar
+2. ~~**Daily Docker Cleanup**~~ ✅ Klar
 3. **Template Library UI** - Bygga admin-gränssnitt för templates
 4. **Template Marketplace** - Dela templates med community (långsiktigt)
 
