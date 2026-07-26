@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
+import { AlertTriangle } from 'lucide-react'
 
 function CreateAgent() {
   const navigate = useNavigate()
   const [runtimes, setRuntimes] = useState([])
+  const [providers, setProviders] = useState([])
   const [formData, setFormData] = useState({
     name: '',
     runtime: '',
@@ -19,6 +21,7 @@ function CreateAgent() {
 
   useEffect(() => {
     fetchRuntimes()
+    fetchProviders()
   }, [])
 
   async function fetchRuntimes() {
@@ -31,6 +34,16 @@ function CreateAgent() {
       }
     } catch (err) {
       console.error('Failed to fetch runtimes:', err)
+    }
+  }
+
+  async function fetchProviders() {
+    try {
+      const res = await authFetch('/api/providers')
+      const data = await res.json()
+      setProviders(data)
+    } catch (err) {
+      console.error('Failed to fetch providers:', err)
     }
   }
 
@@ -91,6 +104,21 @@ function CreateAgent() {
       <h1 style={{ marginBottom: '2rem' }}>Create Agent</h1>
 
       {error && <div className="error">{error}</div>}
+
+      {providers.length === 0 && (
+        <div className="alert alert-warning" style={{ marginBottom: '1.5rem' }}>
+          <AlertTriangle size={20} />
+          <div>
+            <strong>Inga providers konfigurerade!</strong>
+            <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem' }}>
+              Agenten kommer inte att kunna chatta utan en provider. 
+              <Link to="/providers" style={{ color: '#f59e0b', marginLeft: '0.25rem' }}>
+                Lägg till en provider först
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="create-form">
         <div className="form-group">

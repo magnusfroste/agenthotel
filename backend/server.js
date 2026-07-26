@@ -539,29 +539,32 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     const id = `${runtime}-${name}-${Date.now()}`;
     
-    // Quick start: auto-populate config from providers
+    // Always auto-populate config from providers (not just quickStart)
     let finalConfig = config || {};
-    if (quickStart) {
-      finalConfig = { ...finalConfig };
-      
-      // Auto-inject API keys from providers
-      const providers = db.prepare('SELECT type, apiKey FROM providers').all();
-      for (const provider of providers) {
-        const envKey = `${provider.type.toUpperCase()}_API_KEY`;
-        if (!finalConfig[envKey] && provider.apiKey) {
-          finalConfig[envKey] = provider.apiKey;
-        }
+    finalConfig = { ...finalConfig };
+    
+    // Auto-inject API keys from providers
+    const providers = db.prepare('SELECT type, apiKey, baseUrl FROM providers').all();
+    for (const provider of providers) {
+      const envKey = `${provider.type.toUpperCase()}_API_KEY`;
+      if (!finalConfig[envKey] && provider.apiKey) {
+        finalConfig[envKey] = provider.apiKey;
       }
-      
-      // Set default model if not specified
-      if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
-        if (finalConfig.OPENAI_API_KEY) {
-          finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4.1';
-          finalConfig.HERMES_MODEL = 'openai/gpt-4.1';
-        } else if (finalConfig.OPENROUTER_API_KEY) {
-          finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/anthropic/claude-3.5-sonnet';
-          finalConfig.HERMES_MODEL = 'openrouter/anthropic/claude-3.5-sonnet';
-        }
+      // Also inject base URL if available
+      const baseUrlKey = `${provider.type.toUpperCase()}_BASE_URL`;
+      if (!finalConfig[baseUrlKey] && provider.baseUrl) {
+        finalConfig[baseUrlKey] = provider.baseUrl;
+      }
+    }
+    
+    // Set default model if not specified
+    if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
+      if (finalConfig.OPENAI_API_KEY) {
+        finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
+        finalConfig.HERMES_MODEL = 'openai/gpt-4o';
+      } else if (finalConfig.OPENROUTER_API_KEY) {
+        finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
+        finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-4o';
       }
     }
     

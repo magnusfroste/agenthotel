@@ -39,10 +39,19 @@ module.exports = {
     const projectName = config.COMPOSE_PROJECT || `agentpanel-${id}`;
 
     try {
-      execSync(`docker compose -p ${projectName} -f ${composePath} up -d`, {
-        cwd: projectDir,
-        stdio: 'pipe'
-      });
+      // Try docker compose first, fallback to docker-compose
+      try {
+        execSync(`docker compose -p ${projectName} -f ${composePath} up -d`, {
+          cwd: projectDir,
+          stdio: 'pipe'
+        });
+      } catch (e) {
+        // Fallback to docker-compose (standalone)
+        execSync(`docker-compose -p ${projectName} -f ${composePath} up -d`, {
+          cwd: projectDir,
+          stdio: 'pipe'
+        });
+      }
       return { success: true };
     } catch (err) {
       throw new Error(`Compose deploy failed: ${err.stderr || err.message}`);

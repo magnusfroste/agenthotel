@@ -12,9 +12,10 @@ import Console from './components/Console'
 import Certificates from './components/Certificates'
 import Profile from './components/Profile'
 import Domains from './components/Domains'
+import Compose from './components/Compose'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers } from 'lucide-react'
 import './index.css'
 
 function Sidebar({ onLogout }) {
@@ -111,6 +112,10 @@ function Sidebar({ onLogout }) {
         <Link to="/create" className={`sidebar-link ${isActive('/create')}`}>
           <span className="sidebar-icon"><Plus size={18} color="white" /></span>
           <span>Create Agent</span>
+        </Link>
+        <Link to="/compose" className={`sidebar-link ${isActive('/compose')}`}>
+          <span className="sidebar-icon"><Layers size={18} color="white" /></span>
+          <span>Compose</span>
         </Link>
         <Link to="/domains" className={`sidebar-link ${isActive('/domains')}`}>
           <span className="sidebar-icon"><Globe size={18} color="white" /></span>
@@ -303,6 +308,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/create" element={<CreateAgent />} />
+            <Route path="/compose" element={<Compose />} />
             <Route path="/agent/:id" element={<AgentDetail />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/system" element={<System />} />
