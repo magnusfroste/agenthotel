@@ -1387,8 +1387,8 @@ app.get('/api/certificates', requireAuth, async (req, res) => {
             domain: primary,
             sans,
             issuer: issuerCN,
-            notBefore: cert.validFrom,
-            notAfter: cert.validTo,
+            notBefore: new Date(cert.validFrom).toISOString(),
+            notAfter: new Date(cert.validTo).toISOString(),
             fingerprint: cert.fingerprint256 ? cert.fingerprint256.slice(0, 23) : null
           });
         } catch (e) {
