@@ -321,6 +321,43 @@ async function runScheduledCleanup() {
 setInterval(runScheduledCleanup, 24 * 60 * 60 * 1000);
 console.log('[Cleanup] Scheduled daily Docker cleanup enabled');
 
+// Run a command inside a container and resolve with the captured stdout/stderr.
+// Used to introspect other containers (e.g. read Caddy's managed certificates).
+async function execCapture(containerName, cmd) {
+  const container = docker.getContainer(containerName);
+  const info = await container.inspect().catch(() => null);
+  if (!info || !info.State.Running) throw new Error(`container ${containerName} not running`);
+  const exec = await container.exec({
+    AttachStdout: true, AttachStderr: true, Tty: false, Cmd: cmd
+  });
+  const stream = await exec.start({ Tty: false });
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', (c) => chunks.push(c));
+    stream.on('end', () => {
+      // Demux docker stream frames (8-byte header: [type,0,0,0,len...]) when not a TTY.
+      let raw = Buffer.concat(chunks);
+      try {
+        if (raw.length > 7 && raw[1] === 0 && raw[2] === 0 && raw[3] === 0) {
+          const out = [];
+          let i = 0;
+          while (i + 8 <= raw.length) {
+            const t = raw[i];
+            const len = raw.readUInt32BE(i + 4);
+            if (i + 8 + len > raw.length) break;
+            if (t === 2) out.push(raw.slice(i + 8, i + 8 + len)); // stderr
+            else out.push(raw.slice(i + 8, i + 8 + len)); // stdout
+            i += 8 + len;
+          }
+          raw = Buffer.concat(out);
+        }
+      } catch (_) { /* fall back to raw */ }
+      resolve(raw.toString('utf8'));
+    });
+    stream.on('error', reject);
+  });
+}
+
 function readProcStat() {
   const line = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0];
   const vals = line.trim().split(/\s+/).slice(1).map(Number);
@@ -1320,21 +1357,55 @@ app.post('/api/system/mcp-enable', requireAuth, async (req, res) => {
 
 app.get('/api/certificates', requireAuth, async (req, res) => {
   try {
-    const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
-    const fetch = require('node-fetch');
-    
-    const certsRes = await fetch(`${caddyApiUrl}/pki/certificates/local`);
-    const certs = await certsRes.json();
-    
-    const certificates = Object.values(certs).map(cert => ({
-      domain: cert.sans?.[0] || 'unknown',
-      issuer: cert.issuer,
-      notBefore: cert.notBefore ? new Date(cert.notBefore * 1000).toISOString() : null,
-      notAfter: cert.notAfter ? new Date(cert.notAfter * 1000).toISOString() : null,
-      hash: cert.hash
-    }));
-    
-    res.json(certificates);
+    // Caddy stores managed Let's Encrypt certificates as PEM files under
+    // /data/caddy/certificates/<issuer-directory>/<domain>/<domain>.crt, with a
+    // sibling .json carrying SANs + ACME renewal metadata. The Caddy admin API's
+    // /pki/certificates/local only exposes the internal CA, not LE certs, so we
+    // read the real leaf certs from disk via docker exec and parse them here.
+    const output = await execCapture('agentpanel-caddy', [
+      'sh', '-c',
+      "for f in $(find /data/caddy/certificates -name '*.crt' 2>/dev/null); do echo \"===FILE:$f\"; cat \"$f\"; echo '===END'; done"
+    ]);
+
+    const crypto = require('crypto');
+    const blocks = output.split(/===FILE:/);
+    const certificates = [];
+    const pemRe = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const m = block.match(pemRe);
+      if (!m) continue;
+      for (const pem of m) {
+        try {
+          const cert = new crypto.X509Certificate(Buffer.from(pem));
+          const issuerCN = (cert.issuer.match(/CN=([^,]+)/) || [])[1] || cert.issuer;
+          const sans = cert.subjectAltName
+            ? cert.subjectAltName.replace(/DNS:/g, '').split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+          const primary = sans[0] || (cert.subject.match(/CN=([^,]+)/) || [])[1] || 'unknown';
+          certificates.push({
+            domain: primary,
+            sans,
+            issuer: issuerCN,
+            notBefore: cert.validFrom,
+            notAfter: cert.validTo,
+            fingerprint: cert.fingerprint256 ? cert.fingerprint256.slice(0, 23) : null
+          });
+        } catch (e) {
+          // Skip unparseable/intermediate certs in the chain.
+        }
+      }
+    }
+    // Dedupe by domain, keep the cert with the latest expiry. Only return leaf
+    // certificates (those with hostname SANs) — full chains on disk also embed
+    // the Let's Encrypt intermediate/root certs which aren't user-relevant.
+    const byDomain = {};
+    for (const c of certificates) {
+      if (!c.sans || c.sans.length === 0) continue; // skip intermediate/root certs
+      const k = c.domain;
+      if (!byDomain[k] || new Date(c.notAfter) > new Date(byDomain[k].notAfter)) byDomain[k] = c;
+    }
+    res.json(Object.values(byDomain).sort((a, b) => new Date(a.notAfter) - new Date(b.notAfter)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1344,45 +1415,71 @@ app.get('/api/domains', requireAuth, async (req, res) => {
   try {
     const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
     const fetch = require('node-fetch');
-    
+
     const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
     const routes = await routesRes.json();
-    
+
+    // Index running agent containers once for O(1) lookups + live status.
+    const containers = await docker.listContainers({ all: true }).catch(() => []);
+    const byName = {};
+    for (const c of containers) {
+      for (const n of (c.Names || [])) byName[n.replace(/^\//, '')] = c;
+    }
+
     const domains = routes
       .filter(r => r['@id'] && r['@id'].startsWith('agent-'))
       .map(r => {
         const host = r.match?.[0]?.host?.[0] || 'unknown';
         const upstream = r.handle?.[0]?.upstreams?.[0]?.dial || 'unknown';
         const [container, port] = upstream.split(':');
-        
+        const live = byName[container];
         const agent = db.prepare('SELECT name, runtime, status FROM agents WHERE domain = ?').get(host);
-        
         return {
           id: r['@id'],
           domain: host,
-          container: container,
-          port: port,
-          agentName: agent?.name || 'unknown',
-          runtime: agent?.runtime || 'unknown',
-          status: agent?.status || 'unknown'
+          container,
+          port,
+          url: `https://${host}`,
+          agentName: agent?.name || (live ? '(external container)' : '(orphaned route)'),
+          runtime: agent?.runtime || 'external',
+          status: live ? (live.State === 'running' ? 'running' : live.State) : 'orphaned',
+          orphaned: !live
         };
       });
-    
+
     const panelRoute = routes.find(r => r['@id'] === 'panel-route');
     if (panelRoute) {
       const panelHost = panelRoute.match?.[0]?.host?.[0] || 'panel';
       domains.unshift({
         id: 'panel-route',
         domain: panelHost,
-        container: 'backend:8080 / frontend:80',
-        port: '8080/80',
+        container: 'agentpanel-frontend',
+        port: '80',
+        url: `https://${panelHost}`,
         agentName: 'AgentPanel',
         runtime: 'panel',
-        status: 'running'
+        status: 'running',
+        orphaned: false
       });
     }
-    
+
     res.json(domains);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remove a Caddy route by its @id. Used to clean up orphaned/stale domain
+// routes whose backing container no longer exists. Refuses to touch panel-route.
+app.delete('/api/domains/:id', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id.startsWith('agent-')) return res.status(400).json({ error: 'Can only remove agent routes' });
+    const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+    const fetch = require('node-fetch');
+    const del = await fetch(`${caddyApiUrl}/id/${id}`, { method: 'DELETE' });
+    if (!del.ok) return res.status(502).json({ error: `Caddy responded ${del.status}` });
+    res.json({ deleted: true, id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
