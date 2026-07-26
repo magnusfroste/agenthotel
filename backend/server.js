@@ -543,17 +543,35 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     let finalConfig = config || {};
     finalConfig = { ...finalConfig };
     
-    // Auto-inject API keys from providers
-    const providers = db.prepare('SELECT type, apiKey, baseUrl FROM providers').all();
+    // Auto-inject API keys from providers, mapped by provider NAME (not type).
+    // Several providers share the "openai" protocol type, so matching on type
+    // would make OpenRouter's key clobber OpenAI's. Each canonical provider
+    // maps to its own env var; custom OpenAI-compatible providers (unknown
+    // name) fall back to the OPENAI_API_KEY/OPENAI_BASE_URL slots.
+    const PROVIDER_ENV_MAP = {
+      openai: { key: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
+      openrouter: { key: 'OPENROUTER_API_KEY' },
+      anthropic: { key: 'ANTHROPIC_API_KEY' },
+      gemini: { key: 'GEMINI_API_KEY' },
+      deepseek: { key: 'DEEPSEEK_API_KEY' },
+      groq: { key: 'GROQ_API_KEY' },
+      xai: { key: 'XAI_API_KEY' },
+      mistral: { key: 'MISTRAL_API_KEY' }
+    };
+    const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
     for (const provider of providers) {
-      const envKey = `${provider.type.toUpperCase()}_API_KEY`;
-      if (!finalConfig[envKey] && provider.apiKey) {
-        finalConfig[envKey] = provider.apiKey;
-      }
-      // Also inject base URL if available
-      const baseUrlKey = `${provider.type.toUpperCase()}_BASE_URL`;
-      if (!finalConfig[baseUrlKey] && provider.baseUrl) {
-        finalConfig[baseUrlKey] = provider.baseUrl;
+      const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const mapping = PROVIDER_ENV_MAP[slug];
+      if (mapping) {
+        if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
+        if (mapping.baseUrl && !finalConfig[mapping.baseUrl] && provider.baseUrl) {
+          finalConfig[mapping.baseUrl] = provider.baseUrl;
+        }
+      } else if (provider.type === 'openai' && provider.apiKey) {
+        // Custom OpenAI-compatible provider (e.g. self-hosted vLLM, DGX1).
+        // Use the OPENAI slots only if a real OpenAI provider hasn't claimed them.
+        if (!finalConfig.OPENAI_API_KEY) finalConfig.OPENAI_API_KEY = provider.apiKey;
+        if (!finalConfig.OPENAI_BASE_URL && provider.baseUrl) finalConfig.OPENAI_BASE_URL = provider.baseUrl;
       }
     }
     
@@ -685,24 +703,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const container = await docker.createContainer(containerConfig);
   await container.start();
   
-  // Generate and write config.yaml for Hermes
-  if (runtime === 'hermes' && plugin.generateConfig) {
-    try {
-      const configYaml = plugin.generateConfig(config);
-      const exec = await container.exec({
-        Cmd: ['sh', '-c', `mkdir -p /opt/data && cat > /opt/data/config.yaml << 'EOF'
-${configYaml}
-EOF`],
-        AttachStdout: true,
-        AttachStderr: true
-      });
-      const stream = await exec.start();
-      await new Promise((resolve) => stream.on('end', resolve));
-      console.log('Config.yaml written to container');
-    } catch (err) {
-      console.error('Failed to write config.yaml:', err.message);
-    }
-  }
+  // Hermes uses an env-only config (HERMES_MODEL + provider *_API_KEY env vars).
+  // No config.yaml is written — the broken `provider: 'openai'` value triggered
+  // "Unknown provider 'openai'". See backend/plugins/hermes.js.
   
   const network = docker.getNetwork('agentpanel_agentpanel');
   await network.connect({ Container: containerName });

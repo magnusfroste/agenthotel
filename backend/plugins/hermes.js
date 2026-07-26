@@ -5,15 +5,29 @@ function getProvider(name) {
   return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
 }
 
+// Provider name → (keyEnv, defaultBaseUrl). Built-in providers have endpoints
+// baked into Hermes; we only need the API key + a HERMES_MODEL prefixed by the
+// provider name (e.g. "openai/gpt-4o", "anthropic/claude-3-5-sonnet").
+const PROVIDER_KEYS = {
+  openai: { keyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
+  openrouter: { keyEnv: 'OPENROUTER_API_KEY' },
+  anthropic: { keyEnv: 'ANTHROPIC_API_KEY' },
+  gemini: { keyEnv: 'GEMINI_API_KEY' },
+  deepseek: { keyEnv: 'DEEPSEEK_API_KEY' },
+  groq: { keyEnv: 'GROQ_API_KEY' },
+  xai: { keyEnv: 'XAI_API_KEY' },
+  mistral: { keyEnv: 'MISTRAL_API_KEY' }
+};
+
 module.exports = {
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
   defaultPort: 9119,
   configFields: [
+    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-4o', placeholder: 'provider/model (e.g. openai/gpt-4o, anthropic/claude-3-5-sonnet)' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
-    { key: 'OPENAI_BASE_URL', label: 'Custom Base URL', type: 'text', required: false },
-    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4' },
+    { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
     { key: 'GEMINI_API_KEY', label: 'Gemini Key', type: 'password', required: false },
@@ -23,37 +37,45 @@ module.exports = {
 
   buildConfig({ name, domain, image, port, config }) {
     const autoConfig = { ...config };
-    
-    const openai = getProvider('OpenAI');
-    if (!autoConfig.OPENAI_API_KEY && openai?.apiKey) autoConfig.OPENAI_API_KEY = openai.apiKey;
-    if (!autoConfig.OPENAI_BASE_URL && openai?.baseUrl) autoConfig.OPENAI_BASE_URL = openai.baseUrl;
-    
-    const openrouter = getProvider('OpenRouter');
-    if (!autoConfig.OPENROUTER_API_KEY && openrouter?.apiKey) autoConfig.OPENROUTER_API_KEY = openrouter.apiKey;
-    
-    const anthropic = getProvider('Anthropic');
-    if (!autoConfig.ANTHROPIC_API_KEY && anthropic?.apiKey) autoConfig.ANTHROPIC_API_KEY = anthropic.apiKey;
-    
-    const gemini = getProvider('Gemini');
-    if (!autoConfig.GEMINI_API_KEY && gemini?.apiKey) autoConfig.GEMINI_API_KEY = gemini.apiKey;
-    
-    const deepseek = getProvider('DeepSeek');
-    if (!autoConfig.DEEPSEEK_API_KEY && deepseek?.apiKey) autoConfig.DEEPSEEK_API_KEY = deepseek.apiKey;
-    
-    const groq = getProvider('Groq');
-    if (!autoConfig.GROQ_API_KEY && groq?.apiKey) autoConfig.GROQ_API_KEY = groq.apiKey;
-    
+
+    // Auto-inject provider credentials from the Providers table.
+    // IMPORTANT: match on provider NAME (not type) so the right key wins.
+    for (const [providerName, { keyEnv, baseUrlEnv }] of Object.entries(PROVIDER_KEYS)) {
+      const row = getProvider(providerName);
+      if (row) {
+        if (!autoConfig[keyEnv] && row.apiKey) autoConfig[keyEnv] = row.apiKey;
+        if (baseUrlEnv && !autoConfig[baseUrlEnv] && row.baseUrl) autoConfig[baseUrlEnv] = row.baseUrl;
+      }
+    }
+
+    // Sensible default model if none specified.
+    if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-4o';
+
     return autoConfig;
   },
 
   buildEnv(config) {
+    // The newer Hermes image "fails closed": a non-loopback dashboard requires
+    // an auth provider. Use HTTP Basic Auth so the chat UI is reachable through
+    // Caddy without an extra OAuth setup. Credentials surface in the portal.
+    const user = config.HERMES_DASHBOARD_BASIC_AUTH_USERNAME || 'admin';
+    const pass = config.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD || (config.HERMES_DASHBOARD_PASSWORD || 'agentpanel');
+
     const env = [
       'HERMES_DASHBOARD=1',
-      'HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin',
-      `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${config.HERMES_DASHBOARD_PASSWORD || 'agentpanel'}`
+      'HERMES_DASHBOARD_HOST=0.0.0.0',
+      'HERMES_DASHBOARD_PORT=9119',
+      'HERMES_DASHBOARD_TUI=1',
+      `HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${user}`,
+      `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${pass}`
     ];
+
+    if (config.HERMES_MODEL) env.push(`HERMES_MODEL=${config.HERMES_MODEL}`);
+
+    // Forward every recognized provider key + base url. Only those set (by the
+    // user or auto-injected) are emitted.
     const keys = [
-      'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL',
+      'OPENAI_API_KEY', 'OPENAI_BASE_URL',
       'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY',
       'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY'
     ];
@@ -61,106 +83,5 @@ module.exports = {
       if (config[key]) env.push(`${key}=${config[key]}`);
     }
     return env;
-  },
-
-  generateConfig(config) {
-    // Determine primary provider and model
-    let provider = 'custom';
-    let model = 'gpt-4o';
-    let baseUrl = 'https://api.openai.com/v1';
-    let keyEnv = 'OPENAI_API_KEY';
-    let apiMode = 'chat_completions';
-    
-    if (config.HERMES_MODEL) {
-      const parts = config.HERMES_MODEL.split('/');
-      if (parts.length === 2) {
-        // Format: provider/model (e.g., openai/gpt-4o)
-        const providerName = parts[0];
-        model = parts[1];
-        
-        // Map provider names to Hermes-compatible providers
-        if (providerName === 'openai') {
-          provider = 'custom';
-          baseUrl = 'https://api.openai.com/v1';
-          keyEnv = 'OPENAI_API_KEY';
-        } else if (providerName === 'openrouter') {
-          provider = 'openrouter';
-          baseUrl = 'https://openrouter.ai/api/v1';
-          keyEnv = 'OPENROUTER_API_KEY';
-        } else if (providerName === 'anthropic') {
-          provider = 'anthropic';
-          baseUrl = 'https://api.anthropic.com/v1';
-          keyEnv = 'ANTHROPIC_API_KEY';
-        } else {
-          // Custom provider
-          provider = 'custom';
-          baseUrl = config.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-          keyEnv = 'OPENAI_API_KEY';
-        }
-      } else {
-        model = config.HERMES_MODEL;
-      }
-    }
-    
-    // Generate YAML with custom_providers section (required by Hermes)
-    const yaml = `# Hermes Configuration - Auto-generated by AgentPanel
-model:
-  provider: ${provider}
-  default: ${model}
-  base_url: ${baseUrl}
-  api_mode: ${apiMode}
-
-custom_providers:
-  - name: custom_llm
-    base_url: ${baseUrl}
-    key_env: ${keyEnv}
-    api_mode: ${apiMode}
-    model: ${providerName || 'openai'}/${model}
-    models:
-      ${model}:
-        context_length: 128000
-
-memory:
-  provider: builtin
-
-dashboard:
-  theme: default
-`;
-    
-    return yaml;
-  },
-
-  // Generate config.yaml for Hermes (similar to OpenClaw's openclaw.json)
-  buildConfigYaml(config) {
-    const yaml = {
-      model: {
-        provider: 'openai',
-        default: config.HERMES_MODEL?.replace('openai/', '') || 'gpt-5.4',
-        api_mode: 'chat_completions'
-      },
-      memory: {
-        provider: 'builtin'
-      },
-      approvals: {
-        mode: 'ask'
-      },
-      logging: {
-        level: 'info'
-      },
-      dashboard: {
-        theme: 'default'
-      }
-    };
-
-    // Add OpenRouter config if available
-    if (config.OPENROUTER_API_KEY) {
-      yaml.model = {
-        provider: 'openrouter',
-        default: config.HERMES_MODEL?.replace('openrouter/', '') || 'openai/gpt-5.4',
-        base_url: 'https://openrouter.ai/api/v1'
-      };
-    }
-
-    return yaml;
   }
 };
