@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { authFetch } from '../lib/auth';
+import { useToast } from './Toast';
 import { Plus, Edit, Trash2, CheckCircle, XCircle } from 'lucide-react';
 
 function Providers() {
@@ -17,6 +18,7 @@ function Providers() {
   const [testResult, setTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
   const [testModel, setTestModel] = useState('');
+  const toast = useToast();
 
   useEffect(() => {
     fetchProviders();
@@ -81,13 +83,14 @@ function Providers() {
       if (res.ok) {
         setShowForm(false);
         fetchProviders();
+        toast.success(editingProvider ? 'Provider updated' : 'Provider created');
       } else {
         const err = await res.json();
-        alert('Error: ' + (err.error || 'Unknown error'));
+        toast.error('Error: ' + (err.error || 'Unknown error'));
       }
     } catch (err) {
       console.error('Failed to save provider:', err);
-      alert('Failed to save provider');
+      toast.error('Failed to save provider');
     }
   }
 
@@ -97,17 +100,19 @@ function Providers() {
       const res = await authFetch(`/api/providers/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchProviders();
+        toast.success('Provider deleted');
       } else {
-        alert('Failed to delete provider');
+        toast.error('Failed to delete provider');
       }
     } catch (err) {
       console.error('Failed to delete provider:', err);
+      toast.error('Failed to delete provider');
     }
   }
 
   async function handleTest(provider) {
     if (!testModel) {
-      alert('Please select a model to test');
+      toast.warning('Please select a model to test');
       return;
     }
 
@@ -136,10 +141,11 @@ function Providers() {
       if (Array.isArray(data)) {
         const modelNames = data.map(m => m.id || m.name || m).join(', ');
         setFormData({ ...formData, models: modelNames });
+        toast.success(`Fetched ${data.length} models`);
       }
     } catch (err) {
       console.error('Failed to fetch models:', err);
-      alert('Failed to fetch models from provider');
+      toast.error('Failed to fetch models from provider');
     }
   }
 

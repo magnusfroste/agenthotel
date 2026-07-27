@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
+import { useToast } from './Toast'
 import { ExternalLink, Trash2, RefreshCw } from 'lucide-react'
 
 function Domains() {
   const [domains, setDomains] = useState([])
   const [loading, setLoading] = useState(true)
+  const toast = useToast()
 
   useEffect(() => { fetchDomains() }, [])
 
@@ -22,7 +24,8 @@ function Domains() {
     try {
       await authFetch(`/api/domains/${id}`, { method: 'DELETE' })
       await fetchDomains()
-    } catch (err) { alert('Failed to remove: ' + err.message) }
+      toast.success(`Route for ${domain} removed`)
+    } catch (err) { toast.error('Failed to remove: ' + err.message) }
   }
 
   const statusColor = (s) => s === 'running' ? '#10b981' : s === 'orphaned' ? '#ef4444' : '#f59e0b'

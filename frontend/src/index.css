@@ -693,6 +693,18 @@ input[type="checkbox"] {
   opacity: 1;
 }
 
+/* Toast animations */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .mobile-menu-toggle {

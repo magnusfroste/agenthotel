@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
+import { useToast } from './Toast'
 import { Trash2, Globe, Package, Plug, ExternalLink, Play, Square, MoreHorizontal } from 'lucide-react'
 
 function Dashboard() {
@@ -8,6 +9,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [systemStats, setSystemStats] = useState(null)
   const [pruning, setPruning] = useState(false)
+  const toast = useToast()
 
   useEffect(() => {
     fetchAgents()
@@ -37,16 +39,20 @@ function Dashboard() {
     try {
       const res = await authFetch('/api/docker/prune', { method: 'POST' })
       const data = await res.json()
-      alert(`Pruned! Freed ${data.totalSpaceReclaimedMB} MB`)
+      toast.success(`Pruned! Freed ${data.totalSpaceReclaimedMB} MB`)
       fetchSystemStats()
-    } catch (err) { alert('Failed to prune Docker resources') }
+    } catch (err) { toast.error('Failed to prune Docker resources') }
     finally { setPruning(false) }
   }
 
   async function toggleAgent(id, status) {
     const action = status === 'running' ? 'stop' : 'start'
-    try { await authFetch(`/api/agents/${id}/${action}`, { method: 'POST' }); fetchAgents() }
-    catch (err) { alert('Action failed') }
+    try { 
+      await authFetch(`/api/agents/${id}/${action}`, { method: 'POST' })
+      fetchAgents()
+      toast.success(`Agent ${action === 'start' ? 'started' : 'stopped'}`)
+    }
+    catch (err) { toast.error('Action failed') }
   }
 
   async function handleDelete(id, name) {

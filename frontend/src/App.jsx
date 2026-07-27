@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
+import { ToastProvider } from './components/Toast'
 import Dashboard from './components/Dashboard'
 import CreateAgent from './components/CreateAgent'
 import AgentDetail from './components/AgentDetail'
@@ -28,6 +29,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('darkMode') !== 'false'
   })
+  const toast = useToast()
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
@@ -83,12 +85,13 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
     setUpgrading(true)
     try {
       await authFetch('/api/system/upgrade', { method: 'POST' })
+      toast.success('Upgrade initiated. Panel will restart...')
       setTimeout(() => {
         window.location.reload()
       }, 30000)
     } catch (err) {
       console.error('Failed to upgrade:', err)
-      alert('Upgrade failed. Please check logs.')
+      toast.error('Upgrade failed. Please check logs.')
       setUpgrading(false)
     }
   }
@@ -310,46 +313,48 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
-      <div className="app">
-        <button 
-          className="mobile-menu-toggle"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label="Toggle menu"
-        >
-          {mobileOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-        
-        {mobileOpen && (
-          <div 
-            className="mobile-sidebar-overlay active"
-            onClick={() => setMobileOpen(false)}
+    <ToastProvider>
+      <BrowserRouter>
+        <div className="app">
+          <button 
+            className="mobile-menu-toggle"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label="Toggle menu"
+          >
+            {mobileOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          
+          {mobileOpen && (
+            <div 
+              className="mobile-sidebar-overlay active"
+              onClick={() => setMobileOpen(false)}
+            />
+          )}
+          
+          <Sidebar 
+            onLogout={handleLogout} 
+            onNavigate={() => setMobileOpen(false)}
+            className={mobileOpen ? 'sidebar-open' : ''}
           />
-        )}
-        
-        <Sidebar 
-          onLogout={handleLogout} 
-          onNavigate={() => setMobileOpen(false)}
-          className={mobileOpen ? 'sidebar-open' : ''}
-        />
-        <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/create" element={<CreateAgent />} />
-            <Route path="/compose" element={<Compose />} />
-            <Route path="/agent/:id" element={<AgentDetail />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/system" element={<System />} />
-            <Route path="/connect" element={<Connect />} />
-            <Route path="/providers" element={<Providers />} />
-            <Route path="/console" element={<Console />} />
-            <Route path="/certificates" element={<Certificates />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/domains" element={<Domains />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
+          <main className="main-content">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/create" element={<CreateAgent />} />
+              <Route path="/compose" element={<Compose />} />
+              <Route path="/agent/:id" element={<AgentDetail />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/system" element={<System />} />
+              <Route path="/connect" element={<Connect />} />
+              <Route path="/providers" element={<Providers />} />
+              <Route path="/console" element={<Console />} />
+              <Route path="/certificates" element={<Certificates />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/domains" element={<Domains />} />
+            </Routes>
+          </main>
+        </div>
+      </BrowserRouter>
+    </ToastProvider>
   )
 }
 
