@@ -15,7 +15,7 @@ import Domains from './components/Domains'
 import Compose from './components/Compose'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, Sun, Moon, Package, User, Download } from 'lucide-react'
 import './index.css'
 
 function Sidebar({ onLogout }) {
@@ -214,7 +214,7 @@ function Sidebar({ onLogout }) {
             gap: '0.5rem'
           }}
         >
-          {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
+          {darkMode ? <><Sun size={15} color="white" /> Light Mode</> : <><Moon size={15} color="white" /> Dark Mode</>}
         </button>
         
         {updateInfo?.hasUpdate && (
@@ -231,28 +231,36 @@ function Sidebar({ onLogout }) {
               padding: '0.5rem',
               borderRadius: '0.25rem',
               cursor: upgrading ? 'not-allowed' : 'pointer',
-              fontSize: '0.875rem'
+              fontSize: '0.875rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.4rem'
             }}
           >
-            {upgrading ? 'Upgrading...' : <><Download size={16} color="white" /> Upgrade to {updateInfo.latestVersion}</>}
+            {upgrading ? 'Upgrading…' : <><Download size={15} color="white" /> Upgrade to {updateInfo.latestVersion}</>}
           </button>
         )}
-        {ip && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-            <Globe size={16} color="white" /> IP: {ip}
-          </div>
-        )}
-        {version && version !== 'unknown' && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-            📦 v{version}
-          </div>
-        )}
-        <Link to="/profile" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', textDecoration: 'none' }}>
-          👤 Profile
-        </Link>
-        <button onClick={onLogout} className="btn-logout">
-          Logout
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+          {ip && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Globe size={13} color="currentColor" /> {ip}
+            </div>
+          )}
+          {version && version !== 'unknown' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Package size={13} color="currentColor" /> v{version}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <Link to="/profile" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <User size={13} color="currentColor" /> Profile
+          </Link>
+          <button onClick={onLogout} className="btn-logout" style={{ fontSize: '0.75rem' }}>
+            Logout
+          </button>
+        </div>
       </div>
     </div>
   )

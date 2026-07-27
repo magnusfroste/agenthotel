@@ -748,16 +748,22 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   }
 
   // Hermes needs its model: block in /opt/data/config.yaml overridden. The image
-  // bakes `provider: auto` + an OpenRouter base_url, and the s6 init script
-  // regenerates config.yaml on start. We patch AFTER networking/routing are set
-  // up, then SIGHUP the gateway so it re-reads (s6 auto-respawns it; SIGHUP
-  // keeps Docker networks intact, unlike pkill).
+  // bakes `provider: auto` + an OpenRouter base_url. We patch config.yaml (base64,
+  // preserving other sections) then SIGHUP the gateway so it re-reads (s6
+  // auto-respawns it; SIGHUP keeps Docker networks intact). This runs async —
+  // deployAgent returns immediately once the container is up/routed.
   if (runtime === 'hermes' && plugin.generateConfig) {
-    try {
-      const modelBlock = plugin.generateConfig(config);
-      const b64 = Buffer.from(modelBlock).toString('base64');
-      await new Promise(r => setTimeout(r, 4000));
-      const patchScript = `
+    patchHermesConfig(container, plugin.generateConfig(config)).catch(err =>
+      console.error('[Hermes] config patch failed:', err.message)
+    );
+  }
+}
+
+async function patchHermesConfig(container, modelBlock) {
+  const b64 = Buffer.from(modelBlock).toString('base64');
+  // Wait for the s6 init scripts to finish writing the baked config.
+  await new Promise(r => setTimeout(r, 5000));
+  const patchScript = `
 import base64
 mb = base64.b64decode('${b64}').decode()
 with open('/opt/data/config.yaml') as f: lines = f.readlines()
@@ -770,17 +776,14 @@ while i < len(lines):
     out.append(lines[i]); i += 1
 open('/opt/data/config.yaml', 'w').write(mb + ''.join(out))
 `;
-      const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
-      const stream = await exec.start();
-      await new Promise((resolve) => stream.on('end', resolve));
-      const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
-      const rs = await killExec.start();
-      await new Promise(r => { rs.on('end', r); setTimeout(r, 4000); });
-      console.log('[Hermes] config.yaml patched, gateway reloaded');
-    } catch (err) {
-      console.error('[Hermes] config patch failed:', err.message);
-    }
-  }
+  const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start();
+  await new Promise((resolve) => stream.on('end', resolve));
+  // SIGHUP the supervised gateway process; s6 auto-respawns it with new config.
+  const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
+  const rs = await killExec.start({ Detach: true });
+  rs.destroy();
+  console.log('[Hermes] config.yaml patched, gateway reloading');
 }
 
 async function addCaddyRoute(domain, containerName, port) {

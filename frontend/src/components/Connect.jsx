@@ -300,7 +300,7 @@ function Connect() {
         border: '1px solid #3b82f6',
         borderRadius: '0.5rem'
       }}>
-        <h3 style={{ margin: '0 0 1rem 0', color: '#3b82f6' }}>💡 Available MCP Tools</h3>
+        <h3 style={{ margin: '0 0 1rem 0', color: '#3b82f6' }}>Available MCP Tools</h3>
         <div style={{ fontSize: '0.875rem', lineHeight: '1.6' }}>
           <strong>list_agents</strong> — List all AI agents<br />
           <strong>get_agent</strong> — Get detailed agent information<br />

@@ -122,7 +122,7 @@ function Profile() {
         padding: '1.5rem',
         marginBottom: '2rem'
       }}>
-        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>📧 Email Address</h2>
+        <h2 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem' }}>Email Address</h2>
         <form onSubmit={handleUpdateEmail}>
           <div className="form-group">
             <label>Current Email</label>

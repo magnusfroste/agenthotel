@@ -535,7 +535,7 @@ function System() {
             onClick={() => setConfirmAction('restart-docker')}
             style={{ background: '#f59e0b', color: 'white' }}
           >
-            🐳 Restart Docker
+            Restart Docker
           </button>
 
           <button
