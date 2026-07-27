@@ -15,9 +15,9 @@ function Providers() {
     apiKey: '',
     models: ''
   });
-  const [testResult, setTestResult] = useState(null);
-  const [testing, setTesting] = useState(false);
-  const [testModel, setTestModel] = useState('');
+  const [testResults, setTestResults] = useState({}); // { providerId: { success, response/error, model } }
+  const [testModels, setTestModels] = useState({}); // { providerId: selectedModel }
+  const [testingProviders, setTestingProviders] = useState({}); // { providerId: boolean }
   const toast = useToast();
 
   useEffect(() => {
@@ -111,26 +111,27 @@ function Providers() {
   }
 
   async function handleTest(provider) {
-    if (!testModel) {
+    const model = testModels[provider.id];
+    if (!model) {
       toast.warning('Please select a model to test');
       return;
     }
 
-    setTesting(true);
-    setTestResult(null);
+    setTestingProviders(prev => ({ ...prev, [provider.id]: true }));
+    setTestResults(prev => ({ ...prev, [provider.id]: null }));
     try {
       const res = await authFetch(`/api/providers/${provider.id}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: testModel })
+        body: JSON.stringify({ model })
       });
       const data = await res.json();
-      setTestResult(data);
+      setTestResults(prev => ({ ...prev, [provider.id]: data }));
     } catch (err) {
       console.error('Test failed:', err);
-      setTestResult({ success: false, error: err.message });
+      setTestResults(prev => ({ ...prev, [provider.id]: { success: false, error: err.message } }));
     } finally {
-      setTesting(false);
+      setTestingProviders(prev => ({ ...prev, [provider.id]: false }));
     }
   }
 
@@ -310,8 +311,8 @@ function Providers() {
             <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <select
-                  value={testModel}
-                  onChange={(e) => setTestModel(e.target.value)}
+                  value={testModels[provider.id] || ''}
+                  onChange={(e) => setTestModels(prev => ({ ...prev, [provider.id]: e.target.value }))}
                   className="form-select"
                   style={{ flex: 1, padding: '0.4rem', fontSize: '0.8rem' }}
                 >
@@ -322,26 +323,26 @@ function Providers() {
                 </select>
                 <button
                   onClick={() => handleTest(provider)}
-                  disabled={testing || !testModel}
+                  disabled={testingProviders[provider.id] || !testModels[provider.id]}
                   className="btn btn-primary"
                   style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
                 >
-                  {testing ? 'Testing...' : 'Test'}
+                  {testingProviders[provider.id] ? 'Testing...' : 'Test'}
                 </button>
               </div>
 
-              {testResult && (
+              {testResults[provider.id] && (
                 <div
-                  className={`alert ${testResult.success ? 'alert-success' : 'alert-error'}`}
+                  className={`alert ${testResults[provider.id].success ? 'alert-success' : 'alert-error'}`}
                   style={{ marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.8rem' }}
                 >
-                  {testResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
+                  {testResults[provider.id].success ? <CheckCircle size={16} /> : <XCircle size={16} />}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>
-                      {testResult.success ? '✓ Test successful' : '✗ Test failed'}
+                      {testResults[provider.id].success ? '✓ Test successful' : '✗ Test failed'}
                     </div>
                     <div style={{ fontSize: '0.75rem' }}>
-                      {testResult.success ? testResult.response : testResult.error}
+                      {testResults[provider.id].success ? testResults[provider.id].response : testResults[provider.id].error}
                     </div>
                   </div>
                 </div>
