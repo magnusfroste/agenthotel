@@ -46,6 +46,34 @@ server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`)
 - `37ee0bf` feat: app-centric dashboard with quick actions
 - `754708d` feat: visual runtime picker for Create Agent
 - `2a4d18b` fix: hermes chat works end-to-end (provider: auto + URL detection)
+- `aab4488` fix: async hermes config patch + remove remaining emojis
+- `684b24c` feat: toast notifications replace all alert() dialogs
+- `09bb398` feat: skeleton loaders and improved empty states
+- `d65bf9f` feat: skeleton loaders and improved empty states for Domains
+- `e0eb96e` fix: remove duplicate margin property in Domains empty state
+- `b00b8f1` feat: skeleton loaders and improved empty state for Certificates
+- `a39d209` feat: add Templates page with visual runtime selection
+- `d7a2421` fix: remove duplicate Compose import in App.jsx
+
+## Templates-sida (Easypanel-style)
+- **Templates.jsx** - Visuell grid med alla 5 runtimes
+- Kategorifilter: All, AI Agent, Docker App, Docker Compose
+- Varje template visar: ikon, namn, beskrivning, default image, port, config fields
+- Deploy-knapp navigerar till CreateAgent med förvald runtime
+- Hover-effekter och smooth transitions
+- Skeleton loaders för loading state
+- Integrerad i sidebar och routing (/templates)
+
+## Slutgiltig verifiering (2026-07-27)
+✓ Alla 12 sidor fungerar (200 OK)
+✓ Alla API-endpoints fungerar
+✓ Hermes chat fungerar (PONG)
+✓ VPS terminal fungerar
+✓ 5 templates: Hermes, OpenClaw, Odysseus, Docker App, Docker Compose
+✓ 1 agent running (hermes)
+✓ 2 domains (panel.froste.eu, hermes.froste.eu)
+✓ 4 SSL certificates (giltiga till okt 2026)
+✓ 3 providers (OpenAI, DGX1, OpenRouter)
 - `aab4488` feat: async hermes config patch + remove remaining emojis
 - `684b24c` feat: toast notifications replace all alert() dialogs
 - `09bb398` feat: skeleton loaders and improved empty states
