@@ -739,16 +739,47 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
 
   const container = await docker.createContainer(containerConfig);
   await container.start();
-  
-  // Hermes uses an env-only config (HERMES_MODEL + provider *_API_KEY env vars).
-  // No config.yaml is written — the broken `provider: 'openai'` value triggered
-  // "Unknown provider 'openai'". See backend/plugins/hermes.js.
-  
+
   const network = docker.getNetwork('agentpanel_agentpanel');
   await network.connect({ Container: containerName });
 
   if (domain) {
     await addCaddyRoute(domain, containerName, port);
+  }
+
+  // Hermes needs its model: block in /opt/data/config.yaml overridden. The image
+  // bakes `provider: auto` + an OpenRouter base_url, and the s6 init script
+  // regenerates config.yaml on start. We patch AFTER networking/routing are set
+  // up, then SIGHUP the gateway so it re-reads (s6 auto-respawns it; SIGHUP
+  // keeps Docker networks intact, unlike pkill).
+  if (runtime === 'hermes' && plugin.generateConfig) {
+    try {
+      const modelBlock = plugin.generateConfig(config);
+      const b64 = Buffer.from(modelBlock).toString('base64');
+      await new Promise(r => setTimeout(r, 4000));
+      const patchScript = `
+import base64
+mb = base64.b64decode('${b64}').decode()
+with open('/opt/data/config.yaml') as f: lines = f.readlines()
+out, i = [], 0
+while i < len(lines):
+    if lines[i].startswith('model:'):
+        i += 1
+        while i < len(lines) and lines[i].startswith('  '): i += 1
+        continue
+    out.append(lines[i]); i += 1
+open('/opt/data/config.yaml', 'w').write(mb + ''.join(out))
+`;
+      const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
+      const stream = await exec.start();
+      await new Promise((resolve) => stream.on('end', resolve));
+      const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
+      const rs = await killExec.start();
+      await new Promise(r => { rs.on('end', r); setTimeout(r, 4000); });
+      console.log('[Hermes] config.yaml patched, gateway reloaded');
+    } catch (err) {
+      console.error('[Hermes] config patch failed:', err.message);
+    }
   }
 }
 
