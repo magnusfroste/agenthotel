@@ -76,7 +76,7 @@ function Domains() {
             <Globe size={40} color="var(--text-secondary)" />
           </div>
           <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.25rem' }}>No domains configured</h3>
-          <p style={{ color: 'var(--text-secondary, #94a3b8)', margin: '0 0 1.5rem 0', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
+          <p style={{ color: 'var(--text-secondary, #94a3b8)', margin: '0 auto 1.5rem', maxWidth: '400px' }}>
             Deploy an agent with a domain to get started. Routes are automatically configured by Caddy with SSL certificates.
           </p>
           <Link to="/create" className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
