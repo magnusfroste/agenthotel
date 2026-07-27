@@ -398,6 +398,47 @@ body {
   font-family: inherit;
 }
 
+/* Global fallback so unstyled inputs (env editors, inline fields) match the
+   dark theme instead of rendering browser-default white. */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+input[type="url"],
+textarea,
+select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+label {
+  color: var(--text-primary);
+}
+
+/* Checkbox: keep native accent, just size it. */
+input[type="checkbox"] {
+  accent-color: var(--accent-blue);
+}
+
 .form-actions {
   display: flex;
   gap: var(--space-md);
