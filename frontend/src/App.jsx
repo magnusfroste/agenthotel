@@ -4,6 +4,7 @@ import { getToken, clearToken, authFetch } from './lib/auth'
 import { ToastProvider } from './components/Toast'
 import Dashboard from './components/Dashboard'
 import CreateAgent from './components/CreateAgent'
+import Compose from './components/Compose'
 import AgentDetail from './components/AgentDetail'
 import Settings from './components/Settings'
 import System from './components/System'
@@ -13,6 +14,7 @@ import Console from './components/Console'
 import Certificates from './components/Certificates'
 import Profile from './components/Profile'
 import Domains from './components/Domains'
+import Templates from './components/Templates'
 import Compose from './components/Compose'
 import Setup from './components/Setup'
 import Login from './components/Login'
@@ -339,6 +341,7 @@ function App() {
           <main className="main-content">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/templates" element={<Templates />} />
               <Route path="/create" element={<CreateAgent />} />
               <Route path="/compose" element={<Compose />} />
               <Route path="/agent/:id" element={<AgentDetail />} />
