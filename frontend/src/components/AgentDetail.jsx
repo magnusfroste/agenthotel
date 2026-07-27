@@ -1,13 +1,13 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
-import { authFetch, getToken } from '../lib/auth'
+import { authFetch } from '../lib/auth'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
   Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe
 } from 'lucide-react'
+
+// Lazy-load xterm only when the Console tab is opened (it's ~200KB).
+const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
 const SENSITIVE = /key|token|password|secret/i
 
@@ -31,9 +31,7 @@ function AgentDetail() {
   const [settings, setSettings] = useState({ domain: '', image: '', port: '' })
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [msg, setMsg] = useState('')
-  const [showTerminal, setShowTerminal] = useState(false)
-  const terminalRef = useRef(null)
-  const xtermRef = useRef(null)
+  const [toast, setToast] = useState(null)
   const logBoxRef = useRef(null)
 
   useEffect(() => { fetchAgent() }, [id])
@@ -58,37 +56,35 @@ function AgentDetail() {
 
   useEffect(() => { if (tab === 'logs' && logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight }, [logs, tab])
 
-  function flash(text) { setMsg(text); setTimeout(() => setMsg(''), 3000) }
+  function notify(type, text) { setToast({ type, text }); setTimeout(() => setToast(null), 3500) }
 
   async function handleAction(path, method = 'POST') {
     try {
       await authFetch(`/api/agents/${id}/${path}`, { method })
+      notify('success', `${path} sent`)
       await fetchAgent()
       if (path === 'redeploy') fetchLogs()
-    } catch (err) { flash('Error: ' + err.message) }
+    } catch (err) { notify('error', path + ': ' + err.message) }
   }
 
   async function handleDelete() {
     if (!confirm('Delete this agent? This cannot be undone.')) return
     try { await authFetch(`/api/agents/${id}`, { method: 'DELETE' }); navigate('/') }
-    catch (err) { flash('Delete failed: ' + err.message) }
+    catch (err) { notify('error', 'Delete failed: ' + err.message) }
   }
 
   async function saveEnv() {
     setEnvSaving(true)
     try {
       const config = {}
-      for (const p of envPairs) {
-        const k = p.key.trim(); if (k) config[k] = p.value
-      }
+      for (const p of envPairs) { const k = p.key.trim(); if (k) config[k] = p.value }
       const res = await authFetch(`/api/agents/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config })
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config })
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
-      flash('Environment saved & redeployed')
+      notify('success', 'Environment saved & redeployed')
       await fetchAgent()
-    } catch (err) { flash('Save failed: ' + err.message) }
+    } catch (err) { notify('error', 'Save failed: ' + err.message) }
     finally { setEnvSaving(false) }
   }
 
@@ -96,70 +92,22 @@ function AgentDetail() {
     setSettingsSaving(true)
     try {
       const res = await authFetch(`/api/agents/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain: settings.domain })
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain: settings.domain })
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
-      flash('Settings saved & redeployed')
+      notify('success', 'Settings saved & redeployed')
       await fetchAgent()
-    } catch (err) { flash('Save failed: ' + err.message) }
+    } catch (err) { notify('error', 'Save failed: ' + err.message) }
     finally { setSettingsSaving(false) }
   }
 
-  // ---- terminal ----
-  useEffect(() => {
-    if (tab === 'console' && !showTerminal) setShowTerminal(true)
-    if (tab === 'console' && !xtermRef.current) setTimeout(initTerminal, 100)
-    // eslint-disable-next-line
-  }, [tab])
-
-  function initTerminal() {
-    if (!terminalRef.current || xtermRef.current) return
-    const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'Menlo, monospace', theme: { background: '#0f172a', foreground: '#e2e8f0', cursor: '#3b82f6' } })
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-    term.open(terminalRef.current)
-    fitAddon.fit()
-    const token = getToken()
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/agents/${id}/terminal?token=${token}`)
-    ws.onopen = () => term.writeln('Connected to agent terminal\r')
-    ws.onmessage = (e) => term.write(e.data)
-    ws.onclose = () => term.writeln('\r\nDisconnected from terminal')
-    term.onData((d) => ws.send(d))
-    xtermRef.current = { term, ws, fitAddon }
-    window.addEventListener('resize', onResize)
-    function onResize() { fitAddon.fit() }
-    term._onResize = onResize
-  }
-
-  useEffect(() => () => {
-    if (xtermRef.current) {
-      if (xtermRef.current.term._onResize) window.removeEventListener('resize', xtermRef.current.term._onResize)
-      xtermRef.current.ws.close(); xtermRef.current.term.dispose()
-    }
-  }, [])
-
-  function getCredentials() {
-    const c = agent.config || {}
-    const creds = []
-    if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
-    if (agent.runtime === 'hermes') {
-      creds.push({ label: 'Dashboard Username', value: 'admin' })
-      creds.push({ label: 'Dashboard Password', value: c.HERMES_DASHBOARD_PASSWORD || 'agentpanel' })
-    }
-    if (c.OPENAI_API_KEY) creds.push({ label: 'OpenAI API Key', value: c.OPENAI_API_KEY })
-    if (c.OPENROUTER_API_KEY) creds.push({ label: 'OpenRouter API Key', value: c.OPENROUTER_API_KEY })
-    if (c.ANTHROPIC_API_KEY) creds.push({ label: 'Anthropic API Key', value: c.ANTHROPIC_API_KEY })
-    return creds
-  }
-
-  function copy(text) { navigator.clipboard.writeText(text); flash('Copied to clipboard') }
+  function copy(text) { navigator.clipboard.writeText(text); notify('success', 'Copied to clipboard') }
 
   if (!agent) return <div className="loading">Loading…</div>
 
   const appUrl = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
-  const credentials = getCredentials()
+  const credentials = getCredentials(agent)
+  const running = agent.status === 'running'
 
   return (
     <div>
@@ -169,42 +117,51 @@ function AgentDetail() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <h1 style={{ margin: 0 }}>{agent.name}</h1>
             <span style={{
-              padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
-              background: agent.status === 'running' ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b',
-              color: 'white', textTransform: 'uppercase'
+              padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.72rem', fontWeight: 600,
+              background: running ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b',
+              color: 'white', textTransform: 'uppercase', letterSpacing: '0.03em'
             }}>{agent.status}</span>
           </div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.35rem' }}>
-            {agent.runtime} · {agent.image}
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.3rem' }}>
+            {agent.runtime} · {agent.image?.split('/').pop()}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {appUrl && (
             <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
-              <ExternalLink size={16} color="white" /> Open
+              <ExternalLink size={15} color="currentColor" /> Open
             </a>
           )}
-          {agent.status === 'running' ? (
-            <button className="btn btn-warning" style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('stop')}><Square size={16} color="white" /> Stop</button>
+          {running ? (
+            <button className="btn" style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('stop')}><Square size={15} color="white" /> Stop</button>
           ) : (
-            <button className="btn btn-success" style={{ background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('start')}><Play size={16} color="white" /> Start</button>
+            <button className="btn" style={{ background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('start')}><Play size={15} color="white" /> Start</button>
           )}
-          <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('redeploy')}><RefreshCw size={16} color="white" /> Redeploy</button>
-          <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={16} color="white" /></button>
+          <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('redeploy')}><RefreshCw size={15} color="white" /> Redeploy</button>
+          <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>
       </div>
 
-      {msg && <div style={{ background: '#1e293b', border: '1px solid #3b82f6', color: '#93c5fd', padding: '0.6rem 1rem', borderRadius: '0.4rem', marginBottom: '1rem', fontSize: '0.875rem' }}>{msg}</div>}
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 10, padding: '0.65rem 1rem', borderRadius: '0.4rem', marginBottom: '1rem',
+          fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem',
+          background: toast.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
+          border: `1px solid ${toast.type === 'error' ? '#ef4444' : '#10b981'}`,
+          color: toast.type === 'error' ? '#fca5a5' : '#6ee7b7'
+        }}>{toast.text}</div>
+      )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border, #334155)', marginBottom: '1.5rem', overflowX: 'auto' }}>
+      <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>
         {TABS.map(t => {
           const Icon = t.icon
           return (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              padding: '0.6rem 1rem', background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid #3b82f6' : '2px solid transparent',
-              color: tab === t.id ? 'var(--text-primary, #e2e8f0)' : 'var(--text-secondary, #94a3b8)',
+              display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 1rem',
+              background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid #3b82f6' : '2px solid transparent',
+              color: tab === t.id ? 'var(--text-primary)' : 'var(--text-secondary)',
               cursor: 'pointer', fontSize: '0.875rem', fontWeight: tab === t.id ? 600 : 400, whiteSpace: 'nowrap'
             }}>
               <Icon size={15} color="currentColor" /> {t.label}
@@ -222,19 +179,19 @@ function AgentDetail() {
               ['Image', agent.image], ['Port', String(agent.port || '—')],
               ['Created', new Date(agent.created_at).toLocaleString()], ['Updated', new Date(agent.updated_at).toLocaleString()]
             ].map(([label, value]) => (
-              <div key={label} style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.5rem', padding: '1rem', border: '1px solid var(--border, #334155)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.35rem' }}>{label}</div>
+              <div key={label} style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>{label}</div>
                 <div style={{ fontSize: '0.9rem', wordBreak: 'break-all', fontFamily: label === 'Image' ? 'monospace' : 'inherit' }}>{value}</div>
               </div>
             ))}
           </div>
           {appUrl && (
-            <div style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border, #334155)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
               <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>PUBLIC URL</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Public URL</div>
                 <a href={appUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>{appUrl}</a>
               </div>
-              <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="white" /> Open app</a>
+              <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
         </div>
@@ -245,7 +202,7 @@ function AgentDetail() {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <h3 style={{ margin: 0, fontSize: '1rem' }}>Container logs</h3>
-            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={fetchLogs}><RefreshCw size={15} color="white" /> Refresh</button>
+            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={fetchLogs}><RefreshCw size={15} color="currentColor" /> Refresh</button>
           </div>
           <pre ref={logBoxRef} style={{ background: '#0f172a', color: '#cbd5e1', padding: '1rem', borderRadius: '0.5rem', maxHeight: '60vh', overflow: 'auto', fontSize: '0.8rem', fontFamily: 'Menlo, monospace', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{logs || 'No logs available'}</pre>
         </div>
@@ -253,23 +210,21 @@ function AgentDetail() {
 
       {/* Console */}
       {tab === 'console' && (
-        <div>
-          <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem' }}>
-            <div ref={terminalRef} style={{ height: '55vh' }}></div>
-          </div>
-        </div>
+        <Suspense fallback={<div className="loading">Loading terminal…</div>}>
+          <TerminalPanel agentId={id} />
+        </Suspense>
       )}
 
       {/* Environment */}
       {tab === 'environment' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
             <div>
               <h3 style={{ margin: 0, fontSize: '1rem' }}>Environment variables</h3>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>Saving redeploys the agent with the new configuration.</div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setEnvPairs([...envPairs, { key: '', value: '' }])}><Plus size={15} color="white" /> Add</button>
+              <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setEnvPairs([...envPairs, { key: '', value: '' }])}><Plus size={15} color="currentColor" /> Add</button>
               <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} disabled={envSaving} onClick={saveEnv}><Save size={15} color="white" /> {envSaving ? 'Saving…' : 'Save & Deploy'}</button>
             </div>
           </div>
@@ -296,12 +251,12 @@ function AgentDetail() {
               {credentials.map((cred, i) => {
                 const masked = SENSITIVE.test(cred.label) && cred.value.length > 8 ? '••••••' + cred.value.slice(-8) : cred.value
                 return (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.5rem', padding: '0.85rem 1rem', border: '1px solid var(--border, #334155)' }}>
-                    <div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{cred.label}</div>
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '0.85rem 1rem', border: '1px solid var(--border)', gap: '0.75rem' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{cred.label}</div>
                       <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>{masked}</div>
                     </div>
-                    <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.75rem' }} onClick={() => copy(cred.value)}><Copy size={14} color="white" /> Copy</button>
+                    <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.75rem', flexShrink: 0 }} onClick={() => copy(cred.value)}><Copy size={14} color="currentColor" /> Copy</button>
                   </div>
                 )
               })}
@@ -313,21 +268,21 @@ function AgentDetail() {
       {/* Settings */}
       {tab === 'settings' && (
         <div style={{ maxWidth: '560px' }}>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
+          <div style={{ marginBottom: '1rem' }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Domain (subdomain or FQDN)</label>
             <input type="text" value={settings.domain} placeholder="myapp.froste.eu" onChange={(e) => setSettings({ ...settings, domain: e.target.value })} style={{ width: '100%', marginTop: '0.3rem' }} />
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>Changing the domain provisions a new HTTPS route via Caddy.</div>
           </div>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Image (read-only)</label>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Image</label>
             <input type="text" value={settings.image} disabled style={{ width: '100%', marginTop: '0.3rem', opacity: 0.6 }} />
           </div>
-          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Port (read-only)</label>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Port</label>
             <input type="text" value={settings.port} disabled style={{ width: '100%', marginTop: '0.3rem', opacity: 0.6 }} />
           </div>
           <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} disabled={settingsSaving} onClick={saveSettings}><Save size={15} color="white" /> {settingsSaving ? 'Saving…' : 'Save & Redeploy'}</button>
-          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border, #334155)' }}>
+          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
             <h4 style={{ margin: '0 0 0.5rem 0', color: '#f87171', fontSize: '0.9rem' }}>Danger zone</h4>
             <button className="btn btn-danger" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={handleDelete}><Trash2 size={15} color="white" /> Delete agent</button>
           </div>
@@ -335,6 +290,20 @@ function AgentDetail() {
       )}
     </div>
   )
+}
+
+function getCredentials(agent) {
+  const c = agent.config || {}
+  const creds = []
+  if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
+  if (agent.runtime === 'hermes') {
+    creds.push({ label: 'Dashboard Username', value: 'admin' })
+    creds.push({ label: 'Dashboard Password', value: c.HERMES_DASHBOARD_PASSWORD || 'agentpanel' })
+  }
+  if (c.OPENAI_API_KEY) creds.push({ label: 'OpenAI API Key', value: c.OPENAI_API_KEY })
+  if (c.OPENROUTER_API_KEY) creds.push({ label: 'OpenRouter API Key', value: c.OPENROUTER_API_KEY })
+  if (c.ANTHROPIC_API_KEY) creds.push({ label: 'Anthropic API Key', value: c.ANTHROPIC_API_KEY })
+  return creds
 }
 
 export default AgentDetail
