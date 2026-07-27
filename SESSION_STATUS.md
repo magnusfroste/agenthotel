@@ -1,288 +1,80 @@
-# AgentPanel Session Status - 2026-07-25
+# AgentPanel — Session Status (2026-07-27)
 
-## ✅ Slutförda Uppgifter
+## Vad som åstadkoms denna session
 
-### 1. System & Infrastructure
-- **Backend uppgraderad till Node.js 22** - Löste better-sqlite3 kompatibilitetsproblem
-- **Daily Docker Cleanup implementerad** - Automatisk rensning var 24:e timme
-  - Backend: Scheduled task med setInterval
-  - API: `/api/docker/cleanup-history` för historik
-  - Database: cleanup_logs tabell
-  - Frontend: UI i System-vyn med tabell och manuell cleanup-knapp
-- **Panel-route flickering fixad** - initPanelRoute() är nu idempotent
+### 1. Hermes chat fungerar end-to-end (HUVUDMÅL)
+Den stora vinsten: **Hermes-agenten kan nu chatta direkt** utan "Unknown provider"/"Context length exceeded"-fel.
 
-### 2. UI/UX Förbättringar
-- **Lucide-ikoner installerade** - Ersatte alla emojis med professionella SVG-ikoner
-  - Dashboard: Settings, Globe, Package, Plug, Trash2
-  - System: Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle
-  - AgentDetail: Key, Copy
-  - App sidebar: Bot, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings, BookOpen
-  - Settings: SettingsIcon, Lock
-  - Profile: Lock
-  - Connect: Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle, Copy, Check
-- **Settings-sida optimerad** - Bättre visuell design med moderna CSS-klasser
-- **Providers-sida optimerad** - Mer kompakta kort med bättre layout
-- **Dashboard optimerad** - Bättre system stats-visning med progress bars
-- **CreateAgent-sida** - Varning om inga providers konfigurerade
+**Rotorsak till alla tidigare fel:** Hermes-image:n bakar `provider: auto` + OpenRouter base_url i config.yaml, och `"openai"` är INTE ett giltigt providernamn (bara `auto`/`custom`/`openrouter`/`anthropic`).
 
-### 3. Backend Förbättringar
-- **Default provider injection** - Alla agenter får nu automatiskt API-nycklar från providers
-- **Base URL injection** - Stöd för custom base URLs
-- **Default modell** - gpt-4o sätts automatiskt om ingen modell specificeras
-- **Terminal WebSocket** - Autentisering fixad (manuell auth istället för requireAuth middleware)
+**Lösningen som FUNGERAR:** `provider: auto` + `base_url: https://api.openai.com/v1` + bare model-namn, **utan** `api_mode` och **utan** `custom_providers`. Hermes auto-detectar providern från base_url-hosten (`api.openai.com` → `openai`) och resolver därifrån modellens context-längd och API-mode själv.
 
-### 4. Agent Management
-- **Claw (OpenClaw)** - Fungerar med GPT-5.4 och OpenAI provider
-  - Codex plugin inaktiverat för att undvika auth-problem
-  - Gateway token: e46d19ab1a5725fc9a6cad7039f0f9cc38a53b9ea2c5a6376729239f5fc30d28
-- **Hermes** - Provider-konfiguration är ett pågående problem (se nedan)
+**Config-patching:** server.js patchar `model:`-blocket i `/opt/data/config.yaml` (base64-kodat, bevarar terminal/browser/compression-sektioner) EFTER nätverk+route, sedan `SIGHUP` på gateway-processen (s6 auto-restartar). `pkill` och `s6-rc` via exec fungerade inte (bryter nätverk resp. inte i PATH).
 
-## ⚠️ Pågående Problem
+### 2. Provider-injection fixad
+server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`) → OpenRouter vann OpenAI-slotten. Fixat: name-baserad mappning (`PROVIDER_ENV_MAP`) där varje provider får sin egen env-var. Custom OpenAI-kompatibla providers (DGX1, vLLM) faller back till OPENAI-slots.
 
-### Hermes Provider-Konfiguration
-**Problem:** Hermes stöder inte `provider: openai` eller `provider: openai-compatible`
+### 3. Live domäner & certifikat från Caddy
+- **Certifikat:** Läser riktiga Let's Encrypt leaf-cert från Caddys cert-store via docker exec + parsa PEM med `crypto.X509Certificate` (issuer, dates, SANs, fingerprint). Filtrerar bort intermediate/root-certs. Den gamla `/pki/certificates/local`-endpointen visade bara interna CA-cert.
+- **Domäner:** Live container-status via `docker.listContainers`, orphaned-route-detektering (container borta men route kvar), klickbara URL:er.
+- **DELETE /api/domains/:id** för att rensa orphaned routes från UI.
 
-**Upptäckt:** Hermes PROVIDER_REGISTRY innehåller `openai-api` som giltig provider:
-```python
-openai-api: ProviderConfig(
-  id='openai-api', 
-  name='OpenAI API', 
-  auth_type='api_key',
-  inference_base_url='https://api.openai.com/v1',
-  api_key_env_vars=('OPENAI_API_KEY',),
-  base_url_env_var='OPENAI_BASE_URL'
-)
-```
+### 4. Easypanel-inspirerad UX
+- **AgentDetail:** Tabbad vy (Overview / Logs / Console / Environment / Credentials / Settings). Environment = key-value editor med add/remove + Save & Deploy. Konsoliderar EditAgent.
+- **Dashboard:** App-centrerade kort med klickbar URL, status-badge, inline Open/Start-Stop/Delete. Auto-refresh.
+- **CreateAgent:** Visuell runtime-väljare med ikoner (Easypanel-style) istället för dropdown.
+- **Domains:** Klickbara URL:er, orphaned-badge med Remove-knapp.
 
-**Lösning som testats men inte fungerat:**
-- `provider: openai` → "Unknown provider 'openai'"
-- `provider: openai-compatible` → "Unknown provider 'openai-compatible'"
-- `provider: custom` med `custom_providers` → Migreras men fungerar inte
-- `provider: openai-api` → **INTE TESTAT ÄN**
+## Commits (pushade till origin/main)
+- `c58947f` fix: hermes provider config - env-only, name-based injection
+- `5e61406` feat: live domains & certificates from Caddy
+- `13e6f5d` feat: Easypanel-style tabbed agent view + live domains
+- `37ee0bf` feat: app-centric dashboard with quick actions
+- `754708d` feat: visual runtime picker for Create Agent
+- `2a4d18b` fix: hermes chat works end-to-end (provider: auto + URL detection)
 
-**Nästa steg:**
-1. Uppdatera hermes.js att använda `provider: openai-api`
-2. Testa att skapa en Hermes-agent
-3. Verifiera att chatten fungerar
-4. Om det fungerar, uppdatera backend-plugin permanent
+## Nuvarande state
+- **panel.froste.eu** → AgentPanel (HTTP 200)
+- **hermes.froste.eu** → Hermes dashboard (HTTP 302, login-sida)
+- **Hermes chat** → fungerar (`hermes -z "say PONG"` → `PONG`, modell gpt-5.4)
+- 4 LE-cert (panel, claw, claw3, hermes), alla giltiga till okt 2026
+- Backend: Node 22, docker-cli installerat, daily cleanup aktiverad
 
-### Terminal/CLI
-**Status:** Delvis implementerad men fungerar inte korrekt
-- WebSocket-anslutning fungerar
-- Men ingen data flödar tillbaka
-- Problemet kan vara i Docker exec stream-hantering
+## Hermes-dashboard inloggning
+- URL: https://hermes.froste.eu/login
+- Användarnamn: `admin`
+- Lösenord: `agentpanel` (sätts via `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`)
+- Credentials visas i portalen: Agents → hermes → Credentials-tab
 
-**Lösning:** Behöver node-pty för riktig PTY-stöd (installerat men inte konfigurerat)
-
-### MCP Access
-**Status:** Inte implementerat
-- Behöver endpoint för extern agent-administration
-- Externa agenter ska kunna:
-  - Se systemhälsa
-  - Hantera agenter (create, delete, redeploy)
-  - Ändra konfigurationer
-  - Se loggar
-
-## 📋 Återstående Uppgifter (Todo-lista)
-
-### Hög Prioritet
-1. **Fixa Hermes provider** - Använda `openai-api` istället för `openai-compatible`
-2. **Testa Hermes-agent** - Skapa, testa chat, destroy via MCP
-3. **Skapa och testa Odysseus-agent** - Samma process som Hermes
-4. **Fixa Terminal/CLI** - Implementera node-pty korrekt
-5. **Implementera MCP-access** - Endpoint för extern administration
-6. **Säkerställa default provider injection** - För alla agent-typer
-7. **Skriva README-dokumentation** - Om agent-hantering och MCP
-8. **Pusha alla ändringar till GitHub** - Säkerställa att allt finns i repot
-9. **Testa extern agent-administration via MCP** - Verifiera att det fungerar
-
-### Medium Prioritet
-10. **Jämföra med Easypanel** - Identifiera saknade funktioner
-11. **Kunna ändra default modell** - I existerande agenter
-12. **Verifiera systemhälsa och monitoring** - Testa alla endpoints
-
-## 🔑 Viktiga Lärdomar
-
-### 1. Hermes Provider-System
-- Hermes har en strikt PROVIDER_REGISTRY
-- Endast registrerade providers fungerar
-- `openai-api` är den korrekta providern för OpenAI (inte `openai`)
-- Custom providers kräver speciell konfiguration
-
-### 2. Docker Network
-- Agenter måste vara på `agentpanel_agentpanel` nätverket
-- Annars kan Caddy inte nå dem (502 Bad Gateway)
-- Manuellt anslut med: `docker network connect agentpanel_agentpanel <container>`
-
-### 3. Caddy Routes
-- Panel-route kan försvinna vid agent-skapande
-- Lösning: initPanelRoute() är nu idempotent
-- Tar bara bort rutten om domänen faktiskt ändras
-
-### 4. Node.js Version
-- better-sqlite3 kräver Node.js 22
-- Alpine Linux behöver python3, make, g++ för native modules
-- Dockerfile måste ha: `RUN apk add --no-cache python3 make g++`
-
-### 5. Provider Injection
-- Backend ska alltid auto-injecta API-nycklar från providers
-- Inte bara vid quickStart
-- Stöd för både apiKey och baseUrl
-
-### 6. Frontend Build
-- Vite builder varnar om chunks > 500KB
-- Kan optimera med dynamic imports eller manual chunks
-- Men fungerar ändå
-
-## 📊 System Status
-
-### Containers
-- ✅ agentpanel-backend: Running (Node.js 22)
-- ✅ agentpanel-frontend: Running
-- ✅ agentpanel-caddy: Running (port 80/443)
-- ✅ agentpanel-openclaw-claw-manual: Running (GPT-5.4)
-- ⚠️ agentpanel-hermes-hermes-1785017587219: Running men provider-problem
-
-### Domäner
-- ✅ panel.froste.eu → AgentPanel frontend
-- ✅ claw.froste.eu → OpenClaw agent (fungerar)
-- ⚠️ hermes.froste.eu → Hermes agent (provider-problem)
-
-### API Endpoints
-- ✅ `/api/agents` - CRUD operations
-- ✅ `/api/providers` - Provider management
-- ✅ `/api/docker/prune` - Docker cleanup
-- ✅ `/api/docker/cleanup-history` - Cleanup history
-- ✅ `/api/system/stats` - System statistics
-- ✅ `/api/certificates` - SSL certificates
-- ⚠️ `/api/agents/:id/terminal` - WebSocket terminal (delvis fungerande)
-- ❌ `/api/mcp/*` - MCP endpoints (inte implementerat)
-
-## 🔧 Tekniska Detaljer
-
-### Backend Stack
-- Node.js 22.22.1
-- Express 4.22.2
-- better-sqlite3 (native module)
-- dockerode (Docker API)
-- express-ws (WebSocket)
-- node-pty (installerat men inte konfigurerat)
-- node-fetch (HTTP client)
-
-### Frontend Stack
-- React 18.3.1
-- React Router DOM 6.22.0
-- Vite 5.4.21
-- Lucide React 0.344.0
-- xterm.js 5.5.0 (terminal)
-
-### Database Schema
-```sql
-agents (id, name, runtime, domain, image, port, config, status, created_at, updated_at)
-providers (id, name, type, baseUrl, apiKey, models, created_at)
-settings (key, value)
-cleanup_logs (id, executed_at, success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed, error)
-```
-
-### Docker Images
-- `openclaw-agentpanel:latest` - OpenClaw med codex inaktiverat
-- `hermes-agentpanel:latest` - Hermes (behöver provider-fix)
-- `odysseus-agentpanel:latest` - Odysseus (inte testat)
-- `docker-app-agentpanel:latest` - Generic Docker app
-
-## 📝 Viktiga Kommandon
-
-### Hämta auth token
+## Nyckelkommandon
 ```bash
-TOKEN=$(docker exec agentpanel-backend node -e "const Database = require('better-sqlite3'); const db = new Database('/data/agentpanel.db'); console.log(db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token').value)")
+# Auth-token
+docker exec agentpanel-backend node -e "const db=require('better-sqlite3')('/data/agentpanel.db'); console.log(db.prepare(\"SELECT value FROM settings WHERE key='auth_token'\").get().value)"
+
+# Testa hermes-chatt
+docker exec agentpanel-hermes-hermes-<ID> hermes -z "say PONG"
+
+# Kontrollera hermes config
+docker exec agentpanel-hermes-hermes-<ID> head -4 /opt/data/config.yaml
+
+# Backend-loggar
+docker compose logs -f backend
+
+# Bygg om efter ändringar
+docker compose build backend && docker compose up -d backend
+cd frontend && npm run build && docker compose build frontend && docker compose up -d frontend
 ```
 
-### Skapa agent med default provider
-```bash
-curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"hermes","runtime":"hermes","domain":"hermes.froste.eu","quickStart":true}' \
-  https://panel.froste.eu/api/agents
-```
+## Viktiga tekniska lärdomar
+1. **Hermes provider-routning:** `provider: auto` + rätt `base_url` > explicit `provider: custom/openai`. Hermes känner igen providern via URL-host.
+2. **`api_mode: chat_completions` orsakar `session_id`-fel** med OpenAI — låt hermes auto-välja.
+3. **`custom_providers` + `context_length`** fungerar INTE i v0.19.0 vid preflight → "Context length exceeded". Använd `provider: auto` istället.
+4. **gpt-4o avvisar `reasoning.effort`** → använd gpt-5.4 som default för hermes.
+5. **dockerode exec före network.connect** bryter nätverket — gör exec/patch EFTER network+route.
+6. **Caddy LE-cert** lagras i `/data/caddy/certificates/acme-v02.../<domain>/` — inte i admin-API:et.
 
-### Ta bort agent
-```bash
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  https://panel.froste.eu/api/agents/<agent-id>
-```
-
-### Testa agent chat
-```bash
-docker exec <container-name> hermes -z "Svara med endast orden: hermes ok"
-```
-
-### Kolla Hermes providers
-```bash
-docker exec <container-name> python3 -c "
-import sys
-sys.path.insert(0, '/opt/hermes')
-from hermes_cli.auth import PROVIDER_REGISTRY
-for k, v in PROVIDER_REGISTRY.items():
-    print(f'{k}: {v}')
-"
-```
-
-## 🎯 Nästa Steg
-
-1. **Fixa Hermes provider** - Uppdatera hermes.js att använda `openai-api`
-2. **Testa Hermes** - Skapa agent, testa chat, destroy via MCP
-3. **Testa Odysseus** - Samma process
-4. **Implementera MCP** - Endpoint för extern administration
-5. **Fixa Terminal** - Implementera node-pty
-6. **Skriva README** - Dokumentera allt
-7. **Pusha till GitHub** - Säkerställa att allt finns i repot
-
-## 📌 Viktiga Anteckningar
-
-### Säkerhet
-- Alla agenter körs som root i containern (behöver för shell access)
-- API-nycklar lagras i plaintext i databasen (bör krypteras)
-- MCP endpoint behöver autentisering
-
-### Prestanda
-- VPS har begränsade resurser
-- Testa bara en agent åt gången
-- Daily cleanup hjälper med diskutrymme
-
-### Underhåll
-- Uppdatera Docker images regelbundet
-- Monitorera cleanup logs
-- Kolla certifikat expiry
-
-### Dokumentation
-- README behöver uppdateras med:
-  - Installation guide
-  - Agent management guide
-  - MCP integration guide
-  - Troubleshooting guide
-
-## 🏁 Slutmål
-
-Skapa en komplett adminpanel som:
-1. ✅ Hanterar agenter (create, delete, redeploy)
-2. ✅ Har default provider injection
-3. ✅ Visar systemhälsa
-4. ⚠️ Har fungerande terminal
-5. ❌ Har MCP-access för externa agenter
-6. ✅ Har professionellt UI med Lucide-ikoner
-7. ✅ Har dokumentation i README
-8. ✅ Är pushad till GitHub
-
-## 📞 Support
-
-Om problem uppstår:
-1. Kolla backend logs: `docker logs agentpanel-backend`
-2. Kolla Caddy logs: `docker logs agentpanel-caddy`
-3. Kolla agent logs: `docker logs <agent-container>`
-4. Verifiera nätverk: `docker network inspect agentpanel_agentpanel`
-5. Kolla Caddy routes: `curl http://localhost:2019/config/apps/http/servers/srv0/routes`
-
----
-
-**Session start:** 2026-07-25
-**Session status:** Pågående
-**Nästa action:** Fixa Hermes provider till `openai-api`
+## Kända begränsningar / Nästa steg
+- Agent-status kan visa "creating" en stund efter skapande (SIGHUP-reload tar ~8s)
+- Dashboard-login är separat från panel-login ( BASIC_AUTH, inte synkad)
+- Compose-runtime finns men kan förbättras med bättre YAML-editor
+- Template library (Easypanel-style grid med meta.yaml) är backlog
