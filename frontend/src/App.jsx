@@ -15,10 +15,10 @@ import Domains from './components/Domains'
 import Compose from './components/Compose'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, Sun, Moon, Package, User, Download } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, Sun, Moon, Package, User, Download, Menu, X } from 'lucide-react'
 import './index.css'
 
-function Sidebar({ onLogout }) {
+function Sidebar({ onLogout, onNavigate, className = '' }) {
   const location = useLocation()
   const [ip, setIp] = useState('')
   const [version, setVersion] = useState('')
@@ -100,11 +100,11 @@ function Sidebar({ onLogout }) {
   }
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${className}`}>
       <div className="sidebar-header">
         <Link to="/" className="sidebar-brand"><Bot size={24} color="white" /> AgentPanel</Link>
       </div>
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" onClick={onNavigate}>
         <Link to="/" className={`sidebar-link ${isActive('/')}`}>
           <span className="sidebar-icon"><BarChart3 size={18} color="white" /></span>
           <span>Dashboard</span>
@@ -268,6 +268,7 @@ function Sidebar({ onLogout }) {
 
 function App() {
   const [state, setState] = useState('loading')
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   useEffect(() => {
     checkState()
@@ -311,7 +312,26 @@ function App() {
   return (
     <BrowserRouter>
       <div className="app">
-        <Sidebar onLogout={handleLogout} />
+        <button 
+          className="mobile-menu-toggle"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label="Toggle menu"
+        >
+          {mobileOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        
+        {mobileOpen && (
+          <div 
+            className="mobile-sidebar-overlay active"
+            onClick={() => setMobileOpen(false)}
+          />
+        )}
+        
+        <Sidebar 
+          onLogout={handleLogout} 
+          onNavigate={() => setMobileOpen(false)}
+          className={mobileOpen ? 'sidebar-open' : ''}
+        />
         <main className="main-content">
           <Routes>
             <Route path="/" element={<Dashboard />} />
