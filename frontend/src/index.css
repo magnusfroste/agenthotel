@@ -705,6 +705,16 @@ input[type="checkbox"] {
   }
 }
 
+/* Skeleton loader pulse animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .mobile-menu-toggle {

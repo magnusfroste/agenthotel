@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, Plug, ExternalLink, Play, Square, MoreHorizontal } from 'lucide-react'
+import { Trash2, Globe, Package, Plug, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers } from 'lucide-react'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -79,10 +79,32 @@ function Dashboard() {
 
   if (loading) {
     return (
-      <div className="loading">
-        <div>
-          <div className="loading-spinner" />
-          <div>Loading…</div>
+      <div>
+        <div className="page-header">
+          <h1 className="page-title">Agent Fleet</h1>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
+          </div>
+        </div>
+        <div className="stats-grid">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="stat-item" style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>
+              <div style={{ width: '60%', height: '20px', background: 'var(--bg-secondary)', borderRadius: '0.25rem', marginBottom: '0.5rem' }} />
+              <div style={{ width: '40%', height: '16px', background: 'var(--bg-secondary)', borderRadius: '0.25rem', marginBottom: '0.75rem' }} />
+              <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '0.25rem' }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem', marginTop: '2rem' }}>
+          {[...Array(3)].map((_, i) => (
+            <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: '0.6rem', padding: '1.1rem', animation: 'pulse 1.5s ease-in-out infinite' }}>
+              <div style={{ width: '60%', height: '20px', background: 'var(--bg-tertiary)', borderRadius: '0.25rem', marginBottom: '0.5rem' }} />
+              <div style={{ width: '40%', height: '14px', background: 'var(--bg-tertiary)', borderRadius: '0.25rem', marginBottom: '1rem' }} />
+              <div style={{ width: '80%', height: '14px', background: 'var(--bg-tertiary)', borderRadius: '0.25rem', marginBottom: '0.5rem' }} />
+              <div style={{ width: '70%', height: '14px', background: 'var(--bg-tertiary)', borderRadius: '0.25rem' }} />
+            </div>
+          ))}
         </div>
       </div>
     )
@@ -124,11 +146,29 @@ function Dashboard() {
 
       {agents.length === 0 ? (
         <div className="empty-state">
-          <h2>No agents yet</h2>
-          <p>Deploy your first agent or Docker Compose app to get started.</p>
+          <div style={{ 
+            width: '80px', 
+            height: '80px', 
+            borderRadius: '50%', 
+            background: 'var(--bg-tertiary)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            margin: '0 auto 1.5rem'
+          }}>
+            <Bot size={40} color="var(--text-secondary)" />
+          </div>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>No agents yet</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
+            Deploy your first AI agent or Docker Compose app to get started with AgentPanel.
+          </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1rem' }}>
-            <Link to="/create" className="btn btn-primary">+ Create Agent</Link>
-            <Link to="/compose" className="btn btn-secondary">Deploy Compose</Link>
+            <Link to="/create" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Plus size={16} color="white" /> Create Agent
+            </Link>
+            <Link to="/compose" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Layers size={16} color="white" /> Deploy Compose
+            </Link>
           </div>
         </div>
       ) : (
@@ -136,7 +176,7 @@ function Dashboard() {
           {agents.map(agent => {
             const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
             return (
-              <div key={agent.id} style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.6rem', border: '1px solid var(--border, #334155)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div key={agent.id} className="agent-card" style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.6rem', border: '1px solid var(--border, #334155)', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', cursor: 'pointer' }}>
                 <Link to={`/agent/${agent.id}`} style={{ textDecoration: 'none', color: 'inherit', padding: '1.1rem 1.1rem 0.85rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
                     <div style={{ minWidth: 0 }}>
