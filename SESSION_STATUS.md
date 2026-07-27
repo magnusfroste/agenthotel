@@ -24,6 +24,20 @@ server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`)
 - **Dashboard:** App-centrerade kort med klickbar URL, status-badge, inline Open/Start-Stop/Delete. Auto-refresh.
 - **CreateAgent:** Visuell runtime-väljare med ikoner (Easypanel-style) istället för dropdown.
 - **Domains:** Klickbara URL:er, orphaned-badge med Remove-knapp.
+- **Mobil-responsiv sidebar:** Hamburger-meny på mobil (< 768px), sidebar glider in som overlay med backdrop.
+- **Toast-notifieringar:** Ersätter alla alert()-dialoger med professionella toast-notiser (success/error/info) med slide-in animation.
+- **Skeleton loaders:** Professionella loading states för Dashboard, Domains och Certificates med pulse-animation.
+- **Förbättrade empty states:** Alla tomma sidor har nu ikoner, beskrivande text och call-to-action knappar.
+- **Code-splitting:** xterm terminal lazy-loadas bara när Console-tabben öppnas (568KB → 281KB main bundle).
+
+### 5. UX Polish & Professionalisering
+- **Toast-notifieringar:** Ersatte alla `alert()`-anrop med professionella toast-notiser (success/error/info) med slide-in animation
+- **Skeleton loaders:** Loading states för Dashboard, Domains och Certificates med pulse-animation istället för enkel text
+- **Förbättrade empty states:** Alla tomma vyer har nu ikoner (Bot, Globe, Shield), beskrivande text och call-to-action-knappar
+- **Mobil-responsiv sidebar:** Hamburger-meny för mobil (< 768px) med overlay och smooth transitions
+- **Dark theme input-styling:** Global CSS för alla input/textarea/select element så de matchar dark theme
+- **Borttagna emojis:** Alla emojis (☀🌙📦👤🐳📧💡) ersatta med Lucide-ikoner för professionellt utseende
+- **Code-splitting:** xterm.js lazy-loadas bara när Console-tabben öppnas (bundle: 568KB → 281KB main + 292KB terminal)
 
 ## Commits (pushade till origin/main)
 - `c58947f` fix: hermes provider config - env-only, name-based injection
@@ -32,6 +46,12 @@ server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`)
 - `37ee0bf` feat: app-centric dashboard with quick actions
 - `754708d` feat: visual runtime picker for Create Agent
 - `2a4d18b` fix: hermes chat works end-to-end (provider: auto + URL detection)
+- `aab4488` feat: async hermes config patch + remove remaining emojis
+- `684b24c` feat: toast notifications replace all alert() dialogs
+- `09bb398` feat: skeleton loaders and improved empty states
+- `d65bf9f` feat: skeleton loaders and improved empty states for Domains
+- `e0eb96e` fix: remove duplicate margin property in Domains empty state
+- `b00b8f1` feat: skeleton loaders and improved empty state for Certificates
 
 ## Nuvarande state
 - **panel.froste.eu** → AgentPanel (HTTP 200)
@@ -78,3 +98,12 @@ cd frontend && npm run build && docker compose build frontend && docker compose 
 - Dashboard-login är separat från panel-login ( BASIC_AUTH, inte synkad)
 - Compose-runtime finns men kan förbättras med bättre YAML-editor
 - Template library (Easypanel-style grid med meta.yaml) är backlog
+
+## Tekniska förbättringar
+- **Code-splitting:** xterm.js lazy-loadas via React.lazy() när Console-tabben öppnas
+  - Main bundle: 568KB → 281KB (78KB gzipped)
+  - Terminal bundle: 292KB (72KB gzipped) - laddas bara vid behov
+- **Toast-system:** createContext + useToast() hook för globala notifikationer
+- **Skeleton loaders:** CSS @keyframes pulse-animation för loading states
+- **Global input-styling:** CSS-regler för alla input/textarea/select element i dark theme
+- **Mobil CSS:** @media queries för sidebar-overlay, hamburger-meny, responsive grid
