@@ -101,54 +101,42 @@ function Certificates() {
             const isExpired = daysLeft !== null && daysLeft < 0
 
             return (
-              <div key={i} style={{
-                background: 'var(--bg-secondary, #1e293b)',
-                borderRadius: '0.5rem',
-                padding: '1.5rem',
-                border: isExpired ? '2px solid #ef4444' : isExpiringSoon ? '2px solid #f59e0b' : '1px solid var(--border, #334155)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
+              <div key={i} className={`cert-card ${isExpired ? 'expired' : isExpiringSoon ? 'expiring-soon' : ''}`}>
+                <div className="cert-card-header">
                   <div>
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text-primary, #e2e8f0)' }}>
-                      {cert.domain}
-                    </h3>
-                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary, #94a3b8)', marginTop: '0.25rem' }}>
-                      Issuer: {cert.issuer}
-                    </div>
+                    <h3 className="cert-card-title">{cert.domain}</h3>
+                    <div className="cert-card-issuer">Issuer: {cert.issuer}</div>
                   </div>
-                  <div style={{
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '0.25rem',
-                    fontSize: '0.75rem',
-                    fontWeight: '600',
-                    background: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : '#10b981',
+                  <span className="status-badge" style={{
+                    background: isExpired ? 'var(--accent-red)' : isExpiringSoon ? 'var(--accent-yellow)' : 'var(--accent-green)',
                     color: 'white'
                   }}>
                     {isExpired ? 'EXPIRED' : isExpiringSoon ? 'EXPIRING SOON' : 'ACTIVE'}
-                  </div>
+                  </span>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', fontSize: '0.875rem' }}>
-                  <div>
-                    <div style={{ color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.25rem' }}>Issued</div>
-                    <div style={{ color: 'var(--text-primary, #e2e8f0)', fontWeight: '500' }}>
-                      {formatDate(cert.notBefore)}
-                    </div>
+                <div className="cert-card-details">
+                  <div className="cert-card-detail">
+                    <div className="cert-card-detail-label">Issued</div>
+                    <div className="cert-card-detail-value">{formatDate(cert.notBefore)}</div>
                   </div>
-                  <div>
-                    <div style={{ color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.25rem' }}>Expires</div>
-                    <div style={{ color: 'var(--text-primary, #e2e8f0)', fontWeight: '500' }}>
+                  <div className="cert-card-detail">
+                    <div className="cert-card-detail-label">Expires</div>
+                    <div className="cert-card-detail-value">
                       {formatDate(cert.notAfter)}
                       {daysLeft !== null && (
-                        <span style={{ marginLeft: '0.5rem', color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : '#10b981' }}>
+                        <span style={{ 
+                          marginLeft: '0.5rem', 
+                          color: isExpired ? 'var(--accent-red)' : isExpiringSoon ? 'var(--accent-yellow)' : 'var(--accent-green)' 
+                        }}>
                           ({daysLeft > 0 ? `${daysLeft} days left` : `${Math.abs(daysLeft)} days ago`})
                         </span>
                       )}
                     </div>
                   </div>
-                  <div>
-                    <div style={{ color: 'var(--text-secondary, #94a3b8)', marginBottom: '0.25rem' }}>Certificate Hash</div>
-                    <div style={{ color: 'var(--text-primary, #e2e8f0)', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                  <div className="cert-card-detail">
+                    <div className="cert-card-detail-label">Certificate Hash</div>
+                    <div className="cert-card-detail-value" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
                       {cert.hash?.substring(0, 16)}...
                     </div>
                   </div>

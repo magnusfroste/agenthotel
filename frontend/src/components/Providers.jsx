@@ -263,15 +263,11 @@ function Providers() {
 
       <div className="grid" style={{ gap: '0.75rem' }}>
         {providers.map((provider) => (
-          <div
-            key={provider.id}
-            className="card"
-            style={{ padding: '1rem', cursor: 'default' }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <div key={provider.id} className="provider-card">
+            <div className="provider-card-header">
               <div style={{ flex: 1 }}>
-                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>{provider.name}</h3>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                <h3 className="provider-card-title">{provider.name}</h3>
+                <div className="provider-card-meta">
                   <span style={{ marginRight: '1rem' }}><strong>Type:</strong> {provider.type}</span>
                   <span><strong>URL:</strong> {provider.baseUrl}</span>
                 </div>
@@ -283,19 +279,19 @@ function Providers() {
                   className="btn btn-secondary"
                   style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
                 >
-                  <Edit size={14} />
+                  <Edit size={14} color="currentColor" />
                 </button>
                 <button
                   onClick={() => handleDelete(provider.id)}
                   className="btn btn-danger"
                   style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={14} color="currentColor" />
                 </button>
               </div>
             </div>
 
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+            <div className="provider-card-info">
               {provider.apiKey && (
                 <div style={{ marginBottom: '0.25rem' }}>
                   <strong>API Key:</strong> •••••{provider.apiKey.slice(-4)}
@@ -308,7 +304,7 @@ function Providers() {
               )}
             </div>
 
-            <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+            <div className="provider-card-test">
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <select
                   value={testModels[provider.id] || ''}

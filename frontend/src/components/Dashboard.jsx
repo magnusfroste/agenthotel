@@ -176,34 +176,53 @@ function Dashboard() {
           {agents.map(agent => {
             const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
             return (
-              <div key={agent.id} className="agent-card" style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.6rem', border: '1px solid var(--border, #334155)', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', cursor: 'pointer' }}>
-                <Link to={`/agent/${agent.id}`} style={{ textDecoration: 'none', color: 'inherit', padding: '1.1rem 1.1rem 0.85rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <div key={agent.id} className="agent-card">
+                <Link to={`/agent/${agent.id}`} className="agent-card-content" style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <div className="agent-card-header">
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary, #e2e8f0)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{agent.runtime}</div>
+                      <div className="agent-card-title">{agent.name}</div>
+                      <div className="agent-card-subtitle">{agent.runtime}</div>
                     </div>
-                    <span style={{ flexShrink: 0, padding: '0.15rem 0.6rem', borderRadius: '1rem', fontSize: '0.7rem', fontWeight: 600, background: statusColor(agent.status), color: 'white', textTransform: 'uppercase' }}>{agent.status}</span>
+                    <span className="status-badge" style={{ background: statusColor(agent.status) }}>
+                      {agent.status}
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.75rem', fontSize: '0.82rem', color: url ? '#60a5fa' : 'var(--text-secondary)' }}>
-                    <Globe size={14} color="currentColor" />
-                    <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.domain || 'no domain'}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                    <Package size={14} color="currentColor" />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.image?.split('/').pop()}</span>
+                  <div className="agent-card-meta">
+                    <div className={`agent-card-meta-item ${url ? 'clickable' : ''}`}>
+                      <Globe size={14} color="currentColor" />
+                      <span style={{ fontFamily: 'monospace' }}>{agent.domain || 'no domain'}</span>
+                    </div>
+                    <div className="agent-card-meta-item">
+                      <Package size={14} color="currentColor" />
+                      <span>{agent.image?.split('/').pop()}</span>
+                    </div>
                   </div>
                 </Link>
-                <div style={{ marginTop: 'auto', padding: '0.6rem 1.1rem 1.1rem', display: 'flex', gap: '0.4rem', borderTop: '1px solid var(--border, #334155)' }}>
+                <div className="agent-card-actions">
                   {url ? (
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'none', fontSize: '0.82rem', padding: '0.4rem' }}><ExternalLink size={14} color="white" /> Open</a>
+                    <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
+                      <ExternalLink size={14} color="currentColor" /> Open
+                    </a>
                   ) : (
-                    <Link to={`/agent/${agent.id}`} className="btn btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'none', fontSize: '0.82rem', padding: '0.4rem' }}><MoreHorizontal size={14} color="white" /> Manage</Link>
+                    <Link to={`/agent/${agent.id}`} className="btn btn-secondary">
+                      <MoreHorizontal size={14} color="currentColor" /> Manage
+                    </Link>
                   )}
-                  <button className="btn" title={agent.status === 'running' ? 'Stop' : 'Start'} onClick={(e) => { e.preventDefault(); toggleAgent(agent.id, agent.status) }} style={{ background: agent.status === 'running' ? '#f59e0b' : '#10b981', color: 'white', padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center' }}>
+                  <button 
+                    className="btn" 
+                    title={agent.status === 'running' ? 'Stop' : 'Start'} 
+                    onClick={(e) => { e.preventDefault(); toggleAgent(agent.id, agent.status) }}
+                    style={{ background: agent.status === 'running' ? 'var(--accent-yellow)' : 'var(--accent-green)', color: 'white' }}
+                  >
                     {agent.status === 'running' ? <Square size={14} color="white" /> : <Play size={14} color="white" />}
                   </button>
-                  <button className="btn btn-danger" title="Delete" onClick={(e) => { e.preventDefault(); handleDelete(agent.id, agent.name) }} style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center' }}><Trash2 size={14} color="white" /></button>
+                  <button 
+                    className="btn btn-danger" 
+                    title="Delete" 
+                    onClick={(e) => { e.preventDefault(); handleDelete(agent.id, agent.name) }}
+                  >
+                    <Trash2 size={14} color="white" />
+                  </button>
                 </div>
               </div>
             )

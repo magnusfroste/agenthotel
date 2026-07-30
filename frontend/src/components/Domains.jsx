@@ -88,34 +88,44 @@ function Domains() {
           {domains.map((d, i) => {
             const clickable = d.domain && d.domain.includes('.')
             return (
-              <div key={i} style={{ background: 'var(--bg-secondary, #1e293b)', borderRadius: '0.5rem', padding: '1.1rem 1.25rem', border: d.orphaned ? '1px solid #ef4444' : '1px solid var(--border, #334155)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div key={i} className={`domain-card ${d.orphaned ? 'orphaned' : ''}`}>
+                <div className="domain-card-header">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
                       {clickable ? (
-                        <a href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontSize: '1.05rem', fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <a href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer" className="domain-card-title">
                           {d.domain} <ExternalLink size={14} color="currentColor" />
                         </a>
                       ) : (
                         <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>{d.domain}</span>
                       )}
-                      <span style={{ padding: '0.15rem 0.6rem', borderRadius: '1rem', fontSize: '0.7rem', fontWeight: 600, background: statusColor(d.status), color: 'white', textTransform: 'uppercase' }}>{d.status}</span>
+                      <span className="status-badge" style={{ background: statusColor(d.status) }}>
+                        {d.status}
+                      </span>
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #94a3b8)', marginTop: '0.3rem', fontFamily: 'monospace' }}>
+                    <div className="domain-card-meta">
                       {d.agentName} {d.runtime !== 'panel' && `· ${d.runtime}`} · {d.container}:{d.port}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <div className="domain-card-actions">
                     {d.id !== 'panel-route' && !d.orphaned && d.agentName && !d.agentName.startsWith('(') && (
-                      <Link to={`/agent/${d.id.replace('agent-', '')}`} style={{ fontSize: '0.8rem', color: '#60a5fa', textDecoration: 'none' }}>Manage →</Link>
+                      <Link to={`/agent/${d.id.replace('agent-', '')}`} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+                        Manage →
+                      </Link>
                     )}
                     {d.orphaned && (
-                      <button className="btn btn-danger" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }} onClick={() => removeRoute(d.id, d.domain)}><Trash2 size={14} color="white" /> Remove route</button>
+                      <button 
+                        className="btn btn-danger" 
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} 
+                        onClick={() => removeRoute(d.id, d.domain)}
+                      >
+                        <Trash2 size={14} color="white" /> Remove route
+                      </button>
                     )}
                   </div>
                 </div>
                 {d.orphaned && (
-                  <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: '#fca5a5' }}>
+                  <div className="domain-card-warning">
                     Backing container no longer exists. This is a leftover route — safe to remove.
                   </div>
                 )}

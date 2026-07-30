@@ -108,17 +108,10 @@ function Templates() {
 
       {/* Templates Grid */}
       {filteredRuntimes.length === 0 ? (
-        <div style={{ 
-          padding: '3rem 2rem', 
-          background: 'var(--bg-secondary)', 
-          borderRadius: '0.5rem', 
-          textAlign: 'center' 
-        }}>
+        <div className="empty-state">
           <Info size={40} color="var(--text-secondary)" style={{ margin: '0 auto 1rem' }} />
-          <h3 style={{ margin: '0 0 0.5rem 0' }}>No templates in this category</h3>
-          <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-            Try selecting a different category.
-          </p>
+          <h2>No templates in this category</h2>
+          <p>Try selecting a different category.</p>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
@@ -128,102 +121,46 @@ function Templates() {
             const color = RUNTIME_COLORS[rt.id] || '#3b82f6'
             
             return (
-              <div key={rt.id} style={{ 
-                background: 'var(--bg-secondary)', 
-                borderRadius: '0.6rem', 
-                border: '1px solid var(--border)',
-                padding: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                transition: 'all 0.2s',
-                cursor: 'pointer'
-              }}
-              onClick={() => navigate(`/create?runtime=${rt.id}`)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = color
-                e.currentTarget.style.transform = 'translateY(-2px)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border)'
-                e.currentTarget.style.transform = 'translateY(0)'
-              }}
+              <div 
+                key={rt.id} 
+                className="template-card"
+                onClick={() => navigate(`/create?runtime=${rt.id}`)}
               >
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                  <div style={{ 
-                    width: '48px', 
-                    height: '48px', 
-                    borderRadius: '0.5rem', 
-                    background: color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
+                <div className="template-card-header">
+                  <div className="template-card-icon" style={{ background: color }}>
                     <Icon size={24} color="white" />
                   </div>
-                  <span style={{
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '1rem',
-                    fontSize: '0.75rem',
-                    fontWeight: '600',
-                    background: 'rgba(59,130,246,0.1)',
-                    color: '#60a5fa'
-                  }}>
+                  <span className="template-card-category">
                     {category}
                   </span>
                 </div>
 
-                {/* Title & Description */}
-                <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>{rt.name}</h3>
-                <p style={{ 
-                  color: 'var(--text-secondary)', 
-                  margin: '0 0 1rem 0', 
-                  fontSize: '0.875rem',
-                  lineHeight: '1.5',
-                  flex: 1
-                }}>
+                <h3 className="template-card-title">{rt.name}</h3>
+                <p className="template-card-description">
                   {rt.description}
                 </p>
 
-                {/* Metadata */}
-                <div style={{ 
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.5rem',
-                  marginBottom: '1rem',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-secondary)'
-                }}>
+                <div className="template-card-meta">
                   {rt.defaultImage && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <div className="template-card-meta-item">
                       <Package size={14} color="currentColor" />
-                      <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {rt.defaultImage}
-                      </span>
+                      <span style={{ fontFamily: 'monospace' }}>{rt.defaultImage}</span>
                     </div>
                   )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <div className="template-card-meta-item">
                     <Server size={14} color="currentColor" />
                     <span>Port: {rt.defaultPort}</span>
                   </div>
                   {rt.configFields && rt.configFields.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <div className="template-card-meta-item">
                       <Database size={14} color="currentColor" />
                       <span>{rt.configFields.length} config fields</span>
                     </div>
                   )}
                 </div>
 
-                {/* Deploy Button */}
                 <button 
                   className="btn btn-primary"
-                  style={{ 
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.5rem'
-                  }}
                   onClick={(e) => {
                     e.stopPropagation()
                     navigate(`/create?runtime=${rt.id}`)
