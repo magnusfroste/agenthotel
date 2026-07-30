@@ -24,8 +24,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Agent name (unique)' },
-          runtime: { type: 'string', description: 'Runtime: openclaw, hermes, or docker-app' },
-          domain: { type: 'string', description: 'Subdomain for the agent (optional)' },
+          runtime: { type: 'string', description: 'Runtime: openclaw, hermes, odysseus, docker-app, or compose' },
+          domain: { type: 'string', description: 'Full domain for the agent (optional, e.g. hermes.example.com)' },
           image: { type: 'string', description: 'Docker image (optional, uses default)' },
           port: { type: 'integer', description: 'Port (optional, uses default)' },
           config: { type: 'object', description: 'Agent configuration (env vars, volumes, etc)' }
@@ -94,35 +94,60 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
 
         const image = args.image || plugin.defaultImage;
         const port = args.port || plugin.defaultPort;
-        const agentConfig = plugin.buildConfig({ name: args.name, domain: args.domain, image, port, config: args.config || {} });
-        const env = plugin.buildEnv(agentConfig);
+
+        // Auto-inject API keys from providers, mapped by provider NAME (not type).
+        // Keep this in sync with the provider injection in server.js /api/agents.
+        const PROVIDER_ENV_MAP = {
+          openai: { key: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
+          openrouter: { key: 'OPENROUTER_API_KEY' },
+          anthropic: { key: 'ANTHROPIC_API_KEY' },
+          gemini: { key: 'GEMINI_API_KEY' },
+          deepseek: { key: 'DEEPSEEK_API_KEY' },
+          groq: { key: 'GROQ_API_KEY' },
+          xai: { key: 'XAI_API_KEY' },
+          mistral: { key: 'MISTRAL_API_KEY' }
+        };
+        const finalConfig = { ...(args.config || {}) };
+        const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
+        for (const provider of providers) {
+          const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const mapping = PROVIDER_ENV_MAP[slug];
+          if (mapping) {
+            if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
+            if (mapping.baseUrl && !finalConfig[mapping.baseUrl] && provider.baseUrl) {
+              finalConfig[mapping.baseUrl] = provider.baseUrl;
+            }
+          } else if (provider.type === 'openai' && provider.apiKey) {
+            // Custom OpenAI-compatible provider (e.g. vLLM, DGX1).
+            if (!finalConfig.OPENAI_API_KEY) finalConfig.OPENAI_API_KEY = provider.apiKey;
+            if (!finalConfig.OPENAI_BASE_URL && provider.baseUrl) finalConfig.OPENAI_BASE_URL = provider.baseUrl;
+          }
+        }
+
+        // Set default model if not specified and a provider key is available.
+        // Hermes needs a model that accepts reasoning.effort; gpt-5.4 works.
+        if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
+          if (finalConfig.OPENAI_API_KEY) {
+            finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
+            finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
+          } else if (finalConfig.OPENROUTER_API_KEY) {
+            finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
+            finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
+          }
+        }
+
+        const agentConfig = plugin.buildConfig({ name: args.name, domain: args.domain, image, port, config: finalConfig });
 
         db.prepare('INSERT INTO agents (id, name, runtime, domain, image, port, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
           .run(id, args.name, args.runtime, args.domain || null, image, port, 'creating', JSON.stringify(agentConfig));
 
         try {
-          await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
-          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-          
-          if (args.domain) {
-            const settings = {};
-            db.prepare('SELECT key, value FROM settings').all().forEach(r => settings[r.key] = r.value);
-            if (settings.panel_domain) {
-              const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
-              const fetch = require('node-fetch');
-              const agentDomain = `${args.domain}.${settings.panel_domain}`;
-              await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  '@id': `agent-${agentDomain}`,
-                  match: [{ host: [agentDomain] }],
-                  handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `agentpanel-${id}:${port}` }] }]
-                })
-              });
-            }
+          if (args.runtime === 'compose') {
+            await plugin.deploy(id, args.name, agentConfig, plugin);
+          } else {
+            await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
           }
-          
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: id, status: 'running' }) }] };
         } catch (err) {
           db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);

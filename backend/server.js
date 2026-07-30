@@ -466,6 +466,13 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
             }]
           },
           {
+            match: [{ path: ['/mcp'] }],
+            handle: [{
+              handler: 'reverse_proxy',
+              upstreams: [{ dial: 'backend:8080' }]
+            }]
+          },
+          {
             handle: [{
               handler: 'reverse_proxy',
               upstreams: [{ dial: 'frontend:80' }]
@@ -612,14 +619,15 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       }
     }
     
-    // Set default model if not specified
+    // Set default model if not specified. Hermes needs a model that accepts
+    // reasoning.effort; gpt-5.4 works, whereas gpt-4o rejects it.
     if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
       if (finalConfig.OPENAI_API_KEY) {
         finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
-        finalConfig.HERMES_MODEL = 'openai/gpt-4o';
+        finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
       } else if (finalConfig.OPENROUTER_API_KEY) {
         finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
-        finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-4o';
+        finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
       }
     }
     
@@ -1692,6 +1700,10 @@ async function initPanelRoute() {
           routes: [
             {
               match: [{ path: ['/api/*'] }],
+              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'backend:8080' }] }]
+            },
+            {
+              match: [{ path: ['/mcp'] }],
               handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'backend:8080' }] }]
             },
             {
