@@ -1,225 +1,131 @@
-# AgentPanel - Easypanel-liknande plattform för AI-agenter
+# AgentPanel
 
-AgentPanel är en adminpanel för att hantera AI-agenter (OpenClaw, Hermes, Odysseus) och Docker Compose-applikationer, inspirerad av Easypanel.
+**Inspired by Easypanel — spin up your agents, monitor and observe.**
 
-## Funktioner
+AgentPanel is a self-hosted control panel for AI agents and Docker apps. Point it at a VPS, and you get one-click agent deployment with automatic HTTPS, live logs, web terminals, domain management and provider-aware API key injection — all from a clean web UI, and all scriptable through an MCP server.
+
+## Why AgentPanel?
+
+Running AI agents on your own server usually means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentPanel removes all of that:
+
+- **Spin up** an agent in seconds — pick a runtime, name it, done. HTTPS and routing are automatic.
+- **Monitor** everything from one dashboard — status, resource usage, logs, domains and certificates, live.
+- **Observe & control** — open a web terminal into any container, edit environment variables, redeploy, or let your own AI tools manage the panel over MCP.
+
+## Features
 
 ### Agent Management
-- **Skapa agenter** med olika runtimes (OpenClaw, Hermes, Odysseus)
-- **Auto-injection** av API-nycklar från providers
-- **Default modell** sätts automatiskt (gpt-4o)
-- **Start/Stop/Redeploy** agenter via dashboard
-- **Terminal access** till containrar via WebSocket
+- **Five runtimes** — Hermes, OpenClaw, Odysseus, generic Docker App, and full Docker Compose deployments
+- **Quick Start** — API keys are injected automatically from your configured providers (OpenAI, Anthropic, OpenRouter, Gemini, DeepSeek, Groq, xAI, Mistral, or any OpenAI-compatible endpoint like vLLM)
+- **Tabbed agent view** — Overview, Logs, Console, Environment, Credentials and Settings in one place
+- **Start / Stop / Redeploy / Delete** from the dashboard, with one-click Open on the agent's URL
+- **Web terminal** — full TTY shell into any container via WebSocket + xterm.js
 
-### Docker Compose Support
-- **Klistra in docker-compose.yml** direkt i UI
-- **Environment variables** med bulk import
-- **Preview** av konfiguration innan deploy
-- **Validering** av YAML-syntax
+### Deploy Anything
+- **Docker App runtime** — deploy any Docker image with port, env vars and volume mounts
+- **Compose runtime** — paste a `docker-compose.yml` with env-var editor and YAML validation
 
-### Provider System
-- **Multi-provider stöd** (OpenAI, Anthropic, OpenRouter, etc.)
-- **Auto-injection** av API-nycklar till agenter
-- **Test-funktion** för att verifiera providers
+### Domains & TLS
+- **Automatic HTTPS** — Caddy issues and renews Let's Encrypt certificates for every agent subdomain
+- **Live domains view** — real container status, orphaned-route detection and cleanup
+- **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
 
-### System Management
-- **System stats** (CPU, RAM, Disk)
-- **Daily Docker Cleanup** (automatisk rensning)
-- **SSL Certificates** via Let's Encrypt
-- **MCP Server** för extern agent-administration
+### Providers & Models
+- **Multi-provider system** — add providers once, keys are injected into new agents automatically
+- **Provider testing** — list available models and test them per provider, right from the UI
 
-## Installation
+### Observability & System
+- **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh
+- **Log viewer** — demuxed container logs, no binary garbage
+- **Daily Docker cleanup** — scheduled pruning of unused resources, with history and space-reclaimed stats (agent volumes are never touched)
+- **Dark & light mode**, mobile-responsive sidebar, toast notifications, skeleton loaders
+
+### Automation & MCP
+- **Built-in MCP server** — let external AI agents list, create, redeploy and delete agents, check system status and pull logs
+- **REST API** — everything the UI does is available over a token-authenticated JSON API
+
+## Quick Start
+
+On a fresh VPS (Ubuntu/Debian), as root:
 
 ```bash
-# Klona repo
 git clone https://github.com/magnusfroste/agentpanel.git
 cd agentpanel
-
-# Starta plattformen
+./install.sh        # installs Docker, then:
 docker compose up -d
-
-# Konfigurera via web UI
-# Gå till https://panel.dindomän.se
 ```
 
-## Användning
+Open `http://your-server-ip`, create your admin account, set your panel domain — and deploy your first agent.
 
-### Skapa en Agent
+Requirements: Docker + ports 80/443 free. The `install.sh` script handles Docker installation via the official apt repository.
 
-1. Gå till **Create Agent** i sidebar
-2. Välj runtime (OpenClaw, Hermes, Odysseus)
-3. Ange namn och domän
-4. Aktivera **Quick Start** för auto-konfiguration
-5. Klicka **Create Agent**
+## Runtimes
 
-Agenten får automatiskt:
-- API-nycklar från konfigurerade providers
-- Default modell (gpt-4o)
-- Gateway-token för access
-- Caddy-rutt för domänen
-
-### Docker Compose Deployment
-
-1. Gå till **Create Agent**
-2. Välj runtime: **Docker Compose**
-3. Klistra in din `docker-compose.yml`
-4. Lägg till environment variables (individuellt eller bulk)
-5. Klicka **Deploy Compose**
-
-Exempel docker-compose.yml:
-```yaml
-version: '3.8'
-services:
-  web:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    environment:
-      - NGINX_HOST=${NGINX_HOST}
-```
-
-### Hermes - Två Sätt att Köra
-
-#### 1. Native Agent
-```bash
-# Via AgentPanel UI
-Runtime: hermes
-Domain: hermes.dindomän.se
-Quick Start: enabled
-```
-- Bygger custom image med config.yaml
-- Integrerat med provider-system
-- Auto-injection av API-nycklar
-
-#### 2. Docker Compose
-```bash
-# Klona hermes-easy
-git clone https://github.com/magnusfroste/hermes-easy.git
-
-# Via AgentPanel UI
-Runtime: compose
-Compose YAML: (klistra in från hermes-easy/docker-compose.yml)
-Environment: (klistra in från hermes-easy/example.env)
-```
-- Använder original imagen
-- Enklare setup
-- Full kontroll via compose-fil
-
-### Provider Configuration
-
-1. Gå till **Providers** i sidebar
-2. Klicka **Add Provider**
-3. Ange namn, typ, base URL och API-nyckel
-4. Testa med **Test** knappen
-
-Providers injiceras automatiskt till nya agenter.
-
-### Terminal Access
-
-1. Gå till en agent i dashboard
-2. Klicka på agenten för detaljer
-3. Scrolla till **Terminal** sektionen
-4. Klicka **Connect** för att öppna terminal
-
-Terminalen ger full shell-access till containern.
-
-## API Endpoints
-
-### Agents
-- `GET /api/agents` - Lista alla agenter
-- `POST /api/agents` - Skapa agent
-- `DELETE /api/agents/:id` - Ta bort agent
-- `POST /api/agents/:id/start` - Starta agent
-- `POST /api/agents/:id/stop` - Stoppa agent
-- `POST /api/agents/:id/redeploy` - Redeploya agent
-- `GET /api/agents/:id/logs` - Hämta loggar
-
-### Providers
-- `GET /api/providers` - Lista providers
-- `POST /api/providers` - Skapa provider
-- `PUT /api/providers/:id` - Uppdatera provider
-- `DELETE /api/providers/:id` - Ta bort provider
-- `POST /api/providers/:id/test` - Testa provider
-
-### System
-- `GET /api/system/stats` - System statistik
-- `POST /api/docker/prune` - Docker cleanup
-- `GET /api/certificates` - SSL certifikat
-- `GET /api/system/version` - Versionsinformation
-
-### MCP
-- `POST /mcp` - MCP endpoint för extern administration
+| Runtime | What it is |
+| --- | --- |
+| **Hermes** | NousResearch Hermes agent, pre-configured with provider auto-detection |
+| **OpenClaw** | OpenClaw persistent agent |
+| **Odysseus** | Self-hosted AI workspace with browser tooling |
+| **Docker App** | Any Docker image, with env vars and volumes |
+| **Compose** | Full `docker-compose.yml` deployments |
 
 ## MCP Integration
 
-AgentPanel exponerar en MCP-server som låter externa agenter administrera plattformen:
+AgentPanel exposes an MCP endpoint so your own agents can manage the platform:
 
 ```json
 {
   "mcpServers": {
     "agentpanel": {
-      "url": "https://panel.dindomän.se/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      }
+      "url": "https://panel.yourdomain.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
     }
   }
 }
 ```
 
-Tillgängliga MCP-verktyg:
-- `list_agents` - Lista alla agenter
-- `create_agent` - Skapa agent
-- `delete_agent` - Ta bort agent
-- `redeploy_agent` - Redeploya agent
-- `system_status` - System status
-- `list_runtimes` - Lista tillgängliga runtimes
+Tools: `list_agents`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `system_status`, `list_runtimes`.
 
-## Arkitektur
+## Architecture
+
+Three containers, one `docker-compose.yml`:
 
 ```
-┌─────────────┐
-│   Caddy     │  Reverse proxy, SSL termination
-└──────┬──────┘
-       │
-┌──────┴──────┐
-│  Frontend   │  React/Vite admin UI
-└──────┬──────┘
-       │
-┌──────┴──────┐
-│   Backend   │  Node.js/Express API
-└──────┬──────┘
-       │
-┌──────┴──────┐
-│   SQLite    │  State storage
-└─────────────┘
-       │
-┌──────┴──────┐
-│   Docker    │  Agent containers
-└─────────────┘
+┌────────┐   80/443    ┌──────────┐  /api  ┌─────────┐        ┌────────┐
+│  Caddy │ ──────────► │ Frontend │ ─────► │ Backend │ ─────► │ Agents │
+│  (TLS) │ ◄────────── │ React SPA│        │ Express │ docker │ (your  │
+└────────┘  agent subdomains      │        │ + SQLite│  sock  │  apps) │
+                                   └──────────┘        └────────┘
 ```
 
-## Utveckling
+- **Caddy** — reverse proxy, automatic Let's Encrypt, dynamic per-agent routes via its admin API
+- **Frontend** — React 18 + Vite, served by nginx, lazy-loaded terminal bundle
+- **Backend** — Node.js/Express, Docker via dockerode, state in SQLite, token auth
+
+## API Overview
+
+| Area | Endpoints |
+| --- | --- |
+| Agents | `GET/POST /api/agents`, `GET/PUT/DELETE /api/agents/:id`, `/start`, `/stop`, `/redeploy`, `/logs`, `/terminal` (WS) |
+| Providers | `GET/POST /api/providers`, `PUT/DELETE /api/providers/:id`, `/test`, `/models` |
+| Domains & TLS | `GET /api/domains`, `DELETE /api/domains/:id`, `GET /api/certificates` |
+| System | `GET /api/system/stats`, `/status`, `/version`, `/check-update`, `POST /api/docker/prune`, `GET /api/docker/cleanup-history` |
+| Auth | `GET/POST /api/setup`, `POST /api/login`, Bearer token for everything else |
+
+Full list in [`backend/server.js`](backend/server.js).
+
+## Development
 
 ```bash
-# Backend
-cd backend
-npm install
-npm run dev
-
-# Frontend
-cd frontend
-npm install
-npm run dev
-
-# Rebuild containers
-docker compose build
+# Rebuild and restart after changes
+docker compose build backend frontend
 docker compose up -d
+
+# Logs
+docker compose logs -f backend
 ```
 
-## Backlog
-
-Se [BACKLOG.md](BACKLOG.md) för planerade funktioner.
+See [AGENTS.md](AGENTS.md) for architecture details and build conventions, and [BACKLOG.md](BACKLOG.md) for the roadmap.
 
 ## License
 
