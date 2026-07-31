@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { authFetch } from '../lib/auth'
-import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle, Key, Copy } from 'lucide-react'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
@@ -120,7 +120,7 @@ function System() {
     setConsoleOutput(prev => prev + `\n$ ${consoleCommand}\n`)
     
     try {
-      const res = await authFetch('/api/system/exec', {
+      const res = await authFetch('/api/console/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: consoleCommand })

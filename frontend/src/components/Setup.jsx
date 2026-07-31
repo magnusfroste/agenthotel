@@ -66,7 +66,7 @@ function Setup({ onDone }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Min 8 tecken"
+              placeholder="Min 8 characters"
               minLength={8}
               required
             />
@@ -78,7 +78,7 @@ function Setup({ onDone }) {
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Upprepa lösenord"
+              placeholder="Repeat password"
               required
             />
           </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
-import { ToastProvider } from './components/Toast'
+import { ToastProvider, useToast } from './components/Toast'
 import Dashboard from './components/Dashboard'
 import CreateAgent from './components/CreateAgent'
 import Compose from './components/Compose'
@@ -17,7 +17,7 @@ import Domains from './components/Domains'
 import Templates from './components/Templates'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, Sun, Moon, Package, User, Download, Menu, X } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X } from 'lucide-react'
 import './index.css'
 
 function Sidebar({ onLogout, onNavigate, className = '' }) {
@@ -121,6 +121,10 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
           <span className="sidebar-icon"><Layers size={18} color="white" /></span>
           <span>Compose</span>
         </Link>
+        <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}>
+          <span className="sidebar-icon"><LayoutTemplate size={18} color="white" /></span>
+          <span>Templates</span>
+        </Link>
         <Link to="/domains" className={`sidebar-link ${isActive('/domains')}`}>
           <span className="sidebar-icon"><Globe size={18} color="white" /></span>
           <span>Domains</span>
@@ -156,42 +160,26 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
       </nav>
       
       {agents.length > 0 && (
-        <div className="sidebar-agents" style={{ 
-          padding: '0.5rem', 
-          borderTop: '1px solid var(--border, #334155)',
-          borderBottom: '1px solid var(--border, #334155)',
-          margin: '0.5rem 0'
-        }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+        <div className="sidebar-agents">
+          <div className="sidebar-agents-label">
             ACTIVE AGENTS
           </div>
           {agents.map(agent => (
             <Link 
               key={agent.id}
               to={`/agent/${agent.id}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.5rem',
-                marginBottom: '0.25rem',
-                borderRadius: '0.25rem',
-                background: 'var(--bg-secondary, #1e293b)',
-                textDecoration: 'none',
-                color: 'inherit',
-                fontSize: '0.875rem'
-              }}
+              className="sidebar-agent"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <div style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: agent.status === 'running' ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b'
-                }} />
-                <span style={{ fontWeight: '500' }}>{agent.name}</span>
+              <div className="sidebar-agent-name">
+                <div
+                  className="sidebar-agent-dot"
+                  style={{
+                    background: agent.status === 'running' ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b'
+                  }}
+                />
+                <span>{agent.name}</span>
               </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <span className="sidebar-agent-runtime">
                 {agent.runtime}
               </span>
             </Link>
@@ -202,21 +190,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
       <div className="sidebar-footer">
         <button 
           onClick={() => setDarkMode(!darkMode)}
-          style={{
-            width: '100%',
-            marginBottom: '0.5rem',
-            background: 'var(--bg-secondary, #1e293b)',
-            color: 'var(--text-primary, #e2e8f0)',
-            border: '1px solid var(--border, #334155)',
-            padding: '0.5rem',
-            borderRadius: '0.25rem',
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.5rem'
-          }}
+          className="theme-toggle"
         >
           {darkMode ? <><Sun size={15} color="white" /> Light Mode</> : <><Moon size={15} color="white" /> Dark Mode</>}
         </button>
@@ -226,42 +200,27 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
             onClick={handleUpgrade} 
             disabled={upgrading}
             className="btn-upgrade"
-            style={{
-              width: '100%',
-              marginBottom: '0.5rem',
-              background: '#10b981',
-              color: 'white',
-              border: 'none',
-              padding: '0.5rem',
-              borderRadius: '0.25rem',
-              cursor: upgrading ? 'not-allowed' : 'pointer',
-              fontSize: '0.875rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.4rem'
-            }}
           >
             {upgrading ? 'Upgrading…' : <><Download size={15} color="white" /> Upgrade to {updateInfo.latestVersion}</>}
           </button>
         )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+        <div className="sidebar-meta">
           {ip && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <div className="sidebar-meta-item">
               <Globe size={13} color="currentColor" /> {ip}
             </div>
           )}
           {version && version !== 'unknown' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <div className="sidebar-meta-item">
               <Package size={13} color="currentColor" /> v{version}
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
-          <Link to="/profile" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <div className="sidebar-footer-actions">
+          <Link to="/profile" className="sidebar-profile-link">
             <User size={13} color="currentColor" /> Profile
           </Link>
-          <button onClick={onLogout} className="btn-logout" style={{ fontSize: '0.75rem' }}>
+          <button onClick={onLogout} className="btn-logout">
             Logout
           </button>
         </div>

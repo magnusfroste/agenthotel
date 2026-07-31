@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { Bot, PawPrint, Layers, Container, Zap, Package, Server, Database, Code, ArrowRight, Info } from 'lucide-react'
+import { Bot, PawPrint, Layers, Container, Zap, Package, Server, Database, ArrowRight, Info } from 'lucide-react'
 
 const RUNTIME_ICONS = {
   hermes: Zap,

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
+import { Lock } from 'lucide-react'
 
 function Profile() {
   const [profile, setProfile] = useState({ email: '' })

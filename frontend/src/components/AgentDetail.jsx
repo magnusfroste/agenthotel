@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
+import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
   Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe
@@ -30,8 +31,7 @@ function AgentDetail() {
   const [envSaving, setEnvSaving] = useState(false)
   const [settings, setSettings] = useState({ domain: '', image: '', port: '' })
   const [settingsSaving, setSettingsSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [toast, setToast] = useState(null)
+  const toast = useToast()
   const logBoxRef = useRef(null)
 
   useEffect(() => { fetchAgent() }, [id])
@@ -56,7 +56,7 @@ function AgentDetail() {
 
   useEffect(() => { if (tab === 'logs' && logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight }, [logs, tab])
 
-  function notify(type, text) { setToast({ type, text }); setTimeout(() => setToast(null), 3500) }
+  function notify(type, text) { toast[type](text) }
 
   async function handleAction(path, method = 'POST') {
     try {
@@ -141,17 +141,6 @@ function AgentDetail() {
           <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>
       </div>
-
-      {/* Toast */}
-      {toast && (
-        <div style={{
-          position: 'sticky', top: 0, zIndex: 10, padding: '0.65rem 1rem', borderRadius: '0.4rem', marginBottom: '1rem',
-          fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem',
-          background: toast.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
-          border: `1px solid ${toast.type === 'error' ? '#ef4444' : '#10b981'}`,
-          color: toast.type === 'error' ? '#fca5a5' : '#6ee7b7'
-        }}>{toast.text}</div>
-      )}
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { FileText, Plus, Trash2, Upload, Download, Eye, AlertCircle, CheckCircle } from 'lucide-react'
+import { FileText, Plus, Trash2, Upload, Eye, AlertCircle, CheckCircle } from 'lucide-react'
 
 function Compose() {
   const navigate = useNavigate()
@@ -18,7 +18,7 @@ function Compose() {
   const [bulkEnvInput, setBulkEnvInput] = useState('')
   const [showBulkImport, setShowBulkImport] = useState(false)
 
-  // Exempel docker-compose.yml
+  // Example docker-compose.yml
   const exampleCompose = `version: '3.8'
 services:
   web:
@@ -121,14 +121,14 @@ volumes:
 
   function validateYaml() {
     try {
-      // Basic YAML validation - kolla för vanliga fel
+      // Basic YAML validation - check for common errors
       if (!formData.composeYaml.trim()) {
-        return { valid: false, error: 'YAML är tom' }
+        return { valid: false, error: 'YAML is empty' }
       }
       
-      // Kolla för required fields
+      // Check for required fields
       if (!formData.composeYaml.includes('services:')) {
-        return { valid: false, error: 'YAML måste innehålla "services:"' }
+        return { valid: false, error: 'YAML must include "services:"' }
       }
       
       return { valid: true }

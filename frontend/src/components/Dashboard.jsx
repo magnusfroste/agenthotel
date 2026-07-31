@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, Plug, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers } from 'lucide-react'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])

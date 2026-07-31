@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { AlertTriangle, Bot, PawPrint, Layers, Container, Zap, ArrowRight } from 'lucide-react'
 
@@ -13,6 +13,7 @@ const RUNTIME_ICON = {
 
 function CreateAgent() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [runtimes, setRuntimes] = useState([])
   const [providers, setProviders] = useState([])
   const [formData, setFormData] = useState({ name: '', runtime: '', domain: '', image: '', port: '', config: {} })
@@ -27,7 +28,11 @@ function CreateAgent() {
       const res = await authFetch('/api/runtimes')
       const data = await res.json()
       setRuntimes(data)
-      if (data.length > 0) setFormData(prev => ({ ...prev, runtime: data[0].id }))
+      if (data.length > 0) {
+        const preset = searchParams.get('runtime')
+        const preselected = preset && data.some(r => r.id === preset) ? preset : data[0].id
+        setFormData(prev => ({ ...prev, runtime: preselected }))
+      }
     } catch (err) { console.error('Failed to fetch runtimes:', err) }
   }
 
@@ -50,6 +55,7 @@ function CreateAgent() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    if (isCompose) { navigate('/compose'); return }
     setLoading(true); setError('')
     try {
       const payload = { name: formData.name, runtime: formData.runtime, domain: formData.domain || undefined, quickStart }
@@ -62,8 +68,7 @@ function CreateAgent() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       })
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create agent') }
-      if (isCompose) navigate('/compose')
-      else navigate('/')
+      navigate('/')
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { authFetch } from '../lib/auth'
-import { Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle, Copy, Check } from 'lucide-react'
+import { authFetch, getToken } from '../lib/auth'
+import { Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle } from 'lucide-react'
 
 function Connect() {
   const [token, setToken] = useState('')
@@ -17,8 +17,8 @@ function Connect() {
       const settings = await settingsRes.json()
       setPanelDomain(settings.panel_domain || window.location.hostname)
       
-      const tokenMatch = document.cookie.match(/token=([^;]+)/)
-      if (tokenMatch) setToken(tokenMatch[1])
+      const storedToken = getToken()
+      if (storedToken) setToken(storedToken)
     } catch (err) {
       console.error('Failed to fetch config:', err)
     }
@@ -36,7 +36,7 @@ function Connect() {
     claude: {
       name: 'Claude Desktop',
       icon: Bot,
-      description: 'Claude med MCP-stöd via desktop-appen',
+      description: 'Claude with MCP support via the desktop app',
       config: {
         mcpServers: {
           agentpanel: {
@@ -52,7 +52,7 @@ function Connect() {
     openclaw: {
       name: 'OpenClaw',
       icon: PawPrint,
-      description: 'OpenClaw agent med MCP-koppling',
+      description: 'OpenClaw agent with MCP connection',
       config: {
         mcp: {
           servers: [
@@ -71,7 +71,7 @@ function Connect() {
     hermes: {
       name: 'Hermes',
       icon: Landmark,
-      description: 'NousResearch Hermes med MCP-tools',
+      description: 'NousResearch Hermes with MCP tools',
       config: {
         mcp_servers: {
           agentpanel: {
@@ -87,7 +87,7 @@ function Connect() {
     codex: {
       name: 'Codex',
       icon: Terminal,
-      description: 'OpenAI Codex med MCP-integration',
+      description: 'OpenAI Codex with MCP integration',
       config: {
         mcp: {
           servers: {
@@ -105,7 +105,7 @@ function Connect() {
     kilo: {
       name: 'Kilo',
       icon: Zap,
-      description: 'Kilo CLI med MCP-stöd',
+      description: 'Kilo CLI with MCP support',
       config: {
         mcp: {
           servers: [
@@ -124,7 +124,7 @@ function Connect() {
     antigravity: {
       name: 'Antigravity',
       icon: Rocket,
-      description: 'Antigravity agent med MCP-koppling',
+      description: 'Antigravity agent with MCP connection',
       config: {
         mcp: {
           endpoints: [
@@ -143,7 +143,7 @@ function Connect() {
     cursor: {
       name: 'Cursor',
       icon: PenTool,
-      description: 'Cursor IDE med MCP-tools',
+      description: 'Cursor IDE with MCP tools',
       config: {
         mcpServers: {
           agentpanel: {
@@ -232,7 +232,7 @@ function Connect() {
             color: '#f59e0b',
             fontSize: '0.875rem'
           }}>
-            <AlertTriangle size={16} color="#f59e0b" /> Token not found in cookies. Please log in again or check your browser settings.
+            <AlertTriangle size={16} color="#f59e0b" /> Token not found. Please log in again or check your browser settings.
           </div>
         )}
       </div>
@@ -242,7 +242,9 @@ function Connect() {
         gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
         gap: '1.5rem'
       }}>
-        {Object.entries(configs).map(([key, config]) => (
+        {Object.entries(configs).map(([key, config]) => {
+          const Icon = config.icon
+          return (
           <div
             key={key}
             style={{
@@ -253,7 +255,7 @@ function Connect() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-              <span style={{ fontSize: '2rem' }}>{config.icon}</span>
+              <span style={{ fontSize: '2rem', display: 'flex' }}><Icon size={32} /></span>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.125rem' }}>{config.name}</h3>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #94a3b8)' }}>
@@ -290,7 +292,8 @@ function Connect() {
               </pre>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <div style={{
