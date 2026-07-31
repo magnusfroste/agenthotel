@@ -42,10 +42,10 @@ function injectProviderEnv(db, config) {
   // reasoning.effort; gpt-5.4 works, whereas gpt-4o rejects it.
   if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
     if (finalConfig.OPENAI_API_KEY) {
-      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
+      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-5.3';
       finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
     } else if (finalConfig.OPENROUTER_API_KEY) {
-      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
+      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-5.3';
       finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
     }
   }

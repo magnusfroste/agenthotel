@@ -12,7 +12,7 @@ module.exports = {
   defaultPort: 18789,
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
-    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.4' },
+    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI Base URL', type: 'text', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
