@@ -175,7 +175,7 @@ function AgentDetail() {
             ))}
           </div>
           {appUrl && (
-            <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
               <div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Public URL</div>
                 <a href={appUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>{appUrl}</a>
@@ -183,6 +183,8 @@ function AgentDetail() {
               <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
+          <AgentStats agentId={id} />
+          <AgentUptime agentId={id} />
         </div>
       )}
 
@@ -279,6 +281,126 @@ function AgentDetail() {
       )}
     </div>
   )
+}
+
+// Live container resources, refreshed every 5s while the Overview tab is
+// mounted (unmounting on tab switch clears the interval).
+function AgentStats({ agentId }) {
+  const [stats, setStats] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function fetchStats() {
+      try {
+        const res = await authFetch(`/api/agents/${agentId}/stats`)
+        const data = await res.json()
+        if (!cancelled) setStats(data)
+      } catch (err) { console.error('Failed to fetch agent stats:', err) }
+    }
+    fetchStats()
+    const interval = setInterval(fetchStats, 5000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [agentId])
+
+  if (!stats) return null
+
+  return (
+    <div className="stats-section">
+      <h3 className="stats-section-title">Resources</h3>
+      {!stats.running ? (
+        <div className="stats-not-running">Agent is not running.</div>
+      ) : (
+        <div className="stats-grid" style={{ marginBottom: 0 }}>
+          <div className="stat-item">
+            <div className="stat-label">CPU</div>
+            <div className="stat-value">{stats.cpu.pct}%</div>
+            <div className="progress-bar">
+              <div className={`progress-fill ${stats.cpu.pct > 80 ? 'high' : stats.cpu.pct > 50 ? 'medium' : 'low'}`} style={{ width: `${Math.min(stats.cpu.pct, 100)}%` }} />
+            </div>
+          </div>
+          <div className="stat-item">
+            <div className="stat-label">Memory</div>
+            <div className="stat-value">{formatBytes(stats.mem.used)}</div>
+            <div className="stat-subtext">of {formatBytes(stats.mem.limit)} ({stats.mem.pct}%)</div>
+            <div className="progress-bar">
+              <div className={`progress-fill ${stats.mem.pct > 80 ? 'high' : stats.mem.pct > 50 ? 'medium' : 'low'}`} style={{ width: `${Math.min(stats.mem.pct, 100)}%` }} />
+            </div>
+          </div>
+          <div className="stat-item">
+            <div className="stat-label">Network</div>
+            <div className="stat-value">↓ {formatBytes(stats.network.rx)}</div>
+            <div className="stat-subtext">↑ {formatBytes(stats.network.tx)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Uptime summary: 24h/7d percentages, current check, and a pure-CSS bar strip
+// of the last 50 checks (oldest left, newest right).
+function AgentUptime({ agentId }) {
+  const [uptime, setUptime] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function fetchUptime() {
+      try {
+        const res = await authFetch(`/api/agents/${agentId}/uptime`)
+        const data = await res.json()
+        if (!cancelled) setUptime(data)
+      } catch (err) { console.error('Failed to fetch uptime:', err) }
+    }
+    fetchUptime()
+    const interval = setInterval(fetchUptime, 60000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [agentId])
+
+  if (!uptime) return null
+
+  const pctLabel = (v) => v === null ? '—' : `${v}%`
+
+  return (
+    <div className="stats-section">
+      <h3 className="stats-section-title">Uptime</h3>
+      {uptime.recent.length === 0 ? (
+        <div className="stats-not-running">No uptime data yet — checks run every minute for running agents with a domain.</div>
+      ) : (
+        <div>
+          <div className="uptime-summary">
+            <span>Last 24h: <span className="uptime-summary-value">{pctLabel(uptime.last24h)}</span></span>
+            <span>Last 7d: <span className="uptime-summary-value">{pctLabel(uptime.last7d)}</span></span>
+            {uptime.current && (
+              <span>
+                Current: <span className="uptime-summary-value" style={{ color: uptime.current.ok ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {uptime.current.ok ? 'Up' : 'Down'}
+                </span>
+                {uptime.current.status_code != null && ` (HTTP ${uptime.current.status_code})`}
+                {uptime.current.latency_ms != null && ` · ${uptime.current.latency_ms} ms`}
+              </span>
+            )}
+          </div>
+          <div className="uptime-strip" title="Last 50 checks, oldest → newest">
+            {uptime.recent.map((c, i) => (
+              <div
+                key={i}
+                className={`uptime-bar${c.ok ? '' : ' down'}`}
+                title={`${new Date(c.checked_at + 'Z').toLocaleString()} — ${c.ok ? 'ok' : 'down'}${c.status_code != null ? ` (HTTP ${c.status_code})` : ''}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
 }
 
 function getCredentials(agent) {

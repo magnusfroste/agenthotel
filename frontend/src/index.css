@@ -1173,6 +1173,58 @@ input[type="checkbox"] {
   opacity: 1;
 }
 
+/* Per-agent live stats & uptime (AgentDetail overview) */
+.stats-section {
+  margin-bottom: var(--space-lg);
+}
+
+.stats-section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: var(--space-sm);
+  color: var(--text-primary);
+}
+
+.stats-not-running {
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.uptime-summary {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-sm);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.uptime-summary-value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.uptime-strip {
+  display: flex;
+  gap: 2px;
+  height: 24px;
+  margin-bottom: var(--space-sm);
+}
+
+.uptime-bar {
+  flex: 1;
+  border-radius: 2px;
+  background: var(--accent-green);
+}
+
+.uptime-bar.down {
+  background: var(--accent-red);
+}
+
 /* Toast animations */
 @keyframes slideIn {
   from {

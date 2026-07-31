@@ -68,6 +68,38 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+    type TEXT NOT NULL,
+    agent_id TEXT,
+    message TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS uptime_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ok INTEGER NOT NULL,
+    status_code INTEGER,
+    latency_ms INTEGER
+  )
+`);
+
+// Lightweight activity log, shown in the System page "Recent Activity" card.
+// agent_id may outlive the agent row (deleted agents) — query with LEFT JOIN.
+function logEvent(type, agentId, message) {
+  try {
+    db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+      .run(type, agentId || null, message);
+  } catch (err) {
+    console.error('Failed to log event:', err.message);
+  }
+}
+
 function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
@@ -125,6 +157,7 @@ app.post('/api/login', (req, res) => {
   if (hash !== storedHash.value) return res.status(401).json({ error: 'Invalid credentials' });
 
   const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
+  logEvent('auth.login', null, `Login: ${email}`);
   res.json({ token: storedToken.value, email });
 });
 
@@ -235,7 +268,9 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
       0,
       totalReclaimed
     );
-    
+
+    logEvent('docker.cleanup', null, `Manual cleanup reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
+
     res.json({
       success: true,
       results,
@@ -311,7 +346,8 @@ async function runScheduledCleanup() {
       results.volumes.length,
       totalReclaimed
     );
-    
+
+    logEvent('docker.cleanup', null, `Scheduled cleanup reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
     console.log(`[Cleanup] Success: Reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
   } catch (err) {
     console.error('[Cleanup] Error:', err.message);
@@ -627,6 +663,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    logEvent('agent.create', id, `Created agent ${name}`);
     res.json({ id, name, status: 'running' });
   } catch (err) {
     console.error('Create agent error:', err);
@@ -863,6 +900,7 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
     }
 
     db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
+    logEvent('agent.delete', req.params.id, `Deleted agent ${agent.name}`);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -878,6 +916,7 @@ app.post('/api/agents/:id/stop', requireAuth, async (req, res) => {
     await container.stop();
 
     db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    logEvent('agent.stop', req.params.id, `Stopped agent ${agent.name}`);
     res.json({ stopped: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -893,6 +932,7 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
     await container.start();
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    logEvent('agent.start', req.params.id, `Started agent ${agent.name}`);
     res.json({ started: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -968,6 +1008,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    logEvent('agent.redeploy', req.params.id, `Redeployed agent ${agent.name}`);
     res.json({ redeployed: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1142,6 +1183,95 @@ app.get('/api/agents/:id/status', requireAuth, async (req, res) => {
     });
   } catch (err) {
     res.json({ status: 'not_found' });
+  }
+});
+
+// Live per-container resource usage. Returns { running: false } (200) when the
+// container is missing or stopped so the UI can show a friendly empty state.
+app.get('/api/agents/:id/stats', requireAuth, async (req, res) => {
+  try {
+    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const info = await container.inspect().catch(() => null);
+    if (!info || !info.State.Running) return res.json({ running: false });
+
+    const stats = await container.stats({ stream: false });
+
+    // Standard docker CPU% formula: delta of container vs system CPU usage,
+    // scaled by the number of online CPUs.
+    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - (stats.precpu_stats.cpu_usage?.total_usage || 0);
+    const systemDelta = stats.cpu_stats.system_cpu_usage - (stats.precpu_stats.system_cpu_usage || 0);
+    const onlineCpus = stats.cpu_stats.online_cpus || stats.cpu_stats.cpu_usage.percpu_usage?.length || 1;
+    const cpuPct = systemDelta > 0 && cpuDelta > 0
+      ? Math.round((cpuDelta / systemDelta) * onlineCpus * 1000) / 10
+      : 0;
+
+    const memUsed = stats.memory_stats.usage || 0;
+    const memLimit = stats.memory_stats.limit || 0;
+
+    let rx = 0, tx = 0;
+    for (const iface of Object.values(stats.networks || {})) {
+      rx += iface.rx_bytes || 0;
+      tx += iface.tx_bytes || 0;
+    }
+
+    res.json({
+      running: true,
+      cpu: { pct: cpuPct },
+      mem: { used: memUsed, limit: memLimit, pct: memLimit > 0 ? Math.round(memUsed / memLimit * 1000) / 10 : 0 },
+      network: { rx, tx }
+    });
+  } catch (err) {
+    if (err.statusCode === 404) return res.json({ running: false });
+    console.error('Agent stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Uptime summary for one agent: 24h/7d percentages, latest check, recent history.
+app.get('/api/agents/:id/uptime', requireAuth, (req, res) => {
+  try {
+    const pct = (window) => {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS total, SUM(ok) AS ok_count FROM uptime_checks
+        WHERE agent_id = ? AND checked_at >= datetime('now', ?)
+      `).get(req.params.id, window);
+      return row.total > 0 ? Math.round((row.ok_count / row.total) * 1000) / 10 : null;
+    };
+
+    const current = db.prepare(`
+      SELECT ok, status_code, latency_ms, checked_at FROM uptime_checks
+      WHERE agent_id = ? ORDER BY checked_at DESC, id DESC LIMIT 1
+    `).get(req.params.id) || null;
+
+    const recent = db.prepare(`
+      SELECT ok, status_code, latency_ms, checked_at FROM uptime_checks
+      WHERE agent_id = ? ORDER BY checked_at DESC, id DESC LIMIT 50
+    `).all(req.params.id).reverse(); // oldest -> newest for the bar strip
+
+    res.json({
+      last24h: pct('-1 day'),
+      last7d: pct('-7 days'),
+      current: current ? { ...current, ok: current.ok === 1 } : null,
+      recent: recent.map(c => ({ ...c, ok: c.ok === 1 }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Activity log, newest first. LEFT JOIN keeps events of deleted agents (name null).
+app.get('/api/events', requireAuth, (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const rows = db.prepare(`
+      SELECT events.*, agents.name AS agent_name
+      FROM events LEFT JOIN agents ON events.agent_id = agents.id
+      ORDER BY events.ts DESC, events.id DESC
+      LIMIT ?
+    `).all(limit);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1675,10 +1805,63 @@ app.get('/api/system/ip', requireAuth, async (req, res) => {
   }
 });
 
+// Uptime monitoring: probe every running agent with a domain every 60s, keep
+// 7 days of history, and log agent.down/agent.up events on state transitions
+// only (uptimeState tracks the last known ok-state per agent).
+const uptimeState = new Map();
+
+async function runUptimeChecks() {
+  const fetch = require('node-fetch');
+  const agents = db.prepare(
+    "SELECT id, name, domain FROM agents WHERE domain IS NOT NULL AND domain != '' AND status = 'running'"
+  ).all();
+
+  for (const agent of agents) {
+    const started = Date.now();
+    let ok = 0;
+    let statusCode = null;
+    try {
+      const res = await fetch(`https://${agent.domain}`, { timeout: 10000, redirect: 'manual' });
+      statusCode = res.status;
+      ok = res.status < 500 ? 1 : 0;
+    } catch (err) {
+      // Network failure / timeout — unreachable.
+    }
+    const latency = Date.now() - started;
+
+    try {
+      db.prepare('INSERT INTO uptime_checks (agent_id, ok, status_code, latency_ms) VALUES (?, ?, ?, ?)')
+        .run(agent.id, ok, statusCode, latency);
+
+      const isUp = ok === 1;
+      const prev = uptimeState.get(agent.id);
+      if (prev === undefined) {
+        uptimeState.set(agent.id, isUp);
+      } else if (prev !== isUp) {
+        uptimeState.set(agent.id, isUp);
+        logEvent(
+          isUp ? 'agent.up' : 'agent.down',
+          agent.id,
+          isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`
+        );
+      }
+    } catch (err) {
+      console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
+    }
+  }
+
+  // Prune history older than 7 days.
+  db.prepare("DELETE FROM uptime_checks WHERE checked_at < datetime('now', '-7 days')").run();
+}
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`AgentPanel backend running on port ${PORT}`);
   await initPanelRoute();
+  setInterval(() => {
+    runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
+  }, 60 * 1000);
+  console.log('[Uptime] Monitoring enabled (60s interval)');
 });
 
 async function initPanelRoute() {

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { authFetch } from '../lib/auth'
-import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle } from 'lucide-react'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, Settings, RefreshCw, Download, AlertTriangle, Activity } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
   const [systemStats, setSystemStats] = useState(null)
   const [mcpStatus, setMcpStatus] = useState(null)
   const [cleanupHistory, setCleanupHistory] = useState([])
+  const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [confirmAction, setConfirmAction] = useState(null)
@@ -28,8 +29,10 @@ function System() {
     fetchSystemStats()
     fetchMcpStatus()
     fetchCleanupHistory()
+    fetchEvents()
     const interval = setInterval(fetchSystemStats, 5000)
-    return () => clearInterval(interval)
+    const eventsInterval = setInterval(fetchEvents, 15000)
+    return () => { clearInterval(interval); clearInterval(eventsInterval) }
   }, [])
 
   async function fetchSystemInfo() {
@@ -74,8 +77,17 @@ function System() {
     }
   }
 
-  async function runCleanup() {
+  async function fetchEvents() {
     try {
+      const res = await authFetch('/api/events?limit=20')
+      const data = await res.json()
+      setEvents(data)
+    } catch (err) {
+      console.error('Failed to fetch events:', err)
+    }
+  }
+
+  async function runCleanup() {    try {
       setMessage('Running Docker cleanup...')
       const res = await authFetch('/api/docker/prune', { method: 'POST' })
       const data = await res.json()
@@ -453,6 +465,56 @@ function System() {
         ) : (
           <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary, #94a3b8)' }}>
             No cleanup history yet
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        background: 'var(--bg-secondary, #1e293b)',
+        borderRadius: '0.5rem',
+        padding: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Activity size={20} color="white" />
+          Recent Activity
+        </h2>
+        {events.length > 0 ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border, #334155)' }}>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Time</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Type</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Agent</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'left' }}>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((event) => (
+                  <tr key={event.id} style={{ borderBottom: '1px solid var(--border, #334155)' }}>
+                    <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
+                      {new Date(event.ts + 'Z').toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.5rem' }}>
+                      <span style={{
+                        padding: '0.15rem 0.5rem', borderRadius: '1rem', fontSize: '0.72rem', fontWeight: 600,
+                        background: event.type.includes('down') || event.type.includes('delete') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                        color: event.type.includes('down') || event.type.includes('delete') ? '#ef4444' : '#10b981'
+                      }}>
+                        {event.type}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.5rem' }}>{event.agent_name || '—'}</td>
+                    <td style={{ padding: '0.5rem', color: 'var(--text-secondary, #94a3b8)' }}>{event.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary, #94a3b8)' }}>
+            No activity yet
           </div>
         )}
       </div>
