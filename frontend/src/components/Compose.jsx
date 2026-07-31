@@ -79,14 +79,22 @@ volumes:
   }
 
   function handleBulkImport() {
-    const lines = bulkEnvInput.split('\n').filter(line => line.trim())
-    const newVars = lines.map(line => {
-      const [key, ...valueParts] = line.split('=')
-      return {
-        key: key?.trim() || '',
-        value: valueParts.join('=').trim()
-      }
-    }).filter(v => v.key)
+    const newVars = bulkEnvInput
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'))
+      .map(line => line.replace(/^export\s+/, ''))
+      .map(line => {
+        const eq = line.indexOf('=')
+        if (eq === -1) return { key: line, value: '' }
+        let value = line.slice(eq + 1).trim()
+        // Strip surrounding quotes from values (e.g. KEY="some value")
+        if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+          value = value.slice(1, -1)
+        }
+        return { key: line.slice(0, eq).trim(), value }
+      })
+      .filter(v => v.key)
     
     setFormData({
       ...formData,
@@ -296,7 +304,7 @@ volumes:
           {showBulkImport && (
             <div style={{ marginBottom: '1.5rem' }}>
               <div className="form-group">
-                <label className="form-label">Paste environment variables (KEY=VALUE, one per line)</label>
+                <label className="form-label">Paste environment variables (KEY=VALUE, one per line — # comments and export prefixes are ignored)</label>
                 <textarea
                   className="form-textarea"
                   value={bulkEnvInput}
