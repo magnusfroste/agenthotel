@@ -36,6 +36,9 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 
 ### Observability & System
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh
+- **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
+- **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
+- **Activity log** — agent lifecycle, cleanup and login events, shown on the System page
 - **Log viewer** — demuxed container logs, no binary garbage
 - **Daily Docker cleanup** — scheduled pruning of unused resources, with history and space-reclaimed stats (agent volumes are never touched)
 - **Dark & light mode**, mobile-responsive sidebar, toast notifications, skeleton loaders
@@ -58,6 +61,16 @@ docker compose up -d
 Open `http://your-server-ip`, create your admin account, set your panel domain — and deploy your first agent.
 
 Requirements: Docker + ports 80/443 free. The `install.sh` script handles Docker installation via the official apt repository.
+
+## Recommended Hardware
+
+The panel itself is light — 1 vCPU / 1GB RAM runs it fine. What matters is what you run on top of it:
+
+- **2 vCPU / 4GB** — panel plus one or two agents. Each Hermes or OpenClaw agent typically needs ~0.5–1GB RAM of its own.
+- **4 vCPU / 8GB** — a comfortable fit for a handful of agents.
+- **8 vCPU / 16GB+** — many agents, or a heavier observability stack.
+
+The built-in observability (per-agent stats, uptime checks, activity log) is intentionally lightweight and adds no meaningful overhead. If you outgrow it on a bigger host, layer on Prometheus/Grafana/Loki — they run fine side by side as Docker App deployments.
 
 ## Runtimes
 
@@ -107,6 +120,7 @@ Three containers, one `docker-compose.yml`:
 | Area | Endpoints |
 | --- | --- |
 | Agents | `GET/POST /api/agents`, `GET/PUT/DELETE /api/agents/:id`, `/start`, `/stop`, `/redeploy`, `/logs`, `/terminal` (WS) |
+| Observability | `GET /api/agents/:id/stats`, `GET /api/agents/:id/uptime`, `GET /api/events` |
 | Providers | `GET/POST /api/providers`, `PUT/DELETE /api/providers/:id`, `/test`, `/models` |
 | Domains & TLS | `GET /api/domains`, `DELETE /api/domains/:id`, `GET /api/certificates` |
 | System | `GET /api/system/stats`, `/status`, `/version`, `/check-update`, `POST /api/docker/prune`, `GET /api/docker/cleanup-history` |
