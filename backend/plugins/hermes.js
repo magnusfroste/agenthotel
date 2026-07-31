@@ -32,6 +32,19 @@ const PROVIDER_KEYS = {
   mistral: { keyEnv: 'MISTRAL_API_KEY' }
 };
 
+// Model-prefix → valid auth registry provider (auth.py PROVIDER_REGISTRY +
+// provider plugins in v0.19.0). Anything unmapped falls back to `custom`
+// (which resolves against the configured base_url).
+const PROVIDER_REGISTRY_NAME = {
+  openai: 'openai-api',
+  openrouter: 'openrouter',
+  anthropic: 'anthropic',
+  gemini: 'gemini',
+  zai: 'zai',
+  deepseek: 'deepseek',
+  xai: 'xai'
+};
+
 module.exports = {
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
@@ -98,12 +111,19 @@ module.exports = {
     return env;
   },
 
-  // Generate a model: block for /opt/data/config.yaml. The critical insight: use
-  // `provider: auto` + `base_url` pointing at the real endpoint, with NO
-  // api_mode and NO custom_providers. Hermes auto-detects the provider from the
-  // base_url host (api.openai.com → openai) and from it resolves the model's
-  // context length and API mode correctly. Setting api_mode or custom_providers
-  // triggered "Context length exceeded" and "session_id" errors in v0.19.0.
+  // Generate a model: block for /opt/data/config.yaml.
+  //
+  // Critical (verified 2026-07-31 against v0.19.0, dashboard WS flow):
+  // `provider: auto` + `base_url: api.openai.com` makes the CLI work but breaks
+  // the dashboard/TUI gateway agent build — the gateway derives the provider
+  // from the base_url host (agent/model_metadata.py _URL_TO_PROVIDER maps
+  // api.openai.com → "openai") and "openai" is NOT a valid auth provider
+  // (auth.py PROVIDER_REGISTRY: openai-api, openrouter, custom, anthropic,
+  // gemini, zai, …), yielding "agent init failed: Unknown provider 'openai'".
+  // The explicit registry name `openai-api` (API key from OPENAI_API_KEY, base
+  // URL override from OPENAI_BASE_URL) works for BOTH CLI and dashboard.
+  // Do NOT set api_mode or custom_providers — those triggered "Context length
+  // exceeded" / "session_id" bugs in v0.19.0.
   generateConfig(config) {
     let providerIn = 'openai';
     let bareModel = 'gpt-5.4';
@@ -122,8 +142,10 @@ module.exports = {
       baseUrl = PROVIDER_BASE_URL[providerIn] || config.OPENAI_BASE_URL || PROVIDER_BASE_URL.openai;
     }
 
+    const provider = PROVIDER_REGISTRY_NAME[providerIn] || 'custom';
+
     return `model:
-  provider: auto
+  provider: ${provider}
   default: ${bareModel}
   base_url: ${baseUrl}
 `;

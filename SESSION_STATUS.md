@@ -114,7 +114,7 @@ cd frontend && npm run build && docker compose build frontend && docker compose 
 ```
 
 ## Viktiga tekniska lärdomar
-1. **Hermes provider-routning:** `provider: auto` + rätt `base_url` > explicit `provider: custom/openai`. Hermes känner igen providern via URL-host.
+1. **Hermes provider-routning (uppdaterad 2026-07-31):** `provider: auto` + `base_url: api.openai.com` får CLI:t att fungera men KROSSAR dashboard-chatten — gatewayn härleder provider från base_url-hosten (`_URL_TO_PROVIDER`: api.openai.com → `openai`) och `openai` är ogiltigt i auth-registret. Använd explicit `provider: openai-api` (fungerar för både CLI och dashboard). Giltiga registry-namn: `openai-api`, `openrouter`, `anthropic`, `gemini`, `zai`, `deepseek`, `xai`, `custom`.
 2. **`api_mode: chat_completions` orsakar `session_id`-fel** med OpenAI — låt hermes auto-välja.
 3. **`custom_providers` + `context_length`** fungerar INTE i v0.19.0 vid preflight → "Context length exceeded". Använd `provider: auto` istället.
 4. **gpt-4o avvisar `reasoning.effort`** → använd gpt-5.4 som default för hermes.
