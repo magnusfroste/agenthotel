@@ -5,6 +5,13 @@ services:
       dockerfile: Dockerfile
     container_name: agentpanel-backend
     restart: unless-stopped
+    # pid: host + privileged let the backend nsenter into PID 1's namespaces
+    # so the Server Console runs commands on the VPS host. privileged is needed
+    # because AppArmor/seccomp otherwise block the namespace switch. This adds
+    # no real privilege: the mounted /var/run/docker.sock already grants
+    # host-root equivalence.
+    pid: host
+    privileged: true
     environment:
       - PORT=8080
       - DB_PATH=/data/agentpanel.db

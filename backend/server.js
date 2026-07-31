@@ -11,6 +11,7 @@ const os = require('os');
 const tar = require('tar-fs');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
+const { execFile, execFileSync } = require('child_process');
 
 const app = express();
 expressWs(app);
@@ -121,6 +122,39 @@ function requireAuth(req, res, next) {
   const stored = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
   if (!stored || stored.value !== token) return res.status(401).json({ error: 'Invalid token' });
   next();
+}
+
+// Host command execution: the backend runs with pid: host + CAP_SYS_ADMIN
+// (see docker-compose.yml) so it can nsenter into PID 1's namespaces and run
+// commands on the VPS host. This adds no real privilege — the mounted
+// /var/run/docker.sock already grants host-root equivalence.
+// Checked once and cached; falls back to container-local exec when unavailable.
+let hostExecChecked = null;
+function hostExecAvailable() {
+  if (hostExecChecked === null) {
+    try {
+      execFileSync('nsenter', ['-t', '1', '-m', 'true'], { stdio: 'ignore' });
+      hostExecChecked = true;
+    } catch (err) {
+      hostExecChecked = false;
+    }
+    console.log(`[Host Exec] nsenter into host namespaces ${hostExecChecked ? 'available' : 'NOT available — console commands will run inside the container'}`);
+  }
+  return hostExecChecked;
+}
+
+// Login shell to use on the host: bash if present, sh otherwise. Cached.
+let hostShellChecked = null;
+function hostShell() {
+  if (hostShellChecked === null) {
+    try {
+      execFileSync('nsenter', ['-t', '1', '-m', '--', '/bin/sh', '-c', 'test -x /bin/bash'], { stdio: 'ignore' });
+      hostShellChecked = '/bin/bash';
+    } catch (err) {
+      hostShellChecked = '/bin/sh';
+    }
+  }
+  return hostShellChecked;
 }
 
 app.get('/api/setup', (req, res) => {
@@ -1111,8 +1145,18 @@ app.ws('/api/system/host-terminal', (ws, req) => {
   console.log('[Host Terminal] WebSocket connection established');
   
   const pty = require('node-pty');
-  const shell = process.env.SHELL || '/bin/bash';
-  const ptyProcess = pty.spawn(shell, [], {
+  let spawnFile, spawnArgs;
+  if (hostExecAvailable()) {
+    // Real host shell: enter PID 1's mount/UTS/IPC/net/PID namespaces.
+    spawnFile = 'nsenter';
+    spawnArgs = ['-t', '1', '-m', '-u', '-i', '-n', '-p', '--', hostShell(), '-l'];
+    console.log(`[Host Terminal] Spawning host shell (${hostShell()}) via nsenter`);
+  } else {
+    spawnFile = process.env.SHELL || '/bin/bash';
+    spawnArgs = [];
+    console.log('[Host Terminal] nsenter unavailable, spawning container-local shell');
+  }
+  const ptyProcess = pty.spawn(spawnFile, spawnArgs, {
     name: 'xterm-256color',
     cols: 120,
     rows: 30,
@@ -1456,23 +1500,43 @@ app.post('/api/system/reboot', requireAuth, (req, res) => {
 });
 
 app.post('/api/console/execute', requireAuth, (req, res) => {
+  const { command } = req.body;
+  if (!command) return res.status(400).json({ error: 'Command required' });
+
+  // Run on the VPS host when nsenter into PID 1's namespaces works (requires
+  // pid: host + CAP_SYS_ADMIN, see docker-compose.yml); otherwise fall back to
+  // executing inside the backend container. execFile with an args array keeps
+  // quoting safe — the command string is passed whole to the host's /bin/sh.
+  if (hostExecAvailable()) {
+    execFile('nsenter', ['-t', '1', '-m', '-u', '-i', '-n', '-p', '--', '/bin/sh', '-c', command], {
+      timeout: 30000,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024
+    }, (err, stdout, stderr) => {
+      const output = (stdout || '') + (stderr || '');
+      if (err) {
+        return res.json({ output, success: false, error: err.message, host: true });
+      }
+      res.json({ output, success: true, host: true });
+    });
+    return;
+  }
+
   try {
-    const { command } = req.body;
-    if (!command) return res.status(400).json({ error: 'Command required' });
-    
-    const output = execSync(command, { 
+    const output = execSync(command, {
       cwd: '/app',
       timeout: 30000,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
     });
-    
-    res.json({ output, success: true });
+
+    res.json({ output, success: true, host: false });
   } catch (err) {
-    res.json({ 
-      output: err.stdout + err.stderr, 
+    res.json({
+      output: err.stdout + err.stderr,
       success: false,
-      error: err.message 
+      error: err.message,
+      host: false
     });
   }
 });
@@ -1857,6 +1921,7 @@ async function runUptimeChecks() {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`AgentPanel backend running on port ${PORT}`);
+  hostExecAvailable(); // probe + log host exec availability at startup
   await initPanelRoute();
   setInterval(() => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));

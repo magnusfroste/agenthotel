@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { getToken } from '../lib/auth'
 
-function TerminalPanel({ agentId, height = '55vh' }) {
+function TerminalPanel({ agentId, wsPath, banner = 'Connecting to container…', height = '55vh' }) {
   const containerRef = useRef(null)
   const instRef = useRef(null)
 
@@ -25,9 +25,10 @@ function TerminalPanel({ agentId, height = '55vh' }) {
 
     const token = getToken()
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/agents/${agentId}/terminal?token=${token}`)
+    const path = wsPath || `/api/agents/${agentId}/terminal`
+    const ws = new WebSocket(`${proto}//${window.location.host}${path}?token=${token}`)
 
-    ws.onopen = () => term.writeln('Connecting to container…\r')
+    ws.onopen = () => term.writeln(banner + '\r')
     ws.onmessage = (e) => term.write(typeof e.data === 'string' ? e.data : '')
     ws.onclose = () => { if (!disposed) term.writeln('\r\n\x1b[33mDisconnected from terminal\x1b[0m') }
     ws.onerror = () => { if (!disposed) term.writeln('\r\n\x1b[31mConnection error\x1b[0m') }
@@ -45,7 +46,7 @@ function TerminalPanel({ agentId, height = '55vh' }) {
       try { term.dispose() } catch (_) {}
       instRef.current = null
     }
-  }, [agentId])
+  }, [agentId, wsPath, banner])
 
   return <div ref={containerRef} style={{ height, background: '#0f172a' }} />
 }

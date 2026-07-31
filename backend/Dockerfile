@@ -1,5 +1,6 @@
 FROM node:22-alpine
-RUN apk add --no-cache git docker-cli docker-compose python3 make g++
+# util-linux provides nsenter, used to run console commands on the VPS host
+RUN apk add --no-cache git docker-cli docker-compose python3 make g++ util-linux
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
