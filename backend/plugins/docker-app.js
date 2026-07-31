@@ -11,7 +11,15 @@ module.exports = {
   ],
 
   buildConfig({ name, domain, image, port, config }) {
-    return { ...config };
+    const result = { ...config };
+    // Parse the VOLUMES textarea ("/host:/container[:ro]" per line) into the
+    // volumes array that deployAgent consumes.
+    if (typeof result.VOLUMES === 'string' && result.VOLUMES.trim()) {
+      result.volumes = result.VOLUMES.split('\n')
+        .map(l => l.trim())
+        .filter(l => l && l.includes(':'));
+    }
+    return result;
   },
 
   buildEnv(config) {

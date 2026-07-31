@@ -7,7 +7,10 @@ const Docker = require('dockerode');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const os = require('os');
 const tar = require('tar-fs');
+const { injectProviderEnv } = require('./lib/providerEnv');
+const { demuxDockerBuffer } = require('./lib/demux');
 
 const app = express();
 expressWs(app);
@@ -160,7 +163,7 @@ app.put('/api/settings', requireAuth, async (req, res) => {
     let caddyEmailChanged = false;
 
     for (const [key, value] of Object.entries(req.body)) {
-      if (['admin_password_hash', 'admin_password_salt', 'auth_token'].includes(key)) continue;
+      if (['admin_email', 'admin_password_hash', 'admin_password_salt', 'auth_token'].includes(key)) continue;
       
       if (key === 'panel_domain') {
         const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
@@ -210,15 +213,16 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
     
     const networksPrune = await docker.pruneNetworks();
     results.networks = networksPrune.NetworksDeleted || [];
-    
-    const volumesPrune = await docker.pruneVolumes();
-    results.volumes = volumesPrune.VolumesDeleted || [];
-    results.volumesSpaceReclaimed = volumesPrune.SpaceReclaimed || 0;
-    
-    const totalReclaimed = (results.containersSpaceReclaimed || 0) + 
-                           (results.imagesSpaceReclaimed || 0) + 
-                           (results.volumesSpaceReclaimed || 0);
-    
+
+    // NOTE: volumes are never pruned here — pruneVolumes() would destroy the
+    // named volumes of stopped agents. Agent volumes are removed explicitly
+    // when the agent is deleted (DELETE /api/agents/:id).
+    results.volumes = [];
+    results.volumesSpaceReclaimed = 0;
+
+    const totalReclaimed = (results.containersSpaceReclaimed || 0) +
+                           (results.imagesSpaceReclaimed || 0);
+
     // Log to database
     db.prepare(`
       INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
@@ -228,7 +232,7 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
       results.containers.length,
       results.images.length,
       results.networks.length,
-      results.volumes.length,
+      0,
       totalReclaimed
     );
     
@@ -287,13 +291,14 @@ async function runScheduledCleanup() {
     const networksPrune = await docker.pruneNetworks();
     results.networks = networksPrune.NetworksDeleted || [];
     
-    const volumesPrune = await docker.pruneVolumes();
-    results.volumes = volumesPrune.VolumesDeleted || [];
-    results.volumesSpaceReclaimed = volumesPrune.SpaceReclaimed || 0;
+    // NOTE: volumes are never pruned — pruneVolumes() would destroy the named
+    // volumes of stopped agents. Agent volumes are removed explicitly when the
+    // agent is deleted (DELETE /api/agents/:id).
+    results.volumes = [];
+    results.volumesSpaceReclaimed = 0;
     
     const totalReclaimed = (results.containersSpaceReclaimed || 0) + 
-                           (results.imagesSpaceReclaimed || 0) + 
-                           (results.volumesSpaceReclaimed || 0);
+                           (results.imagesSpaceReclaimed || 0);
     
     db.prepare(`
       INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
@@ -336,22 +341,7 @@ async function execCapture(containerName, cmd) {
     stream.on('data', (c) => chunks.push(c));
     stream.on('end', () => {
       // Demux docker stream frames (8-byte header: [type,0,0,0,len...]) when not a TTY.
-      let raw = Buffer.concat(chunks);
-      try {
-        if (raw.length > 7 && raw[1] === 0 && raw[2] === 0 && raw[3] === 0) {
-          const out = [];
-          let i = 0;
-          while (i + 8 <= raw.length) {
-            const t = raw[i];
-            const len = raw.readUInt32BE(i + 4);
-            if (i + 8 + len > raw.length) break;
-            if (t === 2) out.push(raw.slice(i + 8, i + 8 + len)); // stderr
-            else out.push(raw.slice(i + 8, i + 8 + len)); // stdout
-            i += 8 + len;
-          }
-          raw = Buffer.concat(out);
-        }
-      } catch (_) { /* fall back to raw */ }
+      const raw = demuxDockerBuffer(Buffer.concat(chunks));
       resolve(raw.toString('utf8'));
     });
     stream.on('error', reject);
@@ -441,58 +431,65 @@ function formatBytes(bytes) {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
+// Build the panel route: host-matched when a panel domain is configured,
+// otherwise the original catch-all (no matcher) so the panel stays reachable.
+function buildPanelRoute(domain) {
+  const route = {
+    '@id': 'panel-route',
+    handle: [{
+      handler: 'subroute',
+      routes: [
+        {
+          match: [{ path: ['/api/*'] }],
+          handle: [{
+            handler: 'reverse_proxy',
+            upstreams: [{ dial: 'backend:8080' }]
+          }]
+        },
+        {
+          match: [{ path: ['/mcp'] }],
+          handle: [{
+            handler: 'reverse_proxy',
+            upstreams: [{ dial: 'backend:8080' }]
+          }]
+        },
+        {
+          handle: [{
+            handler: 'reverse_proxy',
+            upstreams: [{ dial: 'frontend:80' }]
+          }]
+        }
+      ]
+    }]
+  };
+  if (domain) route.match = [{ host: [domain] }];
+  return route;
+}
+
 async function updatePanelCaddyRoute(oldDomain, newDomain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
 
-  if (oldDomain) {
-    try {
-      await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
-    } catch (e) { /* ignore */ }
+  // Always remove the existing route first — POSTing another route with the
+  // same @id 'panel-route' would leave a duplicate id in Caddy's config.
+  try {
+    await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+  } catch (e) { /* ignore — route may not exist */ }
+
+  // Recreate the route: host-matched for the new domain, or the catch-all
+  // when the domain was cleared.
+  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildPanelRoute(newDomain))
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to update Caddy panel route: ${err}`);
   }
 
   if (newDomain) {
-    const route = {
-      '@id': 'panel-route',
-      match: [{ host: [newDomain] }],
-      handle: [{
-        handler: 'subroute',
-        routes: [
-          {
-            match: [{ path: ['/api/*'] }],
-            handle: [{
-              handler: 'reverse_proxy',
-              upstreams: [{ dial: 'backend:8080' }]
-            }]
-          },
-          {
-            match: [{ path: ['/mcp'] }],
-            handle: [{
-              handler: 'reverse_proxy',
-              upstreams: [{ dial: 'backend:8080' }]
-            }]
-          },
-          {
-            handle: [{
-              handler: 'reverse_proxy',
-              upstreams: [{ dial: 'frontend:80' }]
-            }]
-          }
-        ]
-      }]
-    };
-
-    const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(route)
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to update Caddy panel route: ${err}`);
-    }
-
     // Check if TLS policy already exists for this domain
     const existingPoliciesRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
     if (existingPoliciesRes.ok) {
@@ -530,6 +527,23 @@ async function updateCaddyEmail() {
   if (!email) return;
   
   try {
+    // Remove previously added global (subject-less) policies with a different
+    // contact email — POST appends, so old ones would otherwise accumulate.
+    const listRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
+    if (listRes.ok) {
+      const policies = await listRes.json();
+      for (let i = (policies || []).length - 1; i >= 0; i--) {
+        const p = policies[i];
+        if (p && !p.subjects) {
+          const contact = p.issuers?.[0]?.contact || [];
+          if (!contact.includes(`mailto:${email}`)) {
+            await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies/${i}`, { method: 'DELETE' })
+              .catch(() => {});
+          }
+        }
+      }
+    }
+
     const res = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -576,61 +590,28 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
 });
 
 app.post('/api/agents', requireAuth, async (req, res) => {
+  let createdId = null;
   try {
     const { name, runtime, domain, image, port, config, quickStart } = req.body;
     const plugin = runtimes[runtime];
     if (!plugin) return res.status(400).json({ error: `Unknown runtime: ${runtime}` });
 
+    // The name flows into container/volume names — keep it strict.
+    if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      return res.status(400).json({ error: 'Invalid name: use lowercase letters, digits and hyphens, starting with a letter or digit' });
+    }
+
+    // Compose deploy would crash on writeFileSync(undefined) without a compose file.
+    if (runtime === 'compose' && !(config && config.COMPOSE_FILE)) {
+      return res.status(400).json({ error: 'COMPOSE_FILE is required for compose agents' });
+    }
+
     const id = `${runtime}-${name}-${Date.now()}`;
-    
-    // Always auto-populate config from providers (not just quickStart)
-    let finalConfig = config || {};
-    finalConfig = { ...finalConfig };
-    
-    // Auto-inject API keys from providers, mapped by provider NAME (not type).
-    // Several providers share the "openai" protocol type, so matching on type
-    // would make OpenRouter's key clobber OpenAI's. Each canonical provider
-    // maps to its own env var; custom OpenAI-compatible providers (unknown
-    // name) fall back to the OPENAI_API_KEY/OPENAI_BASE_URL slots.
-    const PROVIDER_ENV_MAP = {
-      openai: { key: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
-      openrouter: { key: 'OPENROUTER_API_KEY' },
-      anthropic: { key: 'ANTHROPIC_API_KEY' },
-      gemini: { key: 'GEMINI_API_KEY' },
-      deepseek: { key: 'DEEPSEEK_API_KEY' },
-      groq: { key: 'GROQ_API_KEY' },
-      xai: { key: 'XAI_API_KEY' },
-      mistral: { key: 'MISTRAL_API_KEY' }
-    };
-    const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
-    for (const provider of providers) {
-      const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const mapping = PROVIDER_ENV_MAP[slug];
-      if (mapping) {
-        if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
-        if (mapping.baseUrl && !finalConfig[mapping.baseUrl] && provider.baseUrl) {
-          finalConfig[mapping.baseUrl] = provider.baseUrl;
-        }
-      } else if (provider.type === 'openai' && provider.apiKey) {
-        // Custom OpenAI-compatible provider (e.g. self-hosted vLLM, DGX1).
-        // Use the OPENAI slots only if a real OpenAI provider hasn't claimed them.
-        if (!finalConfig.OPENAI_API_KEY) finalConfig.OPENAI_API_KEY = provider.apiKey;
-        if (!finalConfig.OPENAI_BASE_URL && provider.baseUrl) finalConfig.OPENAI_BASE_URL = provider.baseUrl;
-      }
-    }
-    
-    // Set default model if not specified. Hermes needs a model that accepts
-    // reasoning.effort; gpt-5.4 works, whereas gpt-4o rejects it.
-    if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
-      if (finalConfig.OPENAI_API_KEY) {
-        finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
-        finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
-      } else if (finalConfig.OPENROUTER_API_KEY) {
-        finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
-        finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
-      }
-    }
-    
+    createdId = id;
+
+    // Auto-inject provider API keys + default models (shared with mcp.js).
+    const finalConfig = injectProviderEnv(db, config);
+
     const agentConfig = plugin.buildConfig({ name, domain, image, port, config: finalConfig });
 
     db.prepare(`
@@ -649,9 +630,10 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     res.json({ id, name, status: 'running' });
   } catch (err) {
     console.error('Create agent error:', err);
-    if (req.body.name) {
-      const id = `${req.body.runtime}-${req.body.name}`;
-      db.prepare('DELETE FROM agents WHERE id LIKE ?').run(`${id}%`);
+    // Delete only the row this request created — never pattern-match, that
+    // wiped other agents' rows.
+    if (createdId) {
+      db.prepare('DELETE FROM agents WHERE id = ?').run(createdId);
     }
     res.status(500).json({ error: err.message });
   }
@@ -706,9 +688,15 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   if (config.volumes && Array.isArray(config.volumes)) {
     config.volumes.forEach(vol => {
       if (typeof vol === 'string' && vol.includes(':')) {
-        const [hostPath, containerPath] = vol.split(':');
-        if (hostPath && containerPath) {
-          volumes.push(`agentpanel-${id}-${hostPath}:${containerPath}`);
+        if (vol.startsWith('/')) {
+          // Absolute host path (docker-app VOLUMES) — bind mount as-is,
+          // preserving any :ro/:rw suffix.
+          volumes.push(vol);
+        } else {
+          const [hostPath, containerPath] = vol.split(':');
+          if (hostPath && containerPath) {
+            volumes.push(`agentpanel-${id}-${hostPath}:${containerPath}`);
+          }
         }
       }
     });
@@ -725,7 +713,8 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     Env: envVars,
     ExposedPorts: { [`${port}/tcp`]: {} },
     HostConfig: {
-      PortBindings: { [`${port}/tcp`]: [{ HostPort: '0' }] },
+      // No PortBindings: agents are reached via the internal docker network +
+      // Caddy. Publishing a random public host port would bypass Caddy.
       RestartPolicy: { Name: 'unless-stopped' },
       Binds: volumes
     },
@@ -745,14 +734,24 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     containerConfig.Labels['agentpanel.domain'] = domain;
   }
 
+  const networkRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_network');
+  const networkName = networkRow?.value || 'agentpanel_agentpanel';
+
   const container = await docker.createContainer(containerConfig);
-  await container.start();
+  try {
+    await container.start();
 
-  const network = docker.getNetwork('agentpanel_agentpanel');
-  await network.connect({ Container: containerName });
+    const network = docker.getNetwork(networkName);
+    await network.connect({ Container: containerName });
 
-  if (domain) {
-    await addCaddyRoute(domain, containerName, port);
+    if (domain) {
+      await addCaddyRoute(domain, containerName, port);
+    }
+  } catch (err) {
+    // Roll back a partially deployed container so a retry doesn't collide
+    // with the leftover container name.
+    try { await container.remove({ force: true }); } catch (e) {}
+    throw err;
   }
 
   // Hermes needs its model: block in /opt/data/config.yaml overridden. The image
@@ -819,16 +818,45 @@ async function addCaddyRoute(domain, containerName, port) {
   }
 }
 
+// Remove the named volumes created for an agent (agentpanel-<id>-*). Called on
+// agent deletion only — global volume pruning would destroy stopped agents' data.
+async function removeAgentVolumes(id) {
+  try {
+    const prefix = `agentpanel-${id}-`;
+    const { Volumes } = await docker.listVolumes();
+    for (const vol of (Volumes || [])) {
+      if (vol.Name && vol.Name.startsWith(prefix)) {
+        try {
+          await docker.getVolume(vol.Name).remove();
+        } catch (e) {
+          console.error(`Failed to remove volume ${vol.Name}:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`Failed to list volumes for agent ${id}:`, e.message);
+  }
+}
+
 app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
-    try {
-      await container.stop();
-      await container.remove();
-    } catch (e) { /* container may not exist */ }
+    if (agent.runtime === 'compose') {
+      // Compose agents have no single container — tear the project down.
+      const plugin = runtimes.compose;
+      const config = JSON.parse(agent.config || '{}');
+      await plugin.remove(agent.id, config);
+    } else {
+      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      try {
+        await container.stop();
+        await container.remove();
+      } catch (e) { /* container may not exist */ }
+
+      await removeAgentVolumes(req.params.id);
+    }
 
     if (agent.domain) {
       await removeCaddyRoute(agent.domain);
@@ -890,14 +918,22 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       .run(JSON.stringify(updatedConfig), updatedDomain, req.params.id);
 
     const plugin = runtimes[agent.runtime];
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
-    try { await container.stop(); await container.remove(); } catch (e) {}
 
-    if (agent.domain) {
-      await removeCaddyRoute(agent.domain);
+    if (agent.runtime === 'compose') {
+      // Compose agents are managed via the compose plugin, not dockerode
+      // (their image is 'compose' and can't be created as a container).
+      await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
+      await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
+    } else {
+      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      try { await container.stop(); await container.remove(); } catch (e) {}
+
+      if (agent.domain) {
+        await removeCaddyRoute(agent.domain);
+      }
+
+      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin);
     }
-
-    await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin);
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     res.json({ updated: true, config: updatedConfig, domain: updatedDomain });
@@ -916,14 +952,20 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
 
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
-    try { await container.stop(); await container.remove(); } catch (e) {}
+    if (agent.runtime === 'compose') {
+      // Compose agents are managed via the compose plugin, not dockerode.
+      await plugin.stop(agent.id, config);
+      await plugin.deploy(agent.id, agent.name, config, plugin);
+    } else {
+      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      try { await container.stop(); await container.remove(); } catch (e) {}
 
-    if (agent.domain) {
-      await removeCaddyRoute(agent.domain);
+      if (agent.domain) {
+        await removeCaddyRoute(agent.domain);
+      }
+
+      await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
     }
-
-    await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     res.json({ redeployed: true });
@@ -940,7 +982,9 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
       tail: parseInt(req.query.tail) || 100,
       follow: false
     });
-    res.type('text/plain').send(logs.toString());
+    // Containers run without a TTY, so docker returns the multiplexed stream
+    // with 8-byte frame headers — strip them before sending to the log viewer.
+    res.type('text/plain').send(demuxDockerBuffer(logs).toString('utf8'));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1255,8 +1299,11 @@ app.get('/api/system/status', requireAuth, (req, res) => {
 app.post('/api/system/restart-panel', requireAuth, (req, res) => {
   try {
     res.json({ message: 'Restarting AgentPanel...' });
+    // The backend container's id is its hostname; restart it via the mounted
+    // docker socket (there is no docker-compose.yml inside /app).
     setTimeout(() => {
-      execSync('docker compose restart', { cwd: '/app' });
+      docker.getContainer(os.hostname()).restart()
+        .catch(err => console.error('Panel restart failed:', err.message));
     }, 100);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1264,38 +1311,18 @@ app.post('/api/system/restart-panel', requireAuth, (req, res) => {
 });
 
 app.post('/api/system/restart-docker', requireAuth, (req, res) => {
-  try {
-    res.json({ message: 'Restarting Docker...' });
-    setTimeout(() => {
-      execSync('systemctl restart docker');
-    }, 100);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // systemctl is not available inside the container.
+  res.status(501).json({ error: 'Restarting Docker must be done on the host via ssh: systemctl restart docker' });
 });
 
 app.post('/api/system/update', requireAuth, async (req, res) => {
-  try {
-    res.json({ message: 'Updating AgentPanel...' });
-    setTimeout(() => {
-      execSync('git pull', { cwd: '/app' });
-      execSync('docker compose build', { cwd: '/app' });
-      execSync('docker compose up -d', { cwd: '/app' });
-    }, 100);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // No .git or docker-compose.yml exists inside the container.
+  res.status(501).json({ error: 'Updating AgentPanel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
 });
 
 app.post('/api/system/reboot', requireAuth, (req, res) => {
-  try {
-    res.json({ message: 'Rebooting server...' });
-    setTimeout(() => {
-      execSync('reboot');
-    }, 100);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // The container cannot reboot the host.
+  res.status(501).json({ error: 'Rebooting the server must be done on the host via ssh: reboot' });
 });
 
 app.post('/api/console/execute', requireAuth, (req, res) => {
@@ -1371,7 +1398,6 @@ app.post('/api/system/mcp-enable', requireAuth, async (req, res) => {
       fs.mkdirSync(mcpDir, { recursive: true });
     }
     
-    const db = require('better-sqlite3')('/data/agentpanel.db');
     const authToken = db.prepare("SELECT value FROM settings WHERE key = 'auth_token'").get()?.value;
     
     if (!authToken) {
@@ -1605,6 +1631,15 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
     const githubRes = await fetch('https://api.github.com/repos/magnusfroste/agentpanel/commits/main');
     const githubData = await githubRes.json();
     
+    // GitHub returns an error object (e.g. rate limit) without a sha — don't crash.
+    if (!githubData || !githubData.sha) {
+      return res.json({
+        hasUpdate: false,
+        currentVersion: currentCommit.substring(0, 7),
+        error: githubData?.message || 'Could not fetch latest commit from GitHub'
+      });
+    }
+    
     const latestCommit = githubData.sha.substring(0, 7);
     const hasUpdate = currentCommit !== 'unknown' && currentCommit !== latestCommit;
     
@@ -1620,21 +1655,8 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
 });
 
 app.post('/api/system/upgrade', requireAuth, async (req, res) => {
-  try {
-    res.json({ message: 'Upgrading AgentPanel...' });
-    
-    setTimeout(() => {
-      try {
-        execSync('git pull origin main', { cwd: '/app', stdio: 'pipe' });
-        execSync('docker compose build', { cwd: '/app', stdio: 'pipe' });
-        execSync('docker compose up -d', { cwd: '/app', stdio: 'pipe' });
-      } catch (err) {
-        console.error('Upgrade failed:', err);
-      }
-    }, 100);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // No .git or docker-compose.yml exists inside the container.
+  res.status(501).json({ error: 'Upgrading AgentPanel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
 });
 
 app.get('/api/system/ip', requireAuth, async (req, res) => {
@@ -1693,29 +1715,10 @@ async function initPanelRoute() {
       await updatePanelCaddyRoute(null, panelDomain.value);
       console.log(`Panel route created for ${panelDomain.value}`);
     } else {
-      const route = {
-        '@id': 'panel-route',
-        handle: [{
-          handler: 'subroute',
-          routes: [
-            {
-              match: [{ path: ['/api/*'] }],
-              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'backend:8080' }] }]
-            },
-            {
-              match: [{ path: ['/mcp'] }],
-              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'backend:8080' }] }]
-            },
-            {
-              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'frontend:80' }] }]
-            }
-          ]
-        }]
-      };
       await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(route)
+        body: JSON.stringify(buildPanelRoute(null))
       });
       console.log('Panel catch-all route created (no domain configured)');
     }

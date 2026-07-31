@@ -2,6 +2,16 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// COMPOSE_PROJECT is interpolated into shell commands — restrict it to a safe
+// character set to prevent shell injection.
+function resolveProjectName(id, config) {
+  const name = config?.COMPOSE_PROJECT || `agentpanel-${id}`;
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid COMPOSE_PROJECT "${name}": only letters, digits, underscores and hyphens are allowed`);
+  }
+  return name;
+}
+
 module.exports = {
   name: 'Docker Compose',
   description: 'Deploy from docker-compose.yml file',
@@ -36,7 +46,7 @@ module.exports = {
       fs.writeFileSync(envPath, config.COMPOSE_ENV);
     }
 
-    const projectName = config.COMPOSE_PROJECT || `agentpanel-${id}`;
+    const projectName = resolveProjectName(id, config);
 
     try {
       // Try docker compose first, fallback to docker-compose
@@ -61,7 +71,12 @@ module.exports = {
   async stop(id, config) {
     const projectDir = `/data/compose/${id}`;
     const composePath = path.join(projectDir, 'docker-compose.yml');
-    const projectName = config?.COMPOSE_PROJECT || `agentpanel-${id}`;
+    let projectName;
+    try {
+      projectName = resolveProjectName(id, config);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
 
     try {
       execSync(`docker compose -p ${projectName} -f ${composePath} down`, {
@@ -76,11 +91,16 @@ module.exports = {
 
   async remove(id, config) {
     const projectDir = `/data/compose/${id}`;
-    const projectName = config?.COMPOSE_PROJECT || `agentpanel-${id}`;
+    let projectName = null;
+    try {
+      projectName = resolveProjectName(id, config);
+    } catch (err) {
+      // Invalid project name — skip the compose teardown, still clean up files.
+    }
 
     try {
       const composePath = path.join(projectDir, 'docker-compose.yml');
-      if (fs.existsSync(composePath)) {
+      if (projectName && fs.existsSync(composePath)) {
         execSync(`docker compose -p ${projectName} -f ${composePath} down --volumes --remove-orphans`, {
           cwd: projectDir,
           stdio: 'pipe'

@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const { injectProviderEnv } = require('./lib/providerEnv');
+const { demuxDockerBuffer } = require('./lib/demux');
 
 function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
   const MCP_VERSION = '2024-11-05';
@@ -95,46 +97,9 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
         const image = args.image || plugin.defaultImage;
         const port = args.port || plugin.defaultPort;
 
-        // Auto-inject API keys from providers, mapped by provider NAME (not type).
-        // Keep this in sync with the provider injection in server.js /api/agents.
-        const PROVIDER_ENV_MAP = {
-          openai: { key: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
-          openrouter: { key: 'OPENROUTER_API_KEY' },
-          anthropic: { key: 'ANTHROPIC_API_KEY' },
-          gemini: { key: 'GEMINI_API_KEY' },
-          deepseek: { key: 'DEEPSEEK_API_KEY' },
-          groq: { key: 'GROQ_API_KEY' },
-          xai: { key: 'XAI_API_KEY' },
-          mistral: { key: 'MISTRAL_API_KEY' }
-        };
-        const finalConfig = { ...(args.config || {}) };
-        const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
-        for (const provider of providers) {
-          const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-          const mapping = PROVIDER_ENV_MAP[slug];
-          if (mapping) {
-            if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
-            if (mapping.baseUrl && !finalConfig[mapping.baseUrl] && provider.baseUrl) {
-              finalConfig[mapping.baseUrl] = provider.baseUrl;
-            }
-          } else if (provider.type === 'openai' && provider.apiKey) {
-            // Custom OpenAI-compatible provider (e.g. vLLM, DGX1).
-            if (!finalConfig.OPENAI_API_KEY) finalConfig.OPENAI_API_KEY = provider.apiKey;
-            if (!finalConfig.OPENAI_BASE_URL && provider.baseUrl) finalConfig.OPENAI_BASE_URL = provider.baseUrl;
-          }
-        }
-
-        // Set default model if not specified and a provider key is available.
-        // Hermes needs a model that accepts reasoning.effort; gpt-5.4 works.
-        if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
-          if (finalConfig.OPENAI_API_KEY) {
-            finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-4o';
-            finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
-          } else if (finalConfig.OPENROUTER_API_KEY) {
-            finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-4o';
-            finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
-          }
-        }
+        // Auto-inject API keys from providers + default models (shared with
+        // server.js /api/agents via lib/providerEnv.js).
+        const finalConfig = injectProviderEnv(db, args.config);
 
         const agentConfig = plugin.buildConfig({ name: args.name, domain: args.domain, image, port, config: finalConfig });
 
@@ -159,11 +124,18 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
         if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
 
-        try {
-          const container = docker.getContainer(`agentpanel-${args.agent_id}`);
-          try { await container.stop(); } catch (e) {}
-          try { await container.remove(); } catch (e) {}
-        } catch (e) {}
+        if (agent.runtime === 'compose') {
+          // Compose agents have no single container — tear the project down.
+          const plugin = runtimes.compose;
+          const config = JSON.parse(agent.config || '{}');
+          try { await plugin.remove(agent.id, config); } catch (e) {}
+        } else {
+          try {
+            const container = docker.getContainer(`agentpanel-${args.agent_id}`);
+            try { await container.stop(); } catch (e) {}
+            try { await container.remove(); } catch (e) {}
+          } catch (e) {}
+        }
 
         if (agent.domain) {
           try { await removeCaddyRoute(agent.domain); } catch (e) {}
@@ -183,11 +155,17 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
         db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
 
         try {
-          const container = docker.getContainer(`agentpanel-${args.agent_id}`);
-          try { await container.stop(); } catch (e) {}
-          try { await container.remove(); } catch (e) {}
+          if (agent.runtime === 'compose') {
+            // Compose agents are managed via the compose plugin, not dockerode.
+            try { await plugin.stop(agent.id, config); } catch (e) {}
+            await plugin.deploy(agent.id, agent.name, config, plugin);
+          } else {
+            const container = docker.getContainer(`agentpanel-${args.agent_id}`);
+            try { await container.stop(); } catch (e) {}
+            try { await container.remove(); } catch (e) {}
 
-          await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
+            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
+          }
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
         } catch (err) {
@@ -200,7 +178,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
         try {
           const container = docker.getContainer(`agentpanel-${args.agent_id}`);
           const logs = await container.logs({ stdout: true, stderr: true, tail: args.tail || 100 });
-          return { content: [{ type: 'text', text: logs.toString() }] };
+          // Containers run without a TTY — strip the 8-byte multiplex headers.
+          return { content: [{ type: 'text', text: demuxDockerBuffer(logs).toString('utf8') }] };
         } catch (err) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
         }
