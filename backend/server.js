@@ -1400,10 +1400,12 @@ app.post('/api/providers/:id/test', requireAuth, async (req, res) => {
       headers['Authorization'] = `Bearer ${provider.apiKey}`;
     }
     
+    // Note: no token cap here. gpt-5.x/o-series reject the legacy `max_tokens`
+    // param ("Unsupported parameter ... use max_completion_tokens"), and older
+    // models reject `max_completion_tokens` — omitting it works everywhere.
     const body = JSON.stringify({
       model: testModel,
-      messages: [{ role: 'user', content: testPrompt }],
-      max_tokens: 50
+      messages: [{ role: 'user', content: testPrompt }]
     });
     
     const response = await fetch(`${provider.baseUrl}/chat/completions`, {
