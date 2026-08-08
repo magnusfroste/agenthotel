@@ -40,7 +40,7 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 - **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
 - **Activity log** — agent lifecycle, cleanup and login events, shown on the System page
 - **Log viewer** — demuxed container logs, no binary garbage
-- **Daily Docker cleanup** — scheduled pruning of unused resources, with history and space-reclaimed stats (agent volumes are never touched)
+- **Daily Docker cleanup** — scheduled pruning of unused resources, with history and space-reclaimed stats (agent volumes are never touched); orphaned agent volumes can be reviewed and removed explicitly from the System page
 - **Dark & light mode**, mobile-responsive sidebar, toast notifications, skeleton loaders
 
 ### Automation & MCP

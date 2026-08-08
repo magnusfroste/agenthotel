@@ -330,6 +330,72 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
   }
 });
 
+// Orphaned AgentPanel volumes: named volumes created for agents that no
+// longer exist in the DB (e.g. old test agents) and that no container
+// mounts. Volumes belonging to existing agents — running or stopped — are
+// never flagged, and neither are the panel's own volumes.
+async function listOrphanedVolumes() {
+  const { Volumes } = await docker.listVolumes();
+  const containers = await docker.listContainers({ all: true });
+  const inUse = new Set();
+  for (const c of containers) {
+    for (const m of c.Mounts || []) {
+      if (m.Type === 'volume') inUse.add(m.Name);
+    }
+  }
+  const agentIds = db.prepare('SELECT id FROM agents').all().map(r => r.id);
+  const belongsToAgent = (name) =>
+    agentIds.some(id => name.startsWith(`agentpanel-${id}-`) || name.startsWith(`agentpanel-${id}_`));
+
+  return (Volumes || [])
+    .filter(v => v.Name.startsWith('agentpanel-') && !inUse.has(v.Name) && !belongsToAgent(v.Name))
+    .map(v => ({ name: v.Name, createdAt: v.CreatedAt || null, driver: v.Driver }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+app.get('/api/docker/orphaned-volumes', requireAuth, async (req, res) => {
+  try {
+    res.json(await listOrphanedVolumes());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/docker/volumes/:name', requireAuth, async (req, res) => {
+  try {
+    // Re-validate server-side — never delete a volume that isn't orphaned.
+    const orphaned = await listOrphanedVolumes();
+    if (!orphaned.some(v => v.name === req.params.name)) {
+      return res.status(400).json({ error: 'Volume is not orphaned — refusing to delete' });
+    }
+    await docker.getVolume(req.params.name).remove();
+    logEvent('volume.delete', null, `Deleted orphaned volume ${req.params.name}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/docker/prune-volumes', requireAuth, async (req, res) => {
+  try {
+    const orphaned = await listOrphanedVolumes();
+    const failed = [];
+    let deleted = 0;
+    for (const v of orphaned) {
+      try {
+        await docker.getVolume(v.name).remove();
+        deleted++;
+      } catch (err) {
+        failed.push({ name: v.name, error: err.message });
+      }
+    }
+    if (deleted) logEvent('volume.prune', null, `Deleted ${deleted} orphaned volume(s)`);
+    res.json({ success: failed.length === 0, deleted, failed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/docker/cleanup-history', requireAuth, (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;

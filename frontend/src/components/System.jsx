@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
-import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power } from 'lucide-react'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
   const [systemStats, setSystemStats] = useState(null)
   const [mcpStatus, setMcpStatus] = useState(null)
   const [cleanupHistory, setCleanupHistory] = useState([])
+  const [orphanedVolumes, setOrphanedVolumes] = useState(null)
+  const [pruningVolumes, setPruningVolumes] = useState(false)
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [cleaning, setCleaning] = useState(false)
@@ -34,6 +36,7 @@ function System() {
     fetchSystemStats()
     fetchMcpStatus()
     fetchCleanupHistory()
+    fetchOrphanedVolumes()
     fetchEvents()
     const interval = setInterval(fetchSystemStats, 5000)
     const eventsInterval = setInterval(fetchEvents, 15000)
@@ -75,6 +78,49 @@ function System() {
       setCleanupHistory(await res.json())
     } catch (err) {
       console.error('Failed to fetch cleanup history:', err)
+    }
+  }
+
+  async function fetchOrphanedVolumes() {
+    try {
+      const res = await authFetch('/api/docker/orphaned-volumes')
+      setOrphanedVolumes(await res.json())
+    } catch (err) {
+      console.error('Failed to fetch orphaned volumes:', err)
+      setOrphanedVolumes([])
+    }
+  }
+
+  async function deleteVolume(name) {
+    if (!confirm(`Delete volume ${name}? This cannot be undone.`)) return
+    try {
+      const res = await authFetch(`/api/docker/volumes/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Delete failed')
+      toast.success(`Volume ${name} deleted`)
+      fetchOrphanedVolumes()
+    } catch (err) {
+      toast.error('Delete failed: ' + err.message)
+    }
+  }
+
+  async function pruneVolumes() {
+    if (!orphanedVolumes || orphanedVolumes.length === 0) return
+    if (!confirm(`Delete all ${orphanedVolumes.length} orphaned volumes? This cannot be undone.`)) return
+    setPruningVolumes(true)
+    try {
+      const res = await authFetch('/api/docker/prune-volumes', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        toast.success(`Deleted ${data.deleted} orphaned volume(s)`)
+      } else {
+        toast.warning(`Deleted ${data.deleted}, ${data.failed.length} failed`)
+      }
+      fetchOrphanedVolumes()
+    } catch (err) {
+      toast.error('Prune failed: ' + err.message)
+    } finally {
+      setPruningVolumes(false)
     }
   }
 
@@ -370,6 +416,52 @@ function System() {
           </div>
         ) : (
           <div className="table-empty">No cleanup history yet</div>
+        )}
+      </section>
+
+      <section className="settings-section">
+        <div className="section-header">
+          <h2><HardDrive size={20} /> Orphaned Volumes</h2>
+          <button
+            onClick={pruneVolumes}
+            className="btn btn-secondary"
+            disabled={pruningVolumes || !orphanedVolumes || orphanedVolumes.length === 0}
+          >
+            {pruningVolumes ? 'Removing…' : 'Remove All'}
+          </button>
+        </div>
+        <p className="section-description">
+          Named volumes left behind by deleted agents. Volumes belonging to existing agents — running or stopped — are never listed here.
+        </p>
+        {orphanedVolumes === null ? (
+          <div className="skeleton skeleton-block" style={{ height: '80px' }} />
+        ) : orphanedVolumes.length > 0 ? (
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Volume</th>
+                  <th>Created</th>
+                  <th className="num">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orphanedVolumes.map((v) => (
+                  <tr key={v.name}>
+                    <td className="text-mono">{v.name}</td>
+                    <td>{v.createdAt ? new Date(v.createdAt).toLocaleString() : '—'}</td>
+                    <td className="num">
+                      <button className="btn btn-danger" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }} onClick={() => deleteVolume(v.name)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="table-empty">No orphaned volumes</div>
         )}
       </section>
 
