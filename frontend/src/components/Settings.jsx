@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Settings as SettingsIcon, Lock, Globe, Clock, Server, Shield, Save, RotateCcw, CheckCircle, AlertCircle, Database, Download, Upload } from 'lucide-react'
+import { Settings as SettingsIcon, Lock, Globe, Clock, Server, Shield, Save, RotateCcw, CheckCircle, AlertCircle, Database, Download, Upload, Bell, Send } from 'lucide-react'
 
 function Settings() {
   const [settings, setSettings] = useState({})
@@ -71,6 +71,27 @@ function Settings() {
   }
 
   const [importing, setImporting] = useState(false)
+  const [testingNotify, setTestingNotify] = useState(false)
+
+  async function handleTestNotification() {
+    setTestingNotify(true)
+    try {
+      // Persist first so the test uses the values on screen.
+      await authFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      })
+      const res = await authFetch('/api/system/notify-test', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Test failed')
+      showMessage('success', 'Test notification sent!')
+    } catch (err) {
+      showMessage('error', err.message)
+    } finally {
+      setTestingNotify(false)
+    }
+  }
 
   async function handleExport() {    try {
       const res = await authFetch('/api/system/export')
@@ -388,6 +409,90 @@ function Settings() {
             />
             <div style={helpTextStyle}>Auto-logout after inactivity</div>
           </div>
+        </div>
+
+        <div style={sectionStyle}>
+          <h2 style={sectionHeaderStyle}>
+            <Bell size={22} color="#8b5cf6" />
+            Notifications
+          </h2>
+          <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
+            Get alerted when an agent goes down or recovers, and when host disk or memory usage crosses a threshold.
+          </p>
+
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Webhook URL</label>
+            <input
+              type="url"
+              name="notify_webhook_url"
+              value={settings.notify_webhook_url || ''}
+              onChange={handleChange}
+              placeholder="https://hooks.slack.com/services/… or Discord webhook"
+              style={inputStyle}
+            />
+            <div style={helpTextStyle}>Slack or Discord incoming webhook — receives a JSON {'{"text": "…"}'} POST</div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Telegram Bot Token</label>
+              <input
+                type="text"
+                name="notify_telegram_token"
+                value={settings.notify_telegram_token || ''}
+                onChange={handleChange}
+                placeholder="123456:ABC-DEF…"
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Telegram Chat ID</label>
+              <input
+                type="text"
+                name="notify_telegram_chat_id"
+                value={settings.notify_telegram_chat_id || ''}
+                onChange={handleChange}
+                placeholder="-1001234567890"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Disk Alert Threshold (%)</label>
+              <input
+                type="number"
+                name="notify_disk_threshold"
+                value={settings.notify_disk_threshold || '85'}
+                onChange={handleChange}
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Memory Alert Threshold (%)</label>
+              <input
+                type="number"
+                name="notify_mem_threshold"
+                value={settings.notify_mem_threshold || '90'}
+                onChange={handleChange}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleTestNotification}
+            disabled={testingNotify}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <Send size={16} />
+            {testingNotify ? 'Sending…' : 'Send Test Notification'}
+          </button>
         </div>
 
         <div style={{ 

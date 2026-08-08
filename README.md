@@ -38,6 +38,8 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh
 - **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
 - **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
+- **Alert notifications** — webhook (Slack/Discord) or Telegram alerts when an agent goes down or recovers, or when host disk/memory crosses a configurable threshold
+- **Bounded container logs** — agents are deployed with json-file log rotation (10 MB × 3) so a chatty agent can't fill the disk
 - **Activity log** — agent lifecycle, cleanup and login events, shown on the System page
 - **Log viewer** — demuxed container logs, no binary garbage
 - **Daily Docker cleanup** — scheduled pruning of unused resources, with history and space-reclaimed stats (agent volumes are never touched); orphaned agent volumes can be reviewed and removed explicitly from the System page

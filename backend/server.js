@@ -15,6 +15,7 @@ const { PassThrough } = require('stream');
 const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
+const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { execFile, execFileSync } = require('child_process');
 
 const app = express();
@@ -1100,6 +1101,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       // No PortBindings: agents are reached via the internal docker network +
       // Caddy. Publishing a random public host port would bypass Caddy.
       RestartPolicy: { Name: 'unless-stopped' },
+      // Cap json-file logs — a chatty agent would otherwise fill the disk
+      // over time. Applies to newly created containers (i.e. on redeploy).
+      LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } },
       Binds: volumes
     },
     Labels: {
@@ -1814,6 +1818,14 @@ app.post('/api/system/reboot', requireAuth, (req, res) => {
   res.status(501).json({ error: 'Rebooting the server must be done on the host via ssh: reboot' });
 });
 
+app.post('/api/system/notify-test', requireAuth, async (req, res) => {
+  if (!anyChannelConfigured(db)) {
+    return res.status(400).json({ error: 'No notification channel configured — set a webhook URL or Telegram credentials first' });
+  }
+  await sendNotification(db, 'AgentPanel test notification — if you see this, alerts are working.');
+  res.json({ success: true });
+});
+
 // Instance export/import (Easypanel-style VPS-to-VPS migration).
 // Exports agents (incl. compose definitions), providers and non-secret
 // settings. Admin credentials and auth_token are NEVER exported.
@@ -2310,11 +2322,9 @@ async function runUptimeChecks() {
         uptimeState.set(agent.id, isUp);
       } else if (prev !== isUp) {
         uptimeState.set(agent.id, isUp);
-        logEvent(
-          isUp ? 'agent.up' : 'agent.down',
-          agent.id,
-          isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`
-        );
+        const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
+        logEvent(isUp ? 'agent.up' : 'agent.down', agent.id, msg);
+        sendNotification(db, `AgentPanel: ${msg}`).catch(() => {});
       }
     } catch (err) {
       console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
@@ -2323,6 +2333,51 @@ async function runUptimeChecks() {
 
   // Prune history older than 7 days.
   db.prepare("DELETE FROM uptime_checks WHERE checked_at < datetime('now', '-7 days')").run();
+}
+
+// Resource alerting: every 5 min, notify once when host disk or memory usage
+// crosses its threshold, and once when it recovers (5-point hysteresis).
+// Thresholds come from settings with sane defaults.
+const resourceAlertState = { disk: false, mem: false };
+
+async function runResourceChecks() {
+  if (!anyChannelConfigured(db)) return;
+  const getThreshold = (key, fallback) => {
+    const n = parseInt(db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const diskThreshold = getThreshold('notify_disk_threshold', 85);
+  const memThreshold = getThreshold('notify_mem_threshold', 90);
+
+  // Same sources as /api/system/stats (host /proc via pid: host).
+  const memData = fs.readFileSync('/proc/meminfo', 'utf8');
+  const getKB = key => parseInt(memData.match(new RegExp(key + ':\\s+(\\d+)'))?.[1] || 0) * 1024;
+  const memTotal = getKB('MemTotal');
+  const memPct = memTotal > 0 ? Math.round(((memTotal - getKB('MemAvailable')) / memTotal) * 100) : 0;
+
+  let diskPct = 0;
+  try {
+    const dfLine = execSync('df -B1 / 2>/dev/null | tail -1').toString().trim().split(/\s+/);
+    const diskTotal = parseInt(dfLine[1]) || 1;
+    diskPct = Math.round((parseInt(dfLine[2]) || 0) / diskTotal * 100);
+  } catch {}
+
+  for (const [key, pct, threshold, label] of [
+    ['disk', diskPct, diskThreshold, 'Disk'],
+    ['mem', memPct, memThreshold, 'Memory']
+  ]) {
+    if (pct >= threshold && !resourceAlertState[key]) {
+      resourceAlertState[key] = true;
+      const msg = `${label} usage at ${pct}% (threshold ${threshold}%)`;
+      logEvent(`resource.${key}`, null, msg);
+      sendNotification(db, `AgentPanel WARNING: ${msg}`).catch(() => {});
+    } else if (pct < threshold - 5 && resourceAlertState[key]) {
+      resourceAlertState[key] = false;
+      const msg = `${label} usage back to ${pct}%`;
+      logEvent(`resource.${key}.recovered`, null, msg);
+      sendNotification(db, `AgentPanel OK: ${msg}`).catch(() => {});
+    }
+  }
 }
 
 const PORT = process.env.PORT || 8080;
@@ -2334,6 +2389,9 @@ app.listen(PORT, '0.0.0.0', async () => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
   }, 60 * 1000);
   console.log('[Uptime] Monitoring enabled (60s interval)');
+  setInterval(() => {
+    runResourceChecks().catch(err => console.error('[Resources] Error:', err.message));
+  }, 5 * 60 * 1000);
 });
 
 async function initPanelRoute() {
