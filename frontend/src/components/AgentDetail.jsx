@@ -73,9 +73,12 @@ function AgentDetail() {
     catch (err) { notify('error', 'Delete failed: ' + err.message) }
   }
 
-  async function handleExport() {
+  const [showExportModal, setShowExportModal] = useState(false)
+
+  async function handleExport(includeData) {
+    setShowExportModal(false)
     try {
-      const res = await authFetch(`/api/agents/${id}/export`)
+      const res = await authFetch(`/api/agents/${id}/export${includeData ? '?data=1' : ''}`)
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || 'Export failed')
@@ -87,7 +90,7 @@ function AgentDetail() {
       a.download = `${agent.name}.zip`
       a.click()
       URL.revokeObjectURL(url)
-      notify('success', 'Service export downloaded')
+      notify('success', includeData ? 'Service export (with volume data) downloaded' : 'Service export downloaded')
     } catch (err) { notify('error', 'Export failed: ' + err.message) }
   }
 
@@ -156,7 +159,7 @@ function AgentDetail() {
             <button className="btn" style={{ background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('start')}><Play size={15} color="white" /> Start</button>
           )}
           <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('redeploy')}><RefreshCw size={15} color="white" /> Redeploy</button>
-          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={handleExport} title="Download service as zip (migrate to another AgentPanel)"><Download size={15} color="currentColor" /> Export</button>
+          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setShowExportModal(true)} title="Download service as zip (migrate to another AgentPanel)"><Download size={15} color="currentColor" /> Export</button>
           <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>
       </div>
@@ -407,6 +410,37 @@ function AgentUptime({ agentId }) {
                 title={`${new Date(c.checked_at + 'Z').toLocaleString()} — ${c.ok ? 'ok' : 'down'}${c.status_code != null ? ` (HTTP ${c.status_code})` : ''}`}
               />
             ))}
+          </div>
+        </div>
+      )}
+
+      {showExportModal && (
+        <div className="modal-overlay" onClick={() => setShowExportModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Export service</h3>
+            <p className="modal-text">
+              Download <strong>{agent.name}</strong> as a zip you can import on any AgentPanel instance.
+              Environment variables and API keys are included in plain text.
+            </p>
+            <div className="modal-actions" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <button className="btn btn-secondary" onClick={() => handleExport(false)}>
+                Config only
+              </button>
+              {agent.status === 'stopped' ? (
+                <button className="btn btn-primary" onClick={() => handleExport(true)}>
+                  Config + volume data
+                </button>
+              ) : (
+                <button className="btn btn-primary" disabled title="Stop the agent first" style={{ opacity: 0.5 }}>
+                  Config + volume data (stop the agent first)
+                </button>
+              )}
+            </div>
+            {agent.status !== 'stopped' && (
+              <p className="modal-text" style={{ marginTop: '0.75rem', marginBottom: 0, fontSize: '0.8rem' }}>
+                Volume data requires a stopped agent for a consistent copy — same as Easypanel.
+              </p>
+            )}
           </div>
         </div>
       )}

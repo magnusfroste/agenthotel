@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const os = require('os');
 const tar = require('tar-fs');
 const AdmZip = require('adm-zip');
+const archiver = require('archiver');
+const { PassThrough } = require('stream');
+const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { execFile, execFileSync } = require('child_process');
@@ -663,18 +666,94 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
 });
 
 // Per-service export (Easypanel-style): the agent's full configuration as a
-// downloadable zip. The container image and volume data are NOT included —
-// the image is rebuilt from the runtime template (or pulled) on redeploy.
-app.get('/api/agents/:id/export', requireAuth, (req, res) => {
+// downloadable zip. With ?data=1 the persistent volume data is included as
+// volumes/*.tar entries (requires a stopped agent, like Easypanel). The
+// container image is never included — it is rebuilt from the runtime
+// template (or pulled) on redeploy.
+
+// Discover our own container's image and /data mount once — the image runs
+// the helper containers that tar/untar agent volumes, and the /data mount
+// stages import zips for them.
+let selfInfoCache = null;
+async function getSelfInfo() {
+  if (selfInfoCache) return selfInfoCache;
+  const info = await docker.getContainer(os.hostname()).inspect();
+  const dataMount = info.Mounts.find(m => m.Destination === '/data');
+  if (!dataMount) throw new Error('Backend /data mount not found');
+  selfInfoCache = {
+    image: info.Config.Image,
+    // Helper containers mount this read-only to reach staged files.
+    dataMountSource: dataMount.Type === 'volume' ? dataMount.Name : dataMount.Source
+  };
+  return selfInfoCache;
+}
+
+// Named volumes belonging to an agent: agentpanel-<id>-<path> for regular
+// runtimes, <composeProject>_<volume> (default project agentpanel-<id>) for
+// compose agents.
+async function listAgentVolumes(agent) {
+  const prefixes = [`agentpanel-${agent.id}-`, `agentpanel-${agent.id}_`];
+  if (agent.runtime === 'compose') {
+    try {
+      const cfg = JSON.parse(agent.config || '{}');
+      if (cfg.COMPOSE_PROJECT && /^[a-zA-Z0-9_-]+$/.test(cfg.COMPOSE_PROJECT)) {
+        prefixes.push(`${cfg.COMPOSE_PROJECT}_`);
+      }
+    } catch { /* ignore unparseable config */ }
+  }
+  const { Volumes } = await docker.listVolumes();
+  return (Volumes || [])
+    .map(v => v.Name)
+    .filter(name => prefixes.some(p => name.startsWith(p)));
+}
+
+// Tar a Docker volume to a local temp file via a throwaway container based
+// on our own image. Returns the temp file path.
+async function tarVolumeToFile(volumeName) {
+  const { image } = await getSelfInfo();
+  const tmpFile = path.join(os.tmpdir(), `vol-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.tar`);
+  const out = new PassThrough();
+  const writeDone = pipeline(out, fs.createWriteStream(tmpFile));
+  // Tty: true gives a clean stdout stream (no multiplex headers).
+  const [result] = await docker.run(image, ['tar', 'cf', '-', '-C', '/vol', '.'], out, {
+    Tty: true,
+    HostConfig: { Binds: [`${volumeName}:/vol:ro`], AutoRemove: true }
+  });
+  await writeDone;
+  if (result.StatusCode !== 0) {
+    fs.unlink(tmpFile, () => {});
+    throw new Error(`tar of volume ${volumeName} failed with exit code ${result.StatusCode}`);
+  }
+  return tmpFile;
+}
+
+app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
+  const tmpFiles = [];
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const includeData = req.query.data === '1';
+
+    let volumeNames = [];
+    if (includeData) {
+      // Consistency: copying a live volume can yield corrupt data (Easypanel
+      // has the same requirement).
+      const containers = await docker.listContainers({ all: false });
+      const containerName = `agentpanel-${agent.id}`;
+      const running = containers.some(c => (c.Names || []).some(n => n.replace(/^\//, '') === containerName));
+      if (running) {
+        return res.status(400).json({ error: 'Stop the agent before exporting its data' });
+      }
+      volumeNames = await listAgentVolumes(agent);
+    }
 
     const manifest = {
       app: 'agentpanel-agent',
       version: 1,
       exportedAt: new Date().toISOString(),
+      includesVolumes: volumeNames.length > 0,
       agent: {
+        id: agent.id,
         name: agent.name,
         runtime: agent.runtime,
         domain: agent.domain,
@@ -684,11 +763,18 @@ app.get('/api/agents/:id/export', requireAuth, (req, res) => {
       }
     };
 
-    const zip = new AdmZip();
-    zip.addFile('agent.json', Buffer.from(JSON.stringify(manifest, null, 2)));
-    zip.addFile('README.txt', Buffer.from(
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 1 } });
+    archive.on('error', () => { if (!res.headersSent) res.status(500); res.end(); });
+    archive.pipe(res);
+
+    archive.append(JSON.stringify(manifest, null, 2), { name: 'agent.json' });
+    archive.append(
 `AgentPanel service export: ${agent.name}
 Exported: ${manifest.exportedAt}
+Volume data included: ${volumeNames.length > 0 ? `yes (${volumeNames.length} volume(s))` : 'no'}
 
 Import this zip on any AgentPanel instance (Dashboard > Import Agent, or
 POST /api/agents/import). The agent is created in stopped state — redeploy
@@ -696,15 +782,22 @@ it to build/pull the image and start the container.
 
 NOTE: agent.json contains environment variables and API keys in plain text.
 Store this file safely.
+`, { name: 'README.txt' });
 
-Container volume data is not included in the export.
-`));
+    // Tar each volume to disk first (bounded memory), then add to the zip.
+    for (const vol of volumeNames) {
+      const tmp = await tarVolumeToFile(vol);
+      tmpFiles.push(tmp);
+      archive.file(tmp, { name: `volumes/${vol}.tar` });
+    }
 
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
-    res.send(zip.toBuffer());
+    await archive.finalize();
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
+  } finally {
+    // Clean up temp tars once the response has drained.
+    res.on('finish', () => tmpFiles.forEach(f => fs.unlink(f, () => {})));
   }
 });
 
@@ -760,13 +853,20 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 });
 
 // Per-service import: accepts the zip produced by GET /api/agents/:id/export
-// as a raw body. Creates the agent in stopped state — the user redeploys it
-// to build/pull the image on this host.
-app.post('/api/agents/import', requireAuth, express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+// as a raw body (streamed to disk — volume data can make these large).
+// Creates the agent in stopped state — the user redeploys it to build/pull
+// the image on this host. volumes/*.tar entries are restored into freshly
+// created Docker volumes named for the new agent id.
+app.post('/api/agents/import', requireAuth, async (req, res) => {
+  const tmpZip = path.join(os.tmpdir(), `import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+  let stagedZip = null;
   try {
+    await pipeline(req, fs.createWriteStream(tmpZip));
+
     let manifest;
+    let zip;
     try {
-      const zip = new AdmZip(req.body);
+      zip = new AdmZip(tmpZip);
       const entry = zip.getEntry('agent.json');
       if (!entry) throw new Error('agent.json not found in zip');
       manifest = JSON.parse(entry.getData().toString('utf8'));
@@ -803,10 +903,57 @@ app.post('/api/agents/import', requireAuth, express.raw({ type: () => true, limi
       a.image || plugin.defaultImage, a.port || plugin.defaultPort,
       JSON.stringify(a.config || {}));
 
-    logEvent('agent.import', id, `Imported agent ${a.name} from zip`);
-    res.json({ id, name: a.name, status: 'stopped' });
+    // Restore volume data, if the export included any. Volume entries carry
+    // the OLD agent id in their name — remap to the new id's naming scheme.
+    const volumeEntries = zip.getEntries()
+      .map(e => e.entryName)
+      .filter(n => n.startsWith('volumes/') && n.endsWith('.tar'));
+    let volumesRestored = 0;
+    if (volumeEntries.length > 0) {
+      if (!a.id) {
+        logEvent('agent.import', id, `Imported agent ${a.name} WITHOUT volume data (export lacks source id)`);
+      } else {
+        const { image, dataMountSource } = await getSelfInfo();
+        stagedZip = `/data/imports/${id}.zip`;
+        fs.mkdirSync(path.dirname(stagedZip), { recursive: true });
+        fs.copyFileSync(tmpZip, stagedZip);
+
+        const customProject = a.runtime === 'compose' && a.config && a.config.COMPOSE_PROJECT;
+        const oldPrefixes = [`agentpanel-${a.id}-`, `agentpanel-${a.id}_`];
+        if (customProject) oldPrefixes.push(`${a.config.COMPOSE_PROJECT}_`);
+        for (const entryName of volumeEntries) {
+          const oldVol = path.basename(entryName, '.tar');
+          const prefix = oldPrefixes.find(p => oldVol.startsWith(p));
+          if (!prefix) continue; // not one of this agent's volumes — skip
+          const suffix = oldVol.slice(prefix.length);
+          // Match the naming the next deploy will use: custom compose
+          // projects keep their project prefix, everything else gets the
+          // new agent id.
+          const newVol = (prefix === `${a.config?.COMPOSE_PROJECT}_` && customProject)
+            ? `${a.config.COMPOSE_PROJECT}_${suffix}`
+            : `agentpanel-${id}${prefix.endsWith('_') ? '_' : '-'}${suffix}`;
+          await docker.createVolume({ Name: newVol });
+          const [result] = await docker.run(image,
+            ['node', '/app/lib/restore-volume.js', stagedZip.replace(/^\/data/, '/staging'), entryName, '/vol'],
+            new PassThrough(), {
+              Tty: true,
+              HostConfig: { Binds: [`${dataMountSource}:/staging:ro`, `${newVol}:/vol`], AutoRemove: true }
+            });
+          if (result.StatusCode !== 0) {
+            throw new Error(`restore of volume ${newVol} failed with exit code ${result.StatusCode}`);
+          }
+          volumesRestored++;
+        }
+      }
+    }
+
+    logEvent('agent.import', id, `Imported agent ${a.name} from zip${volumesRestored ? ` (${volumesRestored} volume(s) restored)` : ''}`);
+    res.json({ id, name: a.name, status: 'stopped', volumesRestored });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  } finally {
+    fs.unlink(tmpZip, () => {});
+    if (stagedZip) fs.unlink(stagedZip, () => {});
   }
 });
 

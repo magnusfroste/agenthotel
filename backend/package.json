@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.10",
+    "archiver": "^7.0.1",
     "better-sqlite3": "^9.4.3",
     "cors": "^2.8.5",
     "dockerode": "^4.0.0",

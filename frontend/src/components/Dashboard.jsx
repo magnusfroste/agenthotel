@@ -88,7 +88,7 @@ function Dashboard() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
-      toast.success(`Agent "${data.name}" imported as stopped — redeploy it to start`)
+      toast.success(`Agent "${data.name}" imported as stopped${data.volumesRestored ? ` with ${data.volumesRestored} volume(s) restored` : ''} — redeploy it to start`)
       fetchAgents()
     } catch (err) {
       toast.error('Import failed: ' + err.message)
