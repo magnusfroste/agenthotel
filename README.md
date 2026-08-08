@@ -46,6 +46,7 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 ### Automation & MCP
 - **Built-in MCP server** — let external AI agents list, create, redeploy and delete agents, check system status and pull logs
 - **REST API** — everything the UI does is available over a token-authenticated JSON API
+- **Export / import** — one-click instance backup and VPS-to-VPS migration (agents, providers and settings; admin credentials are never exported)
 
 ## Quick Start
 

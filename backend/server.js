@@ -16,7 +16,9 @@ const { execFile, execFileSync } = require('child_process');
 const app = express();
 expressWs(app);
 app.use(cors());
-app.use(express.json());
+// Generous body limit: instance import files embed agent configs (incl.
+// docker-compose files) and can be sizeable.
+app.use(express.json({ limit: '10mb' }));
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
@@ -1499,6 +1501,98 @@ app.post('/api/system/update', requireAuth, async (req, res) => {
 app.post('/api/system/reboot', requireAuth, (req, res) => {
   // The container cannot reboot the host.
   res.status(501).json({ error: 'Rebooting the server must be done on the host via ssh: reboot' });
+});
+
+// Instance export/import (Easypanel-style VPS-to-VPS migration).
+// Exports agents (incl. compose definitions), providers and non-secret
+// settings. Admin credentials and auth_token are NEVER exported.
+const EXPORTABLE_SETTINGS = ['panel_domain', 'caddy_email', 'default_network'];
+
+app.get('/api/system/export', requireAuth, (req, res) => {
+  try {
+    const agents = db.prepare('SELECT * FROM agents').all();
+    const providers = db.prepare('SELECT * FROM providers').all();
+    const settings = {};
+    for (const key of EXPORTABLE_SETTINGS) {
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+      if (row) settings[key] = row.value;
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="agentpanel-export-${stamp}.json"`);
+    res.json({
+      app: 'agentpanel',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      agents,
+      providers,
+      settings
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/import', requireAuth, (req, res) => {
+  const data = req.body;
+  if (!data || data.app !== 'agentpanel' || typeof data.version !== 'number') {
+    return res.status(400).json({ error: 'Not a valid AgentPanel export file' });
+  }
+  if (data.version > 1) {
+    return res.status(400).json({ error: `Export version ${data.version} is newer than this panel supports` });
+  }
+  try {
+    const summary = {
+      agents: { imported: 0, skipped: 0 },
+      providers: { imported: 0, updated: 0 },
+      settings: 0
+    };
+
+    db.transaction(() => {
+      // Agents: keep existing entries (matched on id, name or domain).
+      // Imported agents start as 'stopped' — their containers don't exist
+      // on this host yet; the user redeploys them from the UI.
+      const findAgent = db.prepare('SELECT id FROM agents WHERE id = ? OR name = ? OR (domain IS NOT NULL AND domain = ?)');
+      const insertAgent = db.prepare(`INSERT INTO agents (id, name, runtime, domain, image, port, status, config, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const a of data.agents || []) {
+        if (!a.id || !a.name || !a.runtime || !a.image || !a.port) { summary.agents.skipped++; continue; }
+        if (findAgent.get(a.id, a.name, a.domain || null)) { summary.agents.skipped++; continue; }
+        insertAgent.run(a.id, a.name, a.runtime, a.domain || null, a.image, a.port,
+          'stopped', a.config || null, a.created_at || new Date().toISOString(), new Date().toISOString());
+        summary.agents.imported++;
+      }
+
+      // Providers: upsert — match on id or name, update in place if found.
+      const findProvider = db.prepare('SELECT id FROM providers WHERE id = ? OR name = ?');
+      const insertProvider = db.prepare('INSERT INTO providers (id, name, type, baseUrl, apiKey, models, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      const updateProvider = db.prepare('UPDATE providers SET type = ?, baseUrl = ?, apiKey = ?, models = ? WHERE id = ?');
+      for (const p of data.providers || []) {
+        if (!p.id || !p.name || !p.type) continue;
+        const existing = findProvider.get(p.id, p.name);
+        if (existing) {
+          updateProvider.run(p.type, p.baseUrl || null, p.apiKey || null, p.models || null, existing.id);
+          summary.providers.updated++;
+        } else {
+          insertProvider.run(p.id, p.name, p.type, p.baseUrl || null, p.apiKey || null, p.models || null,
+            p.created_at || new Date().toISOString());
+          summary.providers.imported++;
+        }
+      }
+
+      const upsertSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+      for (const key of EXPORTABLE_SETTINGS) {
+        if (data.settings && data.settings[key] !== undefined) {
+          upsertSetting.run(key, String(data.settings[key]));
+          summary.settings++;
+        }
+      }
+    })();
+
+    logEvent('import', null, `Instance imported: ${summary.agents.imported} agents (${summary.agents.skipped} skipped), ${summary.providers.imported} providers added, ${summary.providers.updated} updated`);
+    res.json({ success: true, ...summary });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/console/execute', requireAuth, (req, res) => {

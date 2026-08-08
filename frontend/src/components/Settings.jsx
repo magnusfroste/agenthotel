@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Settings as SettingsIcon, Lock, Globe, Clock, Server, Shield, Save, RotateCcw, CheckCircle, AlertCircle } from 'lucide-react'
+import { Settings as SettingsIcon, Lock, Globe, Clock, Server, Shield, Save, RotateCcw, CheckCircle, AlertCircle, Database, Download, Upload } from 'lucide-react'
 
 function Settings() {
   const [settings, setSettings] = useState({})
@@ -68,6 +68,48 @@ function Settings() {
 
   function hasChanges() {
     return JSON.stringify(settings) !== JSON.stringify(originalSettings)
+  }
+
+  const [importing, setImporting] = useState(false)
+
+  async function handleExport() {    try {
+      const res = await authFetch('/api/system/export')
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `agentpanel-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      showMessage('success', 'Export downloaded — store it safely, it contains API keys')
+    } catch (err) {
+      showMessage('error', 'Export failed: ' + err.message)
+    }
+  }
+
+  async function handleImport(e) {
+    const file = e.target.files && e.target.files[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      if (!confirm(`Import ${data.agents?.length || 0} agents and ${data.providers?.length || 0} providers from "${file.name}"? Existing entries are kept.`)) return
+      setImporting(true)
+      const res = await authFetch('/api/system/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: text
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Import failed')
+      showMessage('success', `Import done: ${result.agents.imported} agents added (${result.agents.skipped} skipped), ${result.providers.imported} providers added, ${result.providers.updated} updated`)
+    } catch (err) {
+      showMessage('error', 'Import failed: ' + err.message)
+    } finally {
+      setImporting(false)
+      e.target.value = ''
+    }
   }
 
   if (loading) {
@@ -403,6 +445,49 @@ function Settings() {
           )}
         </div>
       </form>
+
+      <div style={sectionStyle}>
+        <h2 style={sectionHeaderStyle}>
+          <Database size={22} color="#8b5cf6" />
+          Backup & Migration
+        </h2>
+        <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
+          Move this instance to another VPS: export here, import on the new AgentPanel instance.
+          Agents, providers (including API keys) and panel settings are included — admin credentials are never exported.
+        </p>
+
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExport}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <Download size={18} />
+            Export Instance
+          </button>
+
+          <label
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: importing ? 'wait' : 'pointer', opacity: importing ? 0.6 : 1 }}
+          >
+            <Upload size={18} />
+            {importing ? 'Importing...' : 'Import Instance'}
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={handleImport}
+              disabled={importing}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
+
+        <div style={helpTextStyle}>
+          The export file contains provider API keys in plain text — store it safely.
+          Imported agents start as stopped; redeploy them from the dashboard. Existing agents are kept (matched on name/domain); existing providers are updated.
+        </div>
+      </div>
     </div>
   )
 }
