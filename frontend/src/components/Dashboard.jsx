@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload } from 'lucide-react'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -77,6 +77,26 @@ function Dashboard() {
 
   const statusColor = (s) => s === 'running' ? '#10b981' : s === 'stopped' ? '#ef4444' : '#f59e0b'
 
+  async function handleImportService(e) {
+    const file = e.target.files && e.target.files[0]
+    if (!file) return
+    try {
+      const res = await authFetch('/api/agents/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/zip' },
+        body: file
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Import failed')
+      toast.success(`Agent "${data.name}" imported as stopped — redeploy it to start`)
+      fetchAgents()
+    } catch (err) {
+      toast.error('Import failed: ' + err.message)
+    } finally {
+      e.target.value = ''
+    }
+  }
+
   if (loading) {
     return (
       <div>
@@ -118,6 +138,10 @@ function Dashboard() {
           <button className="btn" onClick={handlePrune} disabled={pruning} style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Trash2 size={16} color="white" /> {pruning ? 'Pruning…' : 'Prune Docker'}
           </button>
+          <label className="btn btn-secondary" title="Import a service zip exported from any AgentPanel" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
+            <Upload size={16} color="currentColor" /> Import Agent
+            <input type="file" accept=".zip,application/zip" onChange={handleImportService} style={{ display: 'none' }} />
+          </label>
           <Link to="/create" className="btn btn-primary">+ Create Agent</Link>
         </div>
       </div>

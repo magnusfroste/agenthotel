@@ -4,7 +4,7 @@ import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
-  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe
+  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download
 } from 'lucide-react'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
@@ -73,6 +73,24 @@ function AgentDetail() {
     catch (err) { notify('error', 'Delete failed: ' + err.message) }
   }
 
+  async function handleExport() {
+    try {
+      const res = await authFetch(`/api/agents/${id}/export`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Export failed')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${agent.name}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      notify('success', 'Service export downloaded')
+    } catch (err) { notify('error', 'Export failed: ' + err.message) }
+  }
+
   async function saveEnv() {
     setEnvSaving(true)
     try {
@@ -138,6 +156,7 @@ function AgentDetail() {
             <button className="btn" style={{ background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('start')}><Play size={15} color="white" /> Start</button>
           )}
           <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('redeploy')}><RefreshCw size={15} color="white" /> Redeploy</button>
+          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={handleExport} title="Download service as zip (migrate to another AgentPanel)"><Download size={15} color="currentColor" /> Export</button>
           <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>
       </div>

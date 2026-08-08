@@ -9,6 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const tar = require('tar-fs');
+const AdmZip = require('adm-zip');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { execFile, execFileSync } = require('child_process');
@@ -661,6 +662,52 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
   res.json({ ...agent, config: JSON.parse(agent.config || '{}') });
 });
 
+// Per-service export (Easypanel-style): the agent's full configuration as a
+// downloadable zip. The container image and volume data are NOT included —
+// the image is rebuilt from the runtime template (or pulled) on redeploy.
+app.get('/api/agents/:id/export', requireAuth, (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const manifest = {
+      app: 'agentpanel-agent',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      agent: {
+        name: agent.name,
+        runtime: agent.runtime,
+        domain: agent.domain,
+        image: agent.image,
+        port: agent.port,
+        config: JSON.parse(agent.config || '{}')
+      }
+    };
+
+    const zip = new AdmZip();
+    zip.addFile('agent.json', Buffer.from(JSON.stringify(manifest, null, 2)));
+    zip.addFile('README.txt', Buffer.from(
+`AgentPanel service export: ${agent.name}
+Exported: ${manifest.exportedAt}
+
+Import this zip on any AgentPanel instance (Dashboard > Import Agent, or
+POST /api/agents/import). The agent is created in stopped state — redeploy
+it to build/pull the image and start the container.
+
+NOTE: agent.json contains environment variables and API keys in plain text.
+Store this file safely.
+
+Container volume data is not included in the export.
+`));
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
+    res.send(zip.toBuffer());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/agents', requireAuth, async (req, res) => {
   let createdId = null;
   try {
@@ -708,6 +755,57 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     if (createdId) {
       db.prepare('DELETE FROM agents WHERE id = ?').run(createdId);
     }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-service import: accepts the zip produced by GET /api/agents/:id/export
+// as a raw body. Creates the agent in stopped state — the user redeploys it
+// to build/pull the image on this host.
+app.post('/api/agents/import', requireAuth, express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+  try {
+    let manifest;
+    try {
+      const zip = new AdmZip(req.body);
+      const entry = zip.getEntry('agent.json');
+      if (!entry) throw new Error('agent.json not found in zip');
+      manifest = JSON.parse(entry.getData().toString('utf8'));
+    } catch (err) {
+      return res.status(400).json({ error: 'Not a valid AgentPanel service zip: ' + err.message });
+    }
+
+    if (manifest.app !== 'agentpanel-agent' || !manifest.agent) {
+      return res.status(400).json({ error: 'Not a valid AgentPanel service zip' });
+    }
+
+    const a = manifest.agent;
+    if (!a.name || !/^[a-z0-9][a-z0-9-]*$/.test(a.name)) {
+      return res.status(400).json({ error: 'Invalid agent name in export file' });
+    }
+    const plugin = runtimes[a.runtime];
+    if (!plugin) {
+      return res.status(400).json({ error: `Unknown runtime in export file: ${a.runtime}` });
+    }
+
+    // Refuse to clobber anything that already exists on this instance.
+    if (db.prepare('SELECT id FROM agents WHERE name = ?').get(a.name)) {
+      return res.status(409).json({ error: `Agent "${a.name}" already exists — delete or rename it first` });
+    }
+    if (a.domain && db.prepare('SELECT id FROM agents WHERE domain = ?').get(a.domain)) {
+      return res.status(409).json({ error: `Domain "${a.domain}" is already used by another agent` });
+    }
+
+    const id = `${a.runtime}-${a.name}-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO agents (id, name, runtime, domain, image, port, config, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped')
+    `).run(id, a.name, a.runtime, a.domain || null,
+      a.image || plugin.defaultImage, a.port || plugin.defaultPort,
+      JSON.stringify(a.config || {}));
+
+    logEvent('agent.import', id, `Imported agent ${a.name} from zip`);
+    res.json({ id, name: a.name, status: 'stopped' });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
