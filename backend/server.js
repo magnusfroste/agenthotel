@@ -908,9 +908,9 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     // Handle compose runtime separately
     if (runtime === 'compose') {
-      await plugin.deploy(id, name, agentConfig, plugin);
+      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin));
     } else {
-      await deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin);
+      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin));
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
@@ -1032,10 +1032,25 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
   }
 });
 
+// Serialize deploys/redeploys: concurrent image builds can saturate the host
+// and take the panel itself down with it. One deploy at a time, FIFO.
+let deployChain = Promise.resolve();
+function enqueueDeploy(work) {
+  const run = deployChain.then(work);
+  deployChain = run.catch(() => {});
+  return run;
+}
+
 async function deployAgent(id, name, runtime, domain, image, port, config, plugin) {
   const containerName = `agentpanel-${id}`;
   const baseImage = `${runtime}-agentpanel:latest`;
-  
+
+  // Optional memory cap (MB) — guards the host against a single agent
+  // OOMing the whole fleet. Stripped from config so it doesn't leak into
+  // the container's environment.
+  const { MEMORY_LIMIT_MB, ...envConfig } = config;
+  const memLimitMB = parseInt(MEMORY_LIMIT_MB);
+
   let imageToRun = image;
   let volumes = [];
   
@@ -1099,7 +1114,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     volumes = [`agentpanel-${id}-data:/data`];
   }
   
-  const envVars = plugin.buildEnv(config);
+  const envVars = plugin.buildEnv(envConfig);
   const containerConfig = {
     name: containerName,
     Image: imageToRun,
@@ -1112,6 +1127,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       // Cap json-file logs — a chatty agent would otherwise fill the disk
       // over time. Applies to newly created containers (i.e. on redeploy).
       LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } },
+      ...(Number.isFinite(memLimitMB) && memLimitMB > 0 ? { Memory: memLimitMB * 1024 * 1024 } : {}),
       Binds: volumes
     },
     Labels: {
@@ -1351,20 +1367,22 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
 
-    if (agent.runtime === 'compose') {
-      // Compose agents are managed via the compose plugin, not dockerode.
-      await plugin.stop(agent.id, config);
-      await plugin.deploy(agent.id, agent.name, config, plugin);
-    } else {
-      const container = docker.getContainer(`agentpanel-${req.params.id}`);
-      try { await container.stop(); await container.remove(); } catch (e) {}
+    await enqueueDeploy(async () => {
+      if (agent.runtime === 'compose') {
+        // Compose agents are managed via the compose plugin, not dockerode.
+        await plugin.stop(agent.id, config);
+        await plugin.deploy(agent.id, agent.name, config, plugin);
+      } else {
+        const container = docker.getContainer(`agentpanel-${req.params.id}`);
+        try { await container.stop(); await container.remove(); } catch (e) {}
 
-      if (agent.domain) {
-        await removeCaddyRoute(agent.domain);
+        if (agent.domain) {
+          await removeCaddyRoute(agent.domain);
+        }
+
+        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
       }
-
-      await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
-    }
+    });
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     logEvent('agent.redeploy', req.params.id, `Redeployed agent ${agent.name}`);

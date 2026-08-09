@@ -64,6 +64,9 @@ function CreateAgent() {
         payload.port = formData.port ? parseInt(formData.port) : undefined
         payload.config = formData.config
       }
+      if (formData.memoryLimit) {
+        payload.config = { ...(payload.config || {}), MEMORY_LIMIT_MB: String(parseInt(formData.memoryLimit)) }
+      }
       const res = await authFetch('/api/agents', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       })
@@ -136,6 +139,16 @@ function CreateAgent() {
           <input type="text" name="domain" value={formData.domain} onChange={handleChange} placeholder="myagent.froste.eu" />
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>FQDN gets automatic HTTPS via Caddy/Let's Encrypt.</div>
         </div>
+
+        {!isCompose && (
+          <div className="form-group">
+            <label>Memory limit in MB (optional)</label>
+            <input type="number" name="memoryLimit" value={formData.memoryLimit || ''} onChange={handleChange} placeholder="e.g. 1024" min="64" />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+              Caps how much RAM this agent may use — protects the host and other agents if it runs away. Editable later on the agent's Environment tab (MEMORY_LIMIT_MB), applied on redeploy.
+            </div>
+          </div>
+        )}
 
         {!isCompose && (
           <div className="form-group" style={{ marginTop: '1.25rem', marginBottom: '1.5rem' }}>

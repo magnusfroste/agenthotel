@@ -9,6 +9,9 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [systemStats, setSystemStats] = useState(null)
   const [pruning, setPruning] = useState(false)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('name')
   const toast = useToast()
 
   useEffect(() => {
@@ -76,6 +79,19 @@ function Dashboard() {
   }
 
   const statusColor = (s) => s === 'running' ? '#10b981' : s === 'stopped' ? '#ef4444' : '#f59e0b'
+
+  const visibleAgents = agents
+    .filter(a => {
+      const q = search.trim().toLowerCase()
+      if (q && !a.name.toLowerCase().includes(q) && !(a.domain || '').toLowerCase().includes(q)) return false
+      if (statusFilter !== 'all' && a.status !== statusFilter) return false
+      return true
+    })
+    .sort((a, b) => {
+      if (sortBy === 'created') return (b.created_at || '').localeCompare(a.created_at || '')
+      if (sortBy === 'runtime') return a.runtime.localeCompare(b.runtime) || a.name.localeCompare(b.name)
+      return a.name.localeCompare(b.name)
+    })
 
   async function handleImportService(e) {
     const file = e.target.files && e.target.files[0]
@@ -196,8 +212,44 @@ function Dashboard() {
           </div>
         </div>
       ) : (
+        <>
+        {agents.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or domain…"
+              style={{
+                flex: '1 1 220px', padding: '0.5rem 0.75rem', background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)', borderRadius: '0.5rem', color: 'var(--text-primary)', fontSize: '0.875rem'
+              }}
+            />
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{
+              padding: '0.5rem 0.75rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              borderRadius: '0.5rem', color: 'var(--text-primary)', fontSize: '0.875rem'
+            }}>
+              <option value="all">All statuses</option>
+              <option value="running">Running</option>
+              <option value="stopped">Stopped</option>
+              <option value="creating">Creating</option>
+              <option value="redeploying">Redeploying</option>
+            </select>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{
+              padding: '0.5rem 0.75rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              borderRadius: '0.5rem', color: 'var(--text-primary)', fontSize: '0.875rem'
+            }}>
+              <option value="name">Sort: Name</option>
+              <option value="created">Sort: Newest</option>
+              <option value="runtime">Sort: Runtime</option>
+            </select>
+          </div>
+        )}
+        {visibleAgents.length === 0 ? (
+          <div className="table-empty" style={{ padding: '3rem' }}>No agents match your search</div>
+        ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-          {agents.map(agent => {
+          {visibleAgents.map(agent => {
             const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
             return (
               <div key={agent.id} className="agent-card">
@@ -252,6 +304,8 @@ function Dashboard() {
             )
           })}
         </div>
+        )}
+        </>
       )}
     </div>
   )

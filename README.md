@@ -35,7 +35,9 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 - **Provider testing** — list available models and test them per provider, right from the UI
 
 ### Observability & System
-- **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh
+- **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
+- **Per-agent memory limits** — optional RAM cap per agent guards the host (and the rest of the fleet) against a runaway container
+- **Serialized deploys** — one build/deploy at a time, so concurrent deploys can't saturate the host
 - **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
 - **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
 - **Alert notifications** — webhook (Slack/Discord) or Telegram alerts when an agent goes down or recovers, or when host disk/memory crosses a configurable threshold
