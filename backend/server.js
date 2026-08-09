@@ -27,6 +27,9 @@ app.use(express.json({ limit: '10mb' }));
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+// WAL: readers (UI polling, MCP) don't block behind writers (uptime checks,
+// event logging) — matters once many agents share the database.
+db.pragma('journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS agents (
@@ -455,6 +458,11 @@ async function runScheduledCleanup() {
     );
 
     logEvent('docker.cleanup', null, `Scheduled cleanup reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
+
+    // Events grow unbounded otherwise — keep 30 days of history.
+    const pruned = db.prepare("DELETE FROM events WHERE ts < datetime('now', '-30 days')").run();
+    if (pruned.changes > 0) console.log(`[Cleanup] Pruned ${pruned.changes} old event(s)`);
+
     console.log(`[Cleanup] Success: Reclaimed ${(totalReclaimed / 1024 / 1024).toFixed(2)} MB`);
   } catch (err) {
     console.error('[Cleanup] Error:', err.message);
@@ -2293,42 +2301,49 @@ app.get('/api/system/ip', requireAuth, async (req, res) => {
 // only (uptimeState tracks the last known ok-state per agent).
 const uptimeState = new Map();
 
+async function checkAgentUptime(fetch, agent) {
+  const started = Date.now();
+  let ok = 0;
+  let statusCode = null;
+  try {
+    const res = await fetch(`https://${agent.domain}`, { timeout: 10000, redirect: 'manual' });
+    statusCode = res.status;
+    ok = res.status < 500 ? 1 : 0;
+  } catch (err) {
+    // Network failure / timeout — unreachable.
+  }
+  const latency = Date.now() - started;
+
+  try {
+    db.prepare('INSERT INTO uptime_checks (agent_id, ok, status_code, latency_ms) VALUES (?, ?, ?, ?)')
+      .run(agent.id, ok, statusCode, latency);
+
+    const isUp = ok === 1;
+    const prev = uptimeState.get(agent.id);
+    if (prev === undefined) {
+      uptimeState.set(agent.id, isUp);
+    } else if (prev !== isUp) {
+      uptimeState.set(agent.id, isUp);
+      const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
+      logEvent(isUp ? 'agent.up' : 'agent.down', agent.id, msg);
+      sendNotification(db, `AgentPanel: ${msg}`).catch(() => {});
+    }
+  } catch (err) {
+    console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
+  }
+}
+
 async function runUptimeChecks() {
   const fetch = require('node-fetch');
   const agents = db.prepare(
     "SELECT id, name, domain FROM agents WHERE domain IS NOT NULL AND domain != '' AND status = 'running'"
   ).all();
 
-  for (const agent of agents) {
-    const started = Date.now();
-    let ok = 0;
-    let statusCode = null;
-    try {
-      const res = await fetch(`https://${agent.domain}`, { timeout: 10000, redirect: 'manual' });
-      statusCode = res.status;
-      ok = res.status < 500 ? 1 : 0;
-    } catch (err) {
-      // Network failure / timeout — unreachable.
-    }
-    const latency = Date.now() - started;
-
-    try {
-      db.prepare('INSERT INTO uptime_checks (agent_id, ok, status_code, latency_ms) VALUES (?, ?, ?, ?)')
-        .run(agent.id, ok, statusCode, latency);
-
-      const isUp = ok === 1;
-      const prev = uptimeState.get(agent.id);
-      if (prev === undefined) {
-        uptimeState.set(agent.id, isUp);
-      } else if (prev !== isUp) {
-        uptimeState.set(agent.id, isUp);
-        const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
-        logEvent(isUp ? 'agent.up' : 'agent.down', agent.id, msg);
-        sendNotification(db, `AgentPanel: ${msg}`).catch(() => {});
-      }
-    } catch (err) {
-      console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
-    }
+  // Parallel with a concurrency cap: sequential probing with 10s timeouts
+  // can't finish a 60s sweep once the fleet grows.
+  const CONCURRENCY = 10;
+  for (let i = 0; i < agents.length; i += CONCURRENCY) {
+    await Promise.all(agents.slice(i, i + CONCURRENCY).map(agent => checkAgentUptime(fetch, agent)));
   }
 
   // Prune history older than 7 days.
