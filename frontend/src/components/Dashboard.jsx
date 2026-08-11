@@ -17,7 +17,7 @@ function Dashboard() {
   useEffect(() => {
     fetchAgents()
     fetchSystemStats()
-    const interval = setInterval(() => { fetchAgents(); fetchSystemStats() }, 10000)
+    const interval = setInterval(() => { if (!document.hidden) { fetchAgents(); fetchSystemStats() } }, 10000)
     return () => clearInterval(interval)
   }, [])
 

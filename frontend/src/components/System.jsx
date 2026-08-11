@@ -38,8 +38,8 @@ function System() {
     fetchCleanupHistory()
     fetchOrphanedVolumes()
     fetchEvents()
-    const interval = setInterval(fetchSystemStats, 5000)
-    const eventsInterval = setInterval(fetchEvents, 15000)
+    const interval = setInterval(() => { if (!document.hidden) fetchSystemStats() }, 5000)
+    const eventsInterval = setInterval(() => { if (!document.hidden) fetchEvents() }, 15000)
     return () => { clearInterval(interval); clearInterval(eventsInterval) }
   }, [])
 

@@ -730,8 +730,11 @@ const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddy
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
 app.get('/api/agents', requireAuth, (req, res) => {
-  const agents = db.prepare('SELECT * FROM agents ORDER BY created_at DESC').all();
-  res.json(agents.map(a => ({ ...a, config: JSON.parse(a.config || '{}') })));
+  // List view: deliberately no config — it holds API keys and compose files,
+  // and this endpoint is polled every few seconds by the sidebar/dashboard.
+  // The detail endpoint below serves config when it's actually needed.
+  const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
+  res.json(agents);
 });
 
 app.get('/api/agents/:id', requireAuth, (req, res) => {

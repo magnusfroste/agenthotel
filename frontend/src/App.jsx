@@ -41,7 +41,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
     fetchSystemInfo()
     checkForUpdates()
     fetchAgents()
-    const interval = setInterval(fetchAgents, 5000)
+    const interval = setInterval(() => { if (!document.hidden) fetchAgents() }, 5000)
     return () => clearInterval(interval)
   }, [])
 

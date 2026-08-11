@@ -351,7 +351,7 @@ function AgentStats({ agentId }) {
       } catch (err) { console.error('Failed to fetch agent stats:', err) }
     }
     fetchStats()
-    const interval = setInterval(fetchStats, 5000)
+    const interval = setInterval(() => { if (!document.hidden) fetchStats() }, 5000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [agentId])
 
@@ -405,7 +405,7 @@ function AgentUptime({ agentId }) {
       } catch (err) { console.error('Failed to fetch uptime:', err) }
     }
     fetchUptime()
-    const interval = setInterval(fetchUptime, 60000)
+    const interval = setInterval(() => { if (!document.hidden) fetchUptime() }, 60000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [agentId])
 
