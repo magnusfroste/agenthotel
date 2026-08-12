@@ -31,7 +31,7 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 - **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
 
 ### Providers & Models
-- **Multi-provider system** — add providers once, keys are injected into new agents automatically
+- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL`) alongside the canonical slots
 - **Provider testing** — list available models and test them per provider, right from the UI
 
 ### Observability & System

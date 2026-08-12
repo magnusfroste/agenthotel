@@ -1378,7 +1378,11 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const config = JSON.parse(agent.config || '{}');
+    // Re-inject provider env on redeploy: providers added after the agent was
+    // created would otherwise never reach it. Injection only fills missing
+    // keys, so manual env edits are never clobbered.
+    const config = injectProviderEnv(db, JSON.parse(agent.config || '{}'));
+    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), req.params.id);
     const plugin = runtimes[agent.runtime];
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);

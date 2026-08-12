@@ -26,6 +26,7 @@ module.exports = {
     for (const key of keys) {
       if (config[key]) env.push(`${key}=${config[key]}`);
     }
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, keys);
     return env;
   }
 };

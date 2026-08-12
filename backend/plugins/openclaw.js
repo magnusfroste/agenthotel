@@ -63,6 +63,7 @@ module.exports = {
     for (const key of keys) {
       if (config[key]) env.push(`${key}=${config[key]}`);
     }
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, keys);
     if (config.domain) {
       env.push(`OPENCLAW_ALLOWED_ORIGINS=https://${config.domain}`);
       env.push('OPENCLAW_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16');

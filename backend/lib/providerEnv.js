@@ -24,6 +24,20 @@ function injectProviderEnv(db, config) {
   const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
   for (const provider of providers) {
     const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    // Every provider also gets its own slug-based env vars (e.g. Hetzner →
+    // HETZNER_API_KEY / HERTZNER_BASE_URL), so providers that don't map to a
+    // canonical slot are still visible inside agents — previously a custom
+    // OpenAI-compatible provider silently injected nothing whenever a real
+    // OpenAI provider had already claimed the OPENAI_* slots.
+    const slugUpper = slug.toUpperCase();
+    if (slugUpper) {
+      if (!finalConfig[`${slugUpper}_API_KEY`] && provider.apiKey) {
+        finalConfig[`${slugUpper}_API_KEY`] = provider.apiKey;
+      }
+      if (!finalConfig[`${slugUpper}_BASE_URL`] && provider.baseUrl) {
+        finalConfig[`${slugUpper}_BASE_URL`] = provider.baseUrl;
+      }
+    }
     const mapping = PROVIDER_ENV_MAP[slug];
     if (mapping) {
       if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
