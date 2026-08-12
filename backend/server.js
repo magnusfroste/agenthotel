@@ -1434,7 +1434,7 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
         Cmd: [process.env.DEFAULT_SHELL || '/bin/sh']
       });
       console.log('[Terminal] Exec created, starting...');
-      stream = await exec.start({ Tty: true });
+      stream = await exec.start({ hijack: true, stdin: true, Tty: true });
       console.log('[Terminal] Exec started, listening for data...');
       
       stream.on('data', (chunk) => {
