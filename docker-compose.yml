@@ -12,6 +12,13 @@ services:
     # host-root equivalence.
     pid: host
     privileged: true
+    # Panel resource guardrails: high cpu-shares mean the panel always wins
+    # CPU contention against agents (which run at 256 shares — shares only
+    # matter when the CPU is saturated, idle capacity is still shared), and
+    # the negative oom_score_adj makes the kernel OOM-kill agents before
+    # ever touching the panel.
+    cpu_shares: 2048
+    oom_score_adj: -500
     environment:
       - PORT=8080
       - DB_PATH=/data/agentpanel.db
@@ -31,6 +38,8 @@ services:
     image: caddy:2
     container_name: agentpanel-caddy
     restart: unless-stopped
+    cpu_shares: 2048
+    oom_score_adj: -500
     command: caddy run --config /etc/caddy/caddy.json
     ports:
       - "80:80"
@@ -49,6 +58,8 @@ services:
       dockerfile: Dockerfile
     container_name: agentpanel-frontend
     restart: unless-stopped
+    cpu_shares: 2048
+    oom_score_adj: -500
     depends_on:
       - backend
     networks:

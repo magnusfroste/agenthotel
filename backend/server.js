@@ -1051,8 +1051,15 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // Optional memory cap (MB) — guards the host against a single agent
   // OOMing the whole fleet. Stripped from config so it doesn't leak into
   // the container's environment.
-  const { MEMORY_LIMIT_MB, ...envConfig } = config;
-  const memLimitMB = parseInt(MEMORY_LIMIT_MB);
+  // Resource guardrails: every agent gets a CPU/memory ceiling and lower
+  // scheduling priority than the panel, so a runaway agent can never starve
+  // the panel or freeze the host (panel containers run with high cpu-shares
+  // and a negative oom_score_adj — see docker-compose.yml). Defaults come
+  // from host-wide env vars; per-agent overrides live in the agent config
+  // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
+  const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
+  const memLimitMB = parseInt(MEMORY_LIMIT_MB) || parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
+  const cpuLimit = parseFloat(CPU_LIMIT) || parseFloat(process.env.DEFAULT_AGENT_CPU) || 1;
 
   let imageToRun = image;
   let volumes = [];
@@ -1130,7 +1137,13 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       // Cap json-file logs — a chatty agent would otherwise fill the disk
       // over time. Applies to newly created containers (i.e. on redeploy).
       LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } },
-      ...(Number.isFinite(memLimitMB) && memLimitMB > 0 ? { Memory: memLimitMB * 1024 * 1024 } : {}),
+      Memory: memLimitMB * 1024 * 1024,
+      NanoCpus: Math.round(cpuLimit * 1e9),
+      // Lose the CPU contention battle against the panel (which runs at
+      // 2048 shares), get OOM-killed before it, and never fork-bomb the host.
+      CpuShares: 256,
+      PidsLimit: 512,
+      OomScoreAdj: 500,
       Binds: volumes
     },
     Labels: {

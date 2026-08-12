@@ -67,6 +67,9 @@ function CreateAgent() {
       if (formData.memoryLimit) {
         payload.config = { ...(payload.config || {}), MEMORY_LIMIT_MB: String(parseInt(formData.memoryLimit)) }
       }
+      if (formData.cpuLimit) {
+        payload.config = { ...(payload.config || {}), CPU_LIMIT: String(parseFloat(formData.cpuLimit)) }
+      }
       const res = await authFetch('/api/agents', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       })
@@ -143,9 +146,19 @@ function CreateAgent() {
         {!isCompose && (
           <div className="form-group">
             <label>Memory limit in MB (optional)</label>
-            <input type="number" name="memoryLimit" value={formData.memoryLimit || ''} onChange={handleChange} placeholder="e.g. 1024" min="64" />
+            <input type="number" name="memoryLimit" value={formData.memoryLimit || ''} onChange={handleChange} placeholder="default: 1024" min="64" />
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-              Caps how much RAM this agent may use — protects the host and other agents if it runs away. Editable later on the agent's Environment tab (MEMORY_LIMIT_MB), applied on redeploy.
+              Caps how much RAM this agent may use — protects the host and other agents if it runs away. Editable later on the agent's Environment tab (MEMORY_LIMIT_MB), applied on redeploy. Defaults to 1024 MB.
+            </div>
+          </div>
+        )}
+
+        {!isCompose && (
+          <div className="form-group">
+            <label>CPU limit in cores (optional)</label>
+            <input type="number" name="cpuLimit" value={formData.cpuLimit || ''} onChange={handleChange} placeholder="default: 1" min="0.25" step="0.25" />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+              Caps how much CPU this agent may use, so no single agent can saturate the host. Editable later via CPU_LIMIT on the Environment tab, applied on redeploy. Defaults to 1 core. Agents always yield to the panel under contention.
             </div>
           </div>
         )}
