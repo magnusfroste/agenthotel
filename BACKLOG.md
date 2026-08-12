@@ -159,12 +159,42 @@ Varje template i `templates/` har:
 
 ---
 
+## 📈 Agent Traffic Stats (Planerad)
+
+**Status:** Idé fastställd, ej påbörjad
+
+**Mål:** Besöks-/driftsstatistik per agentdomän. All agenttrafik passerar Caddy, så vi kan mäta utan att röra agenterna. Inloggningar/sessioner syns aldrig (sker inne i respektive agent).
+
+**Vad som kan mätas (per agentdomän):**
+- Antal requests per timme/dag
+- Unika besökare per dag (distinkta IP:er, lagras hashade — inte i klartext)
+- Bandbredd in/ut per agent
+- Svarstider (median/p95 via Caddys duration-fält)
+- Statuskoder (andel 2xx/4xx/5xx — tidig varning vid 5xx-spikar)
+- Topp-sidor, referrers, user-agents (bot vs. människa)
+
+**Kända begränsningar:**
+- WebSocket-anslutningar (t.ex. openclaw-chatt) syns som en lång request, inte som aktivitet
+- "Besökare" är approximativt (NAT, mobilnät, bots)
+- Geografi kräver GeoIP-databas — överkurs på liten VPS
+
+**Föreslagen implementation (lättvikt, passar 4GB-VPS):**
+1. Slå på Caddy JSON access-logg per agent-route (`docker/caddy.json`)
+2. Backend parsar loggen periodiskt (~var 5:e minut) och aggregerar till tim/dag-buckets i SQLite (samma mönster som uptime-historiken)
+3. Råloggar roteras bort — bara aggregat sparas (minimalt diskutrymme)
+4. Frontend: sparkline + "besök 24h/7d" på agentkort, graf på AgentDetail-sidan
+
+**Prioritet:** Medium
+
+---
+
 ## 🎯 Nästa Steg (Prioriterade)
 
 1. ~~**Fixa Terminal/CLI**~~ ✅ Klar
 2. ~~**Daily Docker Cleanup**~~ ✅ Klar
 3. **Template Library UI** - Bygga admin-gränssnitt för templates
-4. **Template Marketplace** - Dela templates med community (långsiktigt)
+4. **Agent Traffic Stats** - Besöksstatistik per agent via Caddy access-logg
+5. **Template Marketplace** - Dela templates med community (långsiktigt)
 
 ---
 
@@ -172,6 +202,6 @@ Varje template i `templates/` har:
 
 **Totalt implementerade funktioner:** 25+
 **Pågående:** 2
-**Framtida:** Template system (4 delar)
+**Framtida:** Template system (4 delar), Agent Traffic Stats
 
-**Senaste uppdatering:** 2026-07-25
+**Senaste uppdatering:** 2026-08-12
