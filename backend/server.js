@@ -1078,9 +1078,21 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
         const buildContext = path.join('/templates', runtime);
         const tarStream = tar.pack(buildContext);
         const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
-        await new Promise((resolve, reject) => {
-          docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
+        const buildOutput = await new Promise((resolve, reject) => {
+          docker.modem.followProgress(stream, (err, output) => err ? reject(err) : resolve(output));
         });
+        // Build failures can slip through followProgress without an error
+        // (seen with buildkit: stream ends, no image tagged, deploy later
+        // dies with a confusing "No such image"). Verify the image exists
+        // and surface the tail of the build log if it doesn't.
+        try {
+          await docker.getImage(baseImage).inspect();
+        } catch (e) {
+          const tail = (buildOutput || [])
+            .map(o => o.stream || o.error || o.status || '')
+            .join('').trim().split('\n').slice(-15).join('\n');
+          throw new Error(`Image build did not produce ${baseImage}. Build log tail:\n${tail}`);
+        }
         imageToRun = baseImage;
       }
     }

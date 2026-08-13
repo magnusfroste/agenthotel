@@ -76,26 +76,41 @@ const essentials = {
   browser: { noSandbox: true }
 };
 
-const PROVIDER_MAP = {
-  openai:     { baseUrl: 'https://api.openai.com/v1',                               api: 'openai-completions',    keyEnv: 'OPENAI_API_KEY' },
-  anthropic:  { baseUrl: 'https://api.anthropic.com',                                api: 'anthropic-messages',    keyEnv: 'ANTHROPIC_API_KEY' },
-  openrouter: { baseUrl: 'https://openrouter.ai/api/v1',                             api: 'openai-completions',    keyEnv: 'OPENROUTER_API_KEY' },
-  gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',  api: 'openai-completions',    keyEnv: 'GEMINI_API_KEY' },
+// Canonical providers: default base URL + API mode. Custom providers
+// configured in AgentPanel (e.g. Hetzner) arrive as <SLUG>_API_KEY /
+// <SLUG>_BASE_URL / <SLUG>_MODELS env triplets and become selectable
+// providers too — anything OpenAI-compatible defaults to
+// 'openai-completions'.
+const KNOWN = {
+  openai:     { baseUrl: 'https://api.openai.com/v1',                               api: 'openai-completions' },
+  anthropic:  { baseUrl: 'https://api.anthropic.com',                                api: 'anthropic-messages' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1',                             api: 'openai-completions' },
+  gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',  api: 'openai-completions' },
 };
 
 const providers = {};
 const primary = (e.OPENCLAW_MODEL_PRIMARY || '').trim();
 
-for (const [name, conf] of Object.entries(PROVIDER_MAP)) {
-  const key = e[conf.keyEnv];
-  if (key) {
-    const providerEntry = { baseUrl: conf.baseUrl, apiKey: key, api: conf.api };
-    if (primary.startsWith(name + '/')) {
-      const modelId = primary.slice(name.length + 1);
-      providerEntry.models = [{ id: modelId, name: modelId }];
-    }
-    providers[name] = providerEntry;
+for (const [envName, apiKey] of Object.entries(e)) {
+  const m = envName.match(/^([A-Z0-9]+)_API_KEY$/);
+  if (!m || !apiKey) continue;
+  const name = m[1].toLowerCase();
+  const slugUpper = m[1];
+  // NOTE: string concatenation only — no template literals here; this
+  // script runs inside a double-quoted shell string and any dollar-brace
+  // or backtick sequence would be interpreted by the shell before node
+  // ever sees it. (Yes, even inside JS comments — it's all one shell
+  // string.)
+  const baseUrl = e[slugUpper + '_BASE_URL'] || (KNOWN[name] && KNOWN[name].baseUrl);
+  if (!baseUrl) continue; // no endpoint known — can't build a provider entry
+  const providerEntry = { baseUrl, apiKey, api: (KNOWN[name] && KNOWN[name].api) || 'openai-completions' };
+  const models = (e[slugUpper + '_MODELS'] || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (primary.startsWith(name + '/')) {
+    const modelId = primary.slice(name.length + 1);
+    if (!models.includes(modelId)) models.push(modelId);
   }
+  if (models.length) providerEntry.models = models.map(id => ({ id, name: id }));
+  providers[name] = providerEntry;
 }
 
 if (Object.keys(providers).length) essentials.models = { providers };

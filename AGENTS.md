@@ -43,6 +43,8 @@ Backend supports four agent runtimes in `backend/plugins/`:
 
 Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-app which pulls images directly).
 
+**Template images are only built once** — deploy reuses `<runtime>-agentpanel:latest` if it exists. After changing a template Dockerfile (e.g. the openclaw entrypoint that generates `openclaw.json` from `<SLUG>_API_KEY` / `<SLUG>_BASE_URL` / `<SLUG>_MODELS` env triplets), remove the image (`docker rmi <runtime>-agentpanel:latest`) and redeploy the agent to rebuild.
+
 ## Install Script
 
 `install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). **No parameters required** - just run as root.

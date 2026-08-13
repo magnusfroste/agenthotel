@@ -21,7 +21,7 @@ const PROVIDER_ENV_MAP = {
 function injectProviderEnv(db, config) {
   const finalConfig = { ...(config || {}) };
 
-  const providers = db.prepare('SELECT name, type, apiKey, baseUrl FROM providers').all();
+  const providers = db.prepare('SELECT name, type, apiKey, baseUrl, models FROM providers').all();
   for (const provider of providers) {
     const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
     // Every provider also gets its own slug-based env vars (e.g. Hetzner →
@@ -36,6 +36,12 @@ function injectProviderEnv(db, config) {
       }
       if (!finalConfig[`${slugUpper}_BASE_URL`] && provider.baseUrl) {
         finalConfig[`${slugUpper}_BASE_URL`] = provider.baseUrl;
+      }
+      if (!finalConfig[`${slugUpper}_MODELS`] && provider.models) {
+        try {
+          const list = JSON.parse(provider.models);
+          if (Array.isArray(list) && list.length) finalConfig[`${slugUpper}_MODELS`] = list.join(',');
+        } catch (_) {}
       }
     }
     const mapping = PROVIDER_ENV_MAP[slug];

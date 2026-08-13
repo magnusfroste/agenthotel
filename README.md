@@ -31,8 +31,10 @@ Running AI agents on your own server usually means hand-rolled Docker commands, 
 - **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
 
 ### Providers & Models
-- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL`) alongside the canonical slots
+- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** turns every configured provider into a selectable provider in its model picker, with its model list; Hermes and Odysseus are limited to one active provider at a time by the apps themselves (custom endpoints work via `OPENAI_BASE_URL` / `LLM_HOST` overrides)
 - **Provider testing** — list available models and test them per provider, right from the UI
+
+See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) for the full injection rules and per-runtime behavior.
 
 ### Observability & System
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
@@ -144,7 +146,7 @@ docker compose up -d
 docker compose logs -f backend
 ```
 
-See [AGENTS.md](AGENTS.md) for architecture details and build conventions, and [BACKLOG.md](BACKLOG.md) for the roadmap.
+See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations), and [BACKLOG.md](BACKLOG.md) for the roadmap.
 
 ## License
 
