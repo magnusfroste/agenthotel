@@ -26,7 +26,9 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
   const MCP_VERSION = '2024-11-05';
   // pruneDocker is the same routine the REST endpoint and the daily job use,
   // so a cleanup triggered over MCP is logged and bounded identically.
-  const { pruneDocker } = extras;
+  // removeAgentVolumes likewise mirrors DELETE /api/agents/:id — without it an
+  // MCP delete left every named volume behind as an orphan.
+  const { pruneDocker, removeAgentVolumes } = extras;
 
   const tools = {
     list_agents: {
@@ -204,6 +206,14 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
         if (agent.domain) {
           try { await removeCaddyRoute(agent.domain); } catch (e) {}
+        }
+
+        // Same teardown as the REST delete: the agent's named volumes go with
+        // it, otherwise deleting over MCP silently leaks gigabytes of state.
+        if (removeAgentVolumes) {
+          try { await removeAgentVolumes(args.agent_id); } catch (e) {
+            console.error('[MCP] Volume cleanup failed for', args.agent_id, e.message);
+          }
         }
 
         db.prepare('DELETE FROM agents WHERE id = ?').run(args.agent_id);

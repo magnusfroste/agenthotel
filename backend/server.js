@@ -773,7 +773,7 @@ const runtimes = {
 };
 
 const { createMcpServer } = require('./mcp');
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, { pruneDocker });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, { pruneDocker, removeAgentVolumes });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
