@@ -2,6 +2,23 @@ const crypto = require('crypto');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 
+// An agent's stored config holds provider API keys verbatim. The MCP surface
+// is readable by every connected agent, so keys must never travel over it —
+// an operator who needs one reads it from the panel's Credentials tab.
+const SECRET_FIELD = /key|token|secret|password/i;
+
+function redactConfig(raw) {
+  if (!raw) return raw;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (_) { return raw; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw;
+  const safe = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    safe[k] = SECRET_FIELD.test(k) && typeof v === 'string' && v ? '***redacted***' : v;
+  }
+  return JSON.stringify(safe);
+}
+
 function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
   const MCP_VERSION = '2024-11-05';
 
@@ -79,14 +96,15 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
   async function handleToolCall(name, args) {
     switch (name) {
       case 'list_agents': {
-        const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, config, created_at FROM agents').all();
+        const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, config, created_at FROM agents').all()
+          .map((a) => ({ ...a, config: redactConfig(a.config) }));
         return { content: [{ type: 'text', text: JSON.stringify(agents, null, 2) }] };
       }
 
       case 'get_agent': {
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
         if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
-        return { content: [{ type: 'text', text: JSON.stringify(agent, null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ ...agent, config: redactConfig(agent.config) }, null, 2) }] };
       }
 
       case 'create_agent': {
