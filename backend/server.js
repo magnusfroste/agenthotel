@@ -590,6 +590,46 @@ function formatBytes(bytes) {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
+// What the host can still offer a new agent. "Allocated" sums the configured
+// limits of every existing agent (defaults applied), which can legitimately
+// exceed physical RAM — limits are ceilings, not reservations — so the UI
+// gets both views: worst-case allocation and what is actually free right now.
+app.get('/api/system/capacity', requireAuth, (req, res) => {
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const kb = (key) => parseInt(meminfo.match(new RegExp(key + ':\\s+(\\d+)'))?.[1] || 0) * 1024;
+    const memTotal = kb('MemTotal');
+    const memAvailable = kb('MemAvailable');
+    const cores = (fs.readFileSync('/proc/cpuinfo', 'utf8').match(/^processor\s*:/gm) || []).length || 1;
+
+    const defaultMemMB = parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
+    const defaultCpu = parseFloat(process.env.DEFAULT_AGENT_CPU) || 1;
+
+    let allocatedMemMB = 0;
+    let allocatedCpus = 0;
+    const agents = db.prepare("SELECT id, name, runtime, config FROM agents WHERE runtime != 'compose'").all();
+    for (const a of agents) {
+      let cfg = {};
+      try { cfg = JSON.parse(a.config || '{}'); } catch (_) {}
+      allocatedMemMB += parseInt(cfg.MEMORY_LIMIT_MB) || defaultMemMB;
+      allocatedCpus += parseFloat(cfg.CPU_LIMIT) || defaultCpu;
+    }
+
+    res.json({
+      memory: {
+        totalMB: Math.round(memTotal / 1024 / 1024),
+        availableMB: Math.round(memAvailable / 1024 / 1024),
+        allocatedToAgentsMB: allocatedMemMB,
+        defaultAgentMB: defaultMemMB
+      },
+      cpu: { cores, allocatedToAgents: allocatedCpus, defaultAgentCpus: defaultCpu },
+      agentCount: agents.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Build the panel route: host-matched when a panel domain is configured,
 // otherwise the original catch-all (no matcher) so the panel stays reachable.
 function buildPanelRoute(domain) {
@@ -1402,6 +1442,52 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Live resource resize: docker update changes the running container's limits
+// in place (no restart, no session loss), and the new values are persisted to
+// the agent's config so the next redeploy keeps them.
+app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    if (agent.runtime === 'compose') return res.status(400).json({ error: 'Compose agents manage resources in their compose file' });
+
+    const memoryMB = parseInt(req.body?.memoryMB);
+    const cpus = parseFloat(req.body?.cpus);
+    if (!Number.isFinite(memoryMB) || memoryMB < 128) return res.status(400).json({ error: 'memoryMB must be at least 128' });
+    if (!Number.isFinite(cpus) || cpus < 0.25) return res.status(400).json({ error: 'cpus must be at least 0.25' });
+
+    const config = JSON.parse(agent.config || '{}');
+    config.MEMORY_LIMIT_MB = String(memoryMB);
+    config.CPU_LIMIT = String(cpus);
+    db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(config), req.params.id);
+
+    let applied = 'on next deploy';
+    try {
+      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      const info = await container.inspect();
+      if (info.State.Running) {
+        await container.update({
+          Memory: memoryMB * 1024 * 1024,
+          // Create-time containers get Docker's default swap of 2x Memory;
+          // update() must restate it or shrinking Memory below the old swap
+          // ceiling is rejected.
+          MemorySwap: memoryMB * 1024 * 1024 * 2,
+          NanoCpus: Math.round(cpus * 1e9)
+        });
+        applied = 'live';
+      }
+    } catch (e) {
+      // No container (stopped/failed agent) — config is saved, deploy applies it.
+    }
+
+    logEvent('agent.resources', agent.id, `Resource limits set to ${memoryMB} MB / ${cpus} CPU (${applied})`);
+    res.json({ updated: true, applied, memoryMB, cpus });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
@@ -1654,7 +1740,11 @@ app.get('/api/agents/:id/stats', requireAuth, async (req, res) => {
       ? Math.round((cpuDelta / systemDelta) * onlineCpus * 1000) / 10
       : 0;
 
-    const memUsed = stats.memory_stats.usage || 0;
+    // Docker's raw `usage` counts reclaimable page cache, which overstates what
+    // the agent actually holds — and is not what the OOM killer acts on.
+    // Subtracting inactive_file matches `docker stats`.
+    const memCache = stats.memory_stats.stats?.inactive_file ?? stats.memory_stats.stats?.cache ?? 0;
+    const memUsed = Math.max((stats.memory_stats.usage || 0) - memCache, 0);
     const memLimit = stats.memory_stats.limit || 0;
 
     let rx = 0, tx = 0;

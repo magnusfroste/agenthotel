@@ -21,7 +21,12 @@ function CreateAgent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const [capacity, setCapacity] = useState(null)
+
   useEffect(() => { fetchRuntimes(); fetchProviders() }, [])
+  useEffect(() => {
+    authFetch('/api/system/capacity').then(r => r.json()).then(setCapacity).catch(() => {})
+  }, [])
 
   async function fetchRuntimes() {
     try {
@@ -143,25 +148,62 @@ function CreateAgent() {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>FQDN gets automatic HTTPS via Caddy/Let's Encrypt.</div>
         </div>
 
-        {!isCompose && (
-          <div className="form-group">
-            <label>Memory limit in MB (optional)</label>
-            <input type="number" name="memoryLimit" value={formData.memoryLimit || ''} onChange={handleChange} placeholder="default: 1024" min="64" />
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-              Caps how much RAM this agent may use — protects the host and other agents if it runs away. Editable later on the agent's Environment tab (MEMORY_LIMIT_MB), applied on redeploy. Defaults to 1024 MB.
-            </div>
-          </div>
-        )}
+        {!isCompose && (() => {
+          const memMB = parseInt(formData.memoryLimit) || (capacity?.memory.defaultAgentMB ?? 1024)
+          const cpu = parseFloat(formData.cpuLimit) || (capacity?.cpu.defaultAgentCpus ?? 1)
+          const maxMemMB = capacity?.memory.totalMB || 4096
+          // Limits are ceilings rather than reservations, so oversubscription is
+          // allowed — but the operator should know before, not after the first
+          // OOM kill.
+          const oversubscribed = capacity && (capacity.memory.allocatedToAgentsMB + memMB) > capacity.memory.totalMB
+          const wontFitNow = capacity && memMB > capacity.memory.availableMB
 
-        {!isCompose && (
-          <div className="form-group">
-            <label>CPU limit in cores (optional)</label>
-            <input type="number" name="cpuLimit" value={formData.cpuLimit || ''} onChange={handleChange} placeholder="default: 1" min="0.25" step="0.25" />
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-              Caps how much CPU this agent may use, so no single agent can saturate the host. Editable later via CPU_LIMIT on the Environment tab, applied on redeploy. Defaults to 1 core. Agents always yield to the panel under contention.
-            </div>
-          </div>
-        )}
+          return (
+            <>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <label>Memory limit</label>
+                  <strong style={{ fontSize: '0.85rem' }}>{memMB >= 1024 ? (memMB / 1024).toFixed(memMB % 1024 ? 1 : 0) + ' GB' : memMB + ' MB'}</strong>
+                </div>
+                <input type="range" name="memoryLimit" min="256" max={maxMemMB} step="256"
+                  value={Math.min(memMB, maxMemMB)} onChange={handleChange} style={{ width: '100%' }} />
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                  Caps how much RAM this agent may use — protects the host and other agents if it runs away. Adjustable
+                  later from the agent's Overview tab, applied live without a restart.
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <label>CPU limit</label>
+                  <strong style={{ fontSize: '0.85rem' }}>{cpu} {cpu === 1 ? 'core' : 'cores'}</strong>
+                </div>
+                <input type="range" name="cpuLimit" min="0.25" max={capacity?.cpu.cores || 4} step="0.25"
+                  value={cpu} onChange={handleChange} style={{ width: '100%' }} />
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                  Caps how much CPU this agent may use, so no single agent can saturate the host. Agents always yield to
+                  the panel under contention.
+                </div>
+              </div>
+
+              {capacity && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+                  Host: {(capacity.memory.totalMB / 1024).toFixed(1)} GB RAM, {capacity.cpu.cores} core(s).
+                  {' '}{capacity.agentCount} agent(s) already allocated {capacity.memory.allocatedToAgentsMB} MB.
+                  {' '}{capacity.memory.availableMB} MB free right now.
+                </div>
+              )}
+
+              {(oversubscribed || wontFitNow) && (
+                <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid #f59e0b', borderRadius: '0.5rem', padding: '0.75rem 1rem', marginBottom: '1.25rem', fontSize: '0.8rem', color: '#fbbf24' }}>
+                  {wontFitNow
+                    ? `Only ${capacity.memory.availableMB} MB is free right now — this agent asks for ${memMB} MB and may be OOM-killed as soon as it does real work.`
+                    : `Agents would be allocated ${capacity.memory.allocatedToAgentsMB + memMB} MB on a ${capacity.memory.totalMB} MB host. Limits are ceilings, not reservations, so this still runs — but if they all claim their limit the kernel starts OOM-killing.`}
+                </div>
+              )}
+            </>
+          )
+        })()}
 
         {!isCompose && (
           <div className="form-group" style={{ marginTop: '1.25rem', marginBottom: '1.5rem' }}>

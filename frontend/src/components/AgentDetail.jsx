@@ -223,6 +223,7 @@ function AgentDetail() {
             </div>
           )}
           <AgentStats agentId={id} />
+          <AgentResources agentId={id} config={agent.config} runtime={agent.runtime} onSaved={fetchAgent} />
           <AgentUptime agentId={id} />
         </div>
       )}
@@ -403,6 +404,101 @@ function AgentStats({ agentId }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Resize an agent's CPU/RAM ceilings. Applied live via `docker update` when the
+// agent is running, so a resize never costs a restart or a conversation.
+function AgentResources({ agentId, config, runtime, onSaved }) {
+  const toast = useToast()
+  const [memoryMB, setMemoryMB] = useState(parseInt(config?.MEMORY_LIMIT_MB) || 1024)
+  const [cpus, setCpus] = useState(parseFloat(config?.CPU_LIMIT) || 1)
+  const [capacity, setCapacity] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    authFetch('/api/system/capacity')
+      .then(r => r.json())
+      .then(setCapacity)
+      .catch(() => {})
+  }, [])
+
+  if (runtime === 'compose') return null
+
+  const savedMem = parseInt(config?.MEMORY_LIMIT_MB) || 1024
+  const savedCpu = parseFloat(config?.CPU_LIMIT) || 1
+  const dirty = memoryMB !== savedMem || cpus !== savedCpu
+
+  // Headroom excludes this agent's own current allocation, since we are
+  // replacing it rather than adding to it.
+  const maxMemMB = capacity ? capacity.memory.totalMB : 4096
+  const othersMB = capacity ? Math.max(capacity.memory.allocatedToAgentsMB - savedMem, 0) : 0
+  const wouldOversubscribe = capacity && (othersMB + memoryMB) > capacity.memory.totalMB
+
+  async function save() {
+    setSaving(true)
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/resources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryMB, cpus })
+      })
+      const data = await res.json()
+      if (data.updated) {
+        toast.success(data.applied === 'live'
+          ? `Limits applied live — ${memoryMB} MB / ${cpus} CPU, no restart needed`
+          : `Saved — ${memoryMB} MB / ${cpus} CPU, applied on next deploy`)
+        onSaved?.()
+      } else {
+        toast.error(data.error || 'Could not update limits')
+      }
+    } catch (err) {
+      toast.error('Could not update limits: ' + err.message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="stats-section">
+      <h3 className="stats-section-title">Resource limits</h3>
+
+      <div style={{ display: 'grid', gap: '1.1rem' }}>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+            <span>Memory</span>
+            <strong>{memoryMB >= 1024 ? (memoryMB / 1024).toFixed(memoryMB % 1024 ? 1 : 0) + ' GB' : memoryMB + ' MB'}</strong>
+          </div>
+          <input type="range" min="256" max={maxMemMB} step="256" value={Math.min(memoryMB, maxMemMB)}
+            onChange={e => setMemoryMB(parseInt(e.target.value))} style={{ width: '100%' }} />
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+            <span>CPU</span>
+            <strong>{cpus} {cpus === 1 ? 'core' : 'cores'}</strong>
+          </div>
+          <input type="range" min="0.25" max={capacity?.cpu.cores || 4} step="0.25" value={cpus}
+            onChange={e => setCpus(parseFloat(e.target.value))} style={{ width: '100%' }} />
+        </div>
+      </div>
+
+      {capacity && (
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.8rem' }}>
+          Host has {(capacity.memory.totalMB / 1024).toFixed(1)} GB RAM and {capacity.cpu.cores} core(s).
+          Other agents are allocated {othersMB} MB.
+        </div>
+      )}
+
+      {wouldOversubscribe && (
+        <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: '0.5rem' }}>
+          Warning: this would allocate more memory than the host physically has. Limits are ceilings, not
+          reservations, so it still runs — but if the agents all claim their limit, the kernel starts OOM-killing.
+        </div>
+      )}
+
+      <button className="btn btn-primary" disabled={!dirty || saving} onClick={save} style={{ marginTop: '0.9rem' }}>
+        {saving ? 'Applying…' : 'Apply limits'}
+      </button>
     </div>
   )
 }
