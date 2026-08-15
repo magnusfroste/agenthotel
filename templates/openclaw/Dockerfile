@@ -123,6 +123,29 @@ if (primary) {
 }
 
 merge(config, essentials);
+
+// Continuity defaults — seeded only when the operator hasn't decided already,
+// so they survive a redeploy without clobbering hand-tuned config.
+//
+// OpenClaw's built-in reset policy is mode 'daily' at 04:00, which silently
+// archives the transcript to <session>.jsonl.reset.<iso> and starts an empty
+// one. For a panel agent that is meant to be a long-lived assistant that
+// reads as amnesia every morning, so switch to an idle policy with a window
+// long enough never to fire in practice (idleMinutes must be > 0).
+if (!config.session || !config.session.reset) {
+  config.session = Object.assign({}, config.session, {
+    reset: { mode: 'idle', idleMinutes: 525600 }
+  });
+}
+
+// active-memory injects relevant prior memory into prompt context; it ships
+// disabled, which leaves a fresh session with no recall of earlier ones.
+if (!config.plugins || !config.plugins.entries || !config.plugins.entries['active-memory']) {
+  const plugins = Object.assign({}, config.plugins);
+  plugins.entries = Object.assign({}, plugins.entries, { 'active-memory': { enabled: true, config: {} } });
+  config.plugins = plugins;
+}
+
 config.meta = Object.assign({}, config.meta, { lastTouchedAt: new Date().toISOString() });
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 console.log('openclaw.json written successfully');
