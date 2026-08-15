@@ -276,29 +276,55 @@ app.put('/api/settings', requireAuth, async (req, res) => {
   }
 });
 
+// Shared by the manual endpoint and the daily job so the two can't drift.
+//
+// Build cache is normally the biggest reclaimable chunk on a panel host —
+// building template images leaves gigabytes behind. pruneBuilder() without
+// filters removes only *unused* cache, so layers still backing recent builds
+// survive and a later rebuild stays fast.
+async function pruneDocker() {
+  const results = {};
+
+  const containersPrune = await docker.pruneContainers();
+  results.containers = containersPrune.ContainersDeleted || [];
+  results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
+
+  const imagesPrune = await docker.pruneImages();
+  results.images = imagesPrune.ImagesDeleted || [];
+  results.imagesSpaceReclaimed = imagesPrune.SpaceReclaimed || 0;
+
+  const networksPrune = await docker.pruneNetworks();
+  results.networks = networksPrune.NetworksDeleted || [];
+
+  // A builder that refuses to prune must not sink the whole cleanup — the
+  // container/image reclaim above is already done and worth reporting.
+  results.buildCacheDeleted = 0;
+  results.buildCacheSpaceReclaimed = 0;
+  try {
+    const builderPrune = await docker.pruneBuilder();
+    results.buildCacheDeleted = (builderPrune.CachesDeleted || []).length;
+    results.buildCacheSpaceReclaimed = builderPrune.SpaceReclaimed || 0;
+  } catch (err) {
+    console.error('[Cleanup] Build cache prune failed:', err.message);
+    results.buildCacheError = err.message;
+  }
+
+  // NOTE: volumes are never pruned here — pruneVolumes() would destroy the
+  // named volumes of stopped agents. Agent volumes are removed explicitly
+  // when the agent is deleted (DELETE /api/agents/:id).
+  results.volumes = [];
+  results.volumesSpaceReclaimed = 0;
+
+  results.totalSpaceReclaimed = results.containersSpaceReclaimed +
+                                results.imagesSpaceReclaimed +
+                                results.buildCacheSpaceReclaimed;
+  return results;
+}
+
 app.post('/api/docker/prune', requireAuth, async (req, res) => {
   try {
-    const results = {};
-    
-    const containersPrune = await docker.pruneContainers();
-    results.containers = containersPrune.ContainersDeleted || [];
-    results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
-    
-    const imagesPrune = await docker.pruneImages();
-    results.images = imagesPrune.ImagesDeleted || [];
-    results.imagesSpaceReclaimed = imagesPrune.SpaceReclaimed || 0;
-    
-    const networksPrune = await docker.pruneNetworks();
-    results.networks = networksPrune.NetworksDeleted || [];
-
-    // NOTE: volumes are never pruned here — pruneVolumes() would destroy the
-    // named volumes of stopped agents. Agent volumes are removed explicitly
-    // when the agent is deleted (DELETE /api/agents/:id).
-    results.volumes = [];
-    results.volumesSpaceReclaimed = 0;
-
-    const totalReclaimed = (results.containersSpaceReclaimed || 0) +
-                           (results.imagesSpaceReclaimed || 0);
+    const results = await pruneDocker();
+    const totalReclaimed = results.totalSpaceReclaimed;
 
     // Log to database
     db.prepare(`
@@ -423,28 +449,10 @@ app.get('/api/docker/cleanup-history', requireAuth, (req, res) => {
 async function runScheduledCleanup() {
   try {
     console.log('[Cleanup] Running scheduled Docker cleanup...');
-    
-    const results = {};
-    const containersPrune = await docker.pruneContainers();
-    results.containers = containersPrune.ContainersDeleted || [];
-    results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
-    
-    const imagesPrune = await docker.pruneImages();
-    results.images = imagesPrune.ImagesDeleted || [];
-    results.imagesSpaceReclaimed = imagesPrune.SpaceReclaimed || 0;
-    
-    const networksPrune = await docker.pruneNetworks();
-    results.networks = networksPrune.NetworksDeleted || [];
-    
-    // NOTE: volumes are never pruned — pruneVolumes() would destroy the named
-    // volumes of stopped agents. Agent volumes are removed explicitly when the
-    // agent is deleted (DELETE /api/agents/:id).
-    results.volumes = [];
-    results.volumesSpaceReclaimed = 0;
-    
-    const totalReclaimed = (results.containersSpaceReclaimed || 0) + 
-                           (results.imagesSpaceReclaimed || 0);
-    
+
+    const results = await pruneDocker();
+    const totalReclaimed = results.totalSpaceReclaimed;
+
     db.prepare(`
       INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -725,7 +733,7 @@ const runtimes = {
 };
 
 const { createMcpServer } = require('./mcp');
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute);
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, { pruneDocker });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1472,11 +1480,17 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
       console.log('[Terminal] Got container, creating exec...');
       const agentRow = db.prepare('SELECT runtime FROM agents WHERE id = ?').get(req.params.id);
       const terminalUser = runtimes[agentRow?.runtime]?.terminalUser;
+      // /bin/sh is dash in Debian-based agent images — no arrow-key history,
+      // no line editing. Prefer bash when the image ships one.
+      const shellCmd = process.env.DEFAULT_SHELL
+        ? [process.env.DEFAULT_SHELL]
+        : ['/bin/sh', '-c', 'command -v bash >/dev/null 2>&1 && exec bash -i || exec sh -i'];
       const exec = await container.exec({
         AttachStdin: true, AttachStdout: true, AttachStderr: true,
         Tty: true,
         ...(terminalUser ? { User: terminalUser } : {}),
-        Cmd: [process.env.DEFAULT_SHELL || '/bin/sh']
+        Env: ['TERM=xterm-256color'],
+        Cmd: shellCmd
       });
       console.log('[Terminal] Exec created, starting...');
       stream = await exec.start({ hijack: true, stdin: true, Tty: true });

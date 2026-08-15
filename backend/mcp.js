@@ -1,6 +1,9 @@
 const crypto = require('crypto');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
+const {
+  collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
+} = require('./lib/observability');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
 // is readable by every connected agent, so keys must never travel over it —
@@ -19,8 +22,11 @@ function redactConfig(raw) {
   return JSON.stringify(safe);
 }
 
-function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
+function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, extras = {}) {
   const MCP_VERSION = '2024-11-05';
+  // pruneDocker is the same routine the REST endpoint and the daily job use,
+  // so a cleanup triggered over MCP is logged and bounded identically.
+  const { pruneDocker } = extras;
 
   const tools = {
     list_agents: {
@@ -90,6 +96,46 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
     },
     list_runtimes: {
       description: 'List available agent runtimes and their configuration',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    health_check: {
+      description: 'One-call VPS health verdict: healthy/degraded/critical with ranked findings (disk, memory, CPU, per-agent state, uptime) and hints on which tool fixes each. Call this first when monitoring.',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    get_host_metrics: {
+      description: 'Host CPU (percent, cores, load), memory (bytes used/available, swap) and root-disk usage of the VPS itself',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    get_agent_stats: {
+      description: 'Live per-agent container stats: CPU percent, memory vs limit, network I/O, restart count and OOM-kill flag',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    get_uptime: {
+      description: "Uptime rollup per agent from the panel's 60s probes: uptime percent, latency, recent failures",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          hours: { type: 'integer', description: 'Window in hours (default 24, max 168)' }
+        }
+      }
+    },
+    get_docker_usage: {
+      description: 'Docker disk accounting: images, containers, volumes and build cache with reclaimable bytes',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    get_events: {
+      description: "Panel event log (agent lifecycle, alerts, cleanups). Filter by agent or type, newest first",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'Only events for this agent' },
+          type: { type: 'string', description: "Event type prefix, e.g. 'agent.' or 'docker.'" },
+          limit: { type: 'integer', description: 'Max rows (default 50, max 500)' }
+        }
+      }
+    },
+    run_cleanup: {
+      description: 'Prune stopped containers, dangling images, unused networks and unused build cache. Never touches volumes. Returns what was reclaimed',
       inputSchema: { type: 'object', properties: {} }
     }
   };
@@ -217,6 +263,58 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
             text: JSON.stringify({ hostname, uptime, dockerVersion, agents }, null, 2)
           }]
         };
+      }
+
+      case 'health_check': {
+        // Sequential on purpose: agent stats and host CPU sampling both cost
+        // a few hundred ms; running them together skews the CPU numbers.
+        const host = await collectHostMetrics();
+        const dockerUsage = await collectDockerUsage(docker);
+        const agentStats = await collectAgentStats(docker, db);
+        const uptime = collectUptime(db, 24);
+        const expectedAgents = db.prepare('SELECT COUNT(*) AS n FROM agents').get().n;
+        const report = buildHealthReport({ host, dockerUsage, agentStats, uptime, expectedAgents });
+        return { content: [{ type: 'text', text: JSON.stringify({ ...report, host, agents: agentStats }, null, 2) }] };
+      }
+
+      case 'get_host_metrics': {
+        return { content: [{ type: 'text', text: JSON.stringify(await collectHostMetrics(), null, 2) }] };
+      }
+
+      case 'get_agent_stats': {
+        return { content: [{ type: 'text', text: JSON.stringify(await collectAgentStats(docker, db), null, 2) }] };
+      }
+
+      case 'get_uptime': {
+        const hours = Math.min(Math.max(parseInt(args?.hours, 10) || 24, 1), 168);
+        return { content: [{ type: 'text', text: JSON.stringify(collectUptime(db, hours), null, 2) }] };
+      }
+
+      case 'get_docker_usage': {
+        return { content: [{ type: 'text', text: JSON.stringify(await collectDockerUsage(docker), null, 2) }] };
+      }
+
+      case 'get_events': {
+        const limit = Math.min(Math.max(parseInt(args?.limit, 10) || 50, 1), 500);
+        const conds = [];
+        const params = [];
+        if (args?.agent_id) { conds.push('agent_id = ?'); params.push(args.agent_id); }
+        if (args?.type) { conds.push("type LIKE ? || '%'"); params.push(args.type); }
+        const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+        const rows = db.prepare(`SELECT ts, type, agent_id, message FROM events ${where} ORDER BY id DESC LIMIT ?`).all(...params, limit);
+        return { content: [{ type: 'text', text: JSON.stringify(rows, null, 2) }] };
+      }
+
+      case 'run_cleanup': {
+        if (!pruneDocker) return { content: [{ type: 'text', text: JSON.stringify({ error: 'cleanup not available' }) }], isError: true };
+        const results = await pruneDocker();
+        db.prepare(`
+          INSERT INTO cleanup_logs (success, containers_deleted, images_deleted, networks_deleted, volumes_deleted, space_reclaimed)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(1, results.containers.length, results.images.length, results.networks.length, 0, results.totalSpaceReclaimed);
+        db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+          .run('docker.cleanup', null, `MCP cleanup reclaimed ${(results.totalSpaceReclaimed / 1024 / 1024).toFixed(2)} MB`);
+        return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
       }
 
       case 'list_runtimes': {

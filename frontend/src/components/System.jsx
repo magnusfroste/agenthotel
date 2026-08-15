@@ -139,7 +139,16 @@ function System() {
       const res = await authFetch('/api/docker/prune', { method: 'POST' })
       const data = await res.json()
       if (data.success) {
-        toast.success(`Cleanup completed! Reclaimed ${data.totalSpaceReclaimedMB} MB`)
+        const r = data.results || {}
+        // Build cache is usually the bulk of what a panel host reclaims, so
+        // break it out — a bare total hides where the space actually went.
+        const parts = [
+          r.containers?.length ? `${r.containers.length} container(s)` : null,
+          r.images?.length ? `${r.images.length} image(s)` : null,
+          r.buildCacheSpaceReclaimed ? `${(r.buildCacheSpaceReclaimed / 1024 / 1024).toFixed(0)} MB build cache` : null
+        ].filter(Boolean)
+        toast.success(`Cleanup completed! Reclaimed ${data.totalSpaceReclaimedMB} MB${parts.length ? ' — ' + parts.join(', ') : ''}`)
+        if (r.buildCacheError) toast.error('Build cache could not be pruned: ' + r.buildCacheError)
         fetchCleanupHistory()
       } else {
         toast.error('Cleanup failed: ' + (data.error || 'Unknown error'))
