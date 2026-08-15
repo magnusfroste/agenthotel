@@ -10,6 +10,10 @@ module.exports = {
   description: 'OpenClaw — persistent AI agent with gateway, tools and browser',
   defaultImage: 'ghcr.io/openclaw/openclaw:latest',
   defaultPort: 18789,
+  // The entrypoint starts as root but sudo's down to node for the gateway, so the
+  // state volumes are owned by node. Exec'ing a terminal as root would litter them
+  // with root-owned files that OpenClaw can no longer write.
+  terminalUser: 'node',
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
     { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3' },

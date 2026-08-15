@@ -1457,9 +1457,12 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
     try {
       const container = docker.getContainer(`agentpanel-${req.params.id}`);
       console.log('[Terminal] Got container, creating exec...');
+      const agentRow = db.prepare('SELECT runtime FROM agents WHERE id = ?').get(req.params.id);
+      const terminalUser = runtimes[agentRow?.runtime]?.terminalUser;
       const exec = await container.exec({
         AttachStdin: true, AttachStdout: true, AttachStderr: true,
         Tty: true,
+        ...(terminalUser ? { User: terminalUser } : {}),
         Cmd: [process.env.DEFAULT_SHELL || '/bin/sh']
       });
       console.log('[Terminal] Exec created, starting...');
@@ -1699,9 +1702,17 @@ app.get('/api/providers', requireAuth, (req, res) => {
   res.json(providers.map(p => ({ ...p, models: JSON.parse(p.models || '[]') })));
 });
 
+// Copy-pasting a key or URL into the panel easily drags along a leading or
+// trailing space. Those get injected verbatim into agent configs, where a
+// baseUrl like " https://host/v1" fails every request with an opaque error.
+const trimField = (v) => (typeof v === 'string' ? v.trim() : v);
+
 app.post('/api/providers', requireAuth, (req, res) => {
   try {
-    const { name, type, baseUrl, apiKey, models } = req.body;
+    const name = trimField(req.body.name);
+    const { type, models } = req.body;
+    const baseUrl = trimField(req.body.baseUrl);
+    const apiKey = trimField(req.body.apiKey);
     const id = `provider-${name}-${Date.now()}`;
     db.prepare('INSERT INTO providers (id, name, type, baseUrl, apiKey, models) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, name, type, baseUrl, apiKey, JSON.stringify(models || []));
@@ -1713,7 +1724,10 @@ app.post('/api/providers', requireAuth, (req, res) => {
 
 app.put('/api/providers/:id', requireAuth, (req, res) => {
   try {
-    const { name, type, baseUrl, apiKey, models } = req.body;
+    const name = trimField(req.body.name);
+    const { type, models } = req.body;
+    const baseUrl = trimField(req.body.baseUrl);
+    const apiKey = trimField(req.body.apiKey);
     db.prepare('UPDATE providers SET name = ?, type = ?, baseUrl = ?, apiKey = ?, models = ? WHERE id = ?')
       .run(name, type, baseUrl, apiKey, JSON.stringify(models || []), req.params.id);
     res.json({ updated: true });

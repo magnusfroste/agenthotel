@@ -16,14 +16,24 @@ const PROVIDER_ENV_MAP = {
   mistral: { key: 'MISTRAL_API_KEY' }
 };
 
+const slugify = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
 // Returns a new config object with provider env vars and default models
 // injected. Never mutates the input.
 function injectProviderEnv(db, config) {
   const finalConfig = { ...(config || {}) };
 
   const providers = db.prepare('SELECT name, type, apiKey, baseUrl, models FROM providers').all();
-  for (const provider of providers) {
-    const slug = provider.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Canonical providers must be handled before custom OpenAI-compatible ones.
+  // Both compete for the OPENAI_* slots on a first-writer-wins basis, so with
+  // plain table order a custom provider that happened to be created earlier
+  // (e.g. DGX1 before OpenAI) would hijack the real OpenAI provider's slots.
+  const ordered = [...providers].sort((a, b) => {
+    const rank = (p) => (PROVIDER_ENV_MAP[slugify(p.name)] ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+  for (const provider of ordered) {
+    const slug = slugify(provider.name);
     // Every provider also gets its own slug-based env vars (e.g. Hetzner →
     // HETZNER_API_KEY / HERTZNER_BASE_URL), so providers that don't map to a
     // canonical slot are still visible inside agents — previously a custom
