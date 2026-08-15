@@ -1333,6 +1333,16 @@ async function removeAgentVolumes(id) {
   } catch (e) {
     console.error(`Failed to list volumes for agent ${id}:`, e.message);
   }
+
+  // Uptime probes are per-agent metrics with no meaning once the agent is gone;
+  // left behind they accumulate and surface as phantom downtime in health
+  // reports. Events are deliberately kept — they are the audit trail, and the
+  // daily cleanup already ages them out.
+  try {
+    db.prepare('DELETE FROM uptime_checks WHERE agent_id = ?').run(id);
+  } catch (e) {
+    console.error(`Failed to purge uptime checks for agent ${id}:`, e.message);
+  }
 }
 
 app.delete('/api/agents/:id', requireAuth, async (req, res) => {

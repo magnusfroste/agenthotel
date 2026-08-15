@@ -139,15 +139,18 @@ async function collectAgentStats(docker, db) {
 
 // Uptime rollup from the panel's 60s probes.
 function collectUptime(db, hours = 24) {
+  // Join against agents so a deleted agent's leftover probes can't surface as a
+  // phantom "0% uptime" finding.
   const rows = db.prepare(`
-    SELECT agent_id,
+    SELECT u.agent_id,
            COUNT(*)                AS checks,
-           SUM(ok)                 AS ok,
-           AVG(latency_ms)         AS avg_latency,
-           MAX(latency_ms)         AS max_latency
-    FROM uptime_checks
-    WHERE checked_at >= datetime('now', ?)
-    GROUP BY agent_id
+           SUM(u.ok)               AS ok,
+           AVG(u.latency_ms)       AS avg_latency,
+           MAX(u.latency_ms)       AS max_latency
+    FROM uptime_checks u
+    JOIN agents a ON a.id = u.agent_id
+    WHERE u.checked_at >= datetime('now', ?)
+    GROUP BY u.agent_id
   `).all(`-${hours} hours`);
 
   const names = new Map(db.prepare('SELECT id, name FROM agents').all().map((a) => [a.id, a.name]));
