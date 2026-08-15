@@ -1044,7 +1044,7 @@ function enqueueDeploy(work) {
   return run;
 }
 
-async function deployAgent(id, name, runtime, domain, image, port, config, plugin) {
+async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
   const containerName = `agentpanel-${id}`;
   const baseImage = `${runtime}-agentpanel:latest`;
 
@@ -1067,14 +1067,23 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   if (runtime !== 'docker-app') {
     const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
     if (fs.existsSync(dockerfilePath)) {
-      // Check if image already exists
-      try {
-        await docker.getImage(baseImage).inspect();
-        console.log(`Using existing image: ${baseImage}`);
-        imageToRun = baseImage;
-      } catch (e) {
-        // Image doesn't exist, build it
-        console.log(`Building image: ${baseImage}`);
+      // The template image is normally built once and reused, so editing a
+      // template has no effect until someone asks for a rebuild. Rebuilding
+      // re-tags baseImage; containers already running keep their old image id
+      // (it just becomes dangling), so this is safe with a live fleet.
+      let needsBuild = true;
+      if (!rebuildImage) {
+        try {
+          await docker.getImage(baseImage).inspect();
+          console.log(`Using existing image: ${baseImage}`);
+          imageToRun = baseImage;
+          needsBuild = false;
+        } catch (e) {
+          // Image doesn't exist — fall through and build it.
+        }
+      }
+      if (needsBuild) {
+        console.log(`${rebuildImage ? 'Rebuilding' : 'Building'} image: ${baseImage}`);
         const buildContext = path.join('/templates', runtime);
         const tarStream = tar.pack(buildContext);
         const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
@@ -1396,6 +1405,10 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     const config = injectProviderEnv(db, JSON.parse(agent.config || '{}'));
     db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), req.params.id);
     const plugin = runtimes[agent.runtime];
+    // Opt-in: rebuild the runtime's template image first, so edits to
+    // templates/<runtime>/Dockerfile actually reach the agent. Off by default
+    // because a rebuild is slow and pulls a fresh base image.
+    const rebuildImage = req.body?.rebuild === true;
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
 
@@ -1412,7 +1425,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
           await removeCaddyRoute(agent.domain);
         }
 
-        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
+        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage });
       }
     });
 

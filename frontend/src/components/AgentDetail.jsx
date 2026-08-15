@@ -4,7 +4,7 @@ import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
-  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download
+  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer
 } from 'lucide-react'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
@@ -58,13 +58,25 @@ function AgentDetail() {
 
   function notify(type, text) { toast[type](text) }
 
-  async function handleAction(path, method = 'POST') {
+  async function handleAction(path, method = 'POST', body = null) {
     try {
-      await authFetch(`/api/agents/${id}/${path}`, { method })
+      await authFetch(`/api/agents/${id}/${path}`, {
+        method,
+        ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})
+      })
       notify('success', `${path} sent`)
       await fetchAgent()
       if (path === 'redeploy') fetchLogs()
     } catch (err) { notify('error', path + ': ' + err.message) }
+  }
+
+  // Template images are built once and reused, so a plain redeploy keeps
+  // running whatever was built first. This is the escape hatch after editing
+  // templates/<runtime>/Dockerfile.
+  async function handleRebuild() {
+    if (!confirm('Rebuild the template image for this runtime?\n\nPicks up edits to the runtime\'s Dockerfile and pulls a fresh base image.\n\nThis agent stops now and stays down for the several minutes the build takes. Other agents on the same runtime keep running their current image until they are redeployed.')) return
+    notify('success', 'Rebuilding image — this takes a few minutes')
+    await handleAction('redeploy', 'POST', { rebuild: true })
   }
 
   async function handleDelete() {
@@ -159,6 +171,11 @@ function AgentDetail() {
             <button className="btn" style={{ background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('start')}><Play size={15} color="white" /> Start</button>
           )}
           <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => handleAction('redeploy')}><RefreshCw size={15} color="white" /> Redeploy</button>
+          {/* docker-app runs a prebuilt image, and compose redeploys through the
+              compose plugin — neither has a template image to rebuild. */}
+          {agent.runtime !== 'docker-app' && agent.runtime !== 'compose' && (
+            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={handleRebuild} title="Rebuild the runtime's template image, then redeploy (picks up Dockerfile edits)"><Hammer size={15} color="currentColor" /> Rebuild image</button>
+          )}
           <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setShowExportModal(true)} title="Download service as zip (migrate to another AgentPanel)"><Download size={15} color="currentColor" /> Export</button>
           <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>

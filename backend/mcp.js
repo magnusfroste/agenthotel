@@ -67,7 +67,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
       inputSchema: {
         type: 'object',
         properties: {
-          agent_id: { type: 'string', description: 'The agent ID to redeploy' }
+          agent_id: { type: 'string', description: 'The agent ID to redeploy' },
+          rebuild: { type: 'boolean', description: 'Rebuild the runtime template image first, picking up edits to templates/<runtime>/Dockerfile (slower)' }
         },
         required: ['agent_id']
       }
@@ -182,7 +183,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute) {
             try { await container.stop(); } catch (e) {}
             try { await container.remove(); } catch (e) {}
 
-            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin);
+            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: args.rebuild === true });
           }
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
