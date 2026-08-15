@@ -81,7 +81,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
   }
 
   async function handleUpgrade() {
-    if (!confirm('This will upgrade AgentPanel to the latest version. The panel will be temporarily unavailable. Continue?')) return
+    if (!confirm('This will upgrade AgentHotel to the latest version. The panel will be temporarily unavailable. Continue?')) return
     
     setUpgrading(true)
     try {
@@ -106,7 +106,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
   return (
     <div className={`sidebar ${className}`}>
       <div className="sidebar-header">
-        <Link to="/" className="sidebar-brand"><Bot size={24} color="white" /> AgentPanel</Link>
+        <Link to="/" className="sidebar-brand"><Bot size={24} color="white" /> AgentHotel</Link>
       </div>
       <nav className="sidebar-nav" onClick={onNavigate}>
         <Link to="/" className={`sidebar-link ${isActive('/')}`}>
@@ -153,7 +153,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
           <span className="sidebar-icon"><SettingsIcon size={18} color="white" /></span>
           <span>Settings</span>
         </Link>
-        <a href="https://github.com/magnusfroste/agentpanel" target="_blank" rel="noopener noreferrer" className="sidebar-link">
+        <a href="https://github.com/magnusfroste/agenthotel" target="_blank" rel="noopener noreferrer" className="sidebar-link">
           <span className="sidebar-icon"><BookOpen size={18} color="white" /></span>
           <span>Docs</span>
         </a>

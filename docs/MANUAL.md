@@ -1,6 +1,6 @@
-# AgentPanel Manual
+# AgentHotel Manual
 
-Hands-on documentation for running AgentPanel day to day. For architecture and build conventions, see [AGENTS.md](../AGENTS.md); for the roadmap, see [BACKLOG.md](../BACKLOG.md).
+Hands-on documentation for running AgentHotel day to day. For architecture and build conventions, see [AGENTS.md](../AGENTS.md); for the roadmap, see [BACKLOG.md](../BACKLOG.md).
 
 ## Providers & Models
 
@@ -8,7 +8,7 @@ Providers are configured once in the panel (**Providers** page) and shared by al
 
 ### How providers reach agents
 
-On agent creation — and again on every redeploy — AgentPanel injects provider credentials as environment variables. Injection only fills *missing* keys, so manual edits on an agent's Environment tab are never overwritten.
+On agent creation — and again on every redeploy — AgentHotel injects provider credentials as environment variables. Injection only fills *missing* keys, so manual edits on an agent's Environment tab are never overwritten.
 
 Two tiers of env vars are injected per provider:
 
@@ -37,7 +37,7 @@ If no model is configured, agents default to `openai/gpt-5.3` (OpenClaw) / `open
 ### Notes
 
 - API keys are visible in the panel (agent → Credentials/Environment) — treat panel access as root-equivalent.
-- Template images are built once per runtime; after upgrading AgentPanel, remove `openclaw-agentpanel:latest` and redeploy to pick up entrypoint changes.
+- Template images are built once per runtime; after upgrading AgentHotel, remove `openclaw-agenthotel:latest` and redeploy to pick up entrypoint changes.
 
 ## Resource Guardrails
 

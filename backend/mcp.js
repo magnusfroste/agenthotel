@@ -32,7 +32,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
   const tools = {
     list_agents: {
-      description: 'List all AI agents managed by AgentPanel',
+      description: 'List all AI agents managed by AgentHotel',
       inputSchema: { type: 'object', properties: {} }
     },
     get_agent: {
@@ -198,7 +198,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
           try { await plugin.remove(agent.id, config); } catch (e) {}
         } else {
           try {
-            const container = docker.getContainer(`agentpanel-${args.agent_id}`);
+            const container = docker.getContainer(`agenthotel-${args.agent_id}`);
             try { await container.stop(); } catch (e) {}
             try { await container.remove(); } catch (e) {}
           } catch (e) {}
@@ -235,7 +235,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
             try { await plugin.stop(agent.id, config); } catch (e) {}
             await plugin.deploy(agent.id, agent.name, config, plugin);
           } else {
-            const container = docker.getContainer(`agentpanel-${args.agent_id}`);
+            const container = docker.getContainer(`agenthotel-${args.agent_id}`);
             try { await container.stop(); } catch (e) {}
             try { await container.remove(); } catch (e) {}
 
@@ -251,7 +251,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
       case 'get_agent_logs': {
         try {
-          const container = docker.getContainer(`agentpanel-${args.agent_id}`);
+          const container = docker.getContainer(`agenthotel-${args.agent_id}`);
           const logs = await container.logs({ stdout: true, stderr: true, tail: args.tail || 100 });
           // Containers run without a TTY — strip the 8-byte multiplex headers.
           return { content: [{ type: 'text', text: demuxDockerBuffer(logs).toString('utf8') }] };
@@ -355,7 +355,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
           result = {
             protocolVersion: MCP_VERSION,
             capabilities: { tools: {} },
-            serverInfo: { name: 'agentpanel', version: '1.0.0' }
+            serverInfo: { name: 'agenthotel', version: '1.0.0' }
           };
           break;
 

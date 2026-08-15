@@ -1,7 +1,7 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
   "mcp": {
-    "agentpanel": {
+    "agenthotel": {
       "type": "local",
       "command": [
         "node",
@@ -9,14 +9,14 @@
       ],
       "workdir": "./backend/mcp",
       "environment": {
-        "AGENTPANEL_URL": "http://localhost",
-        "AGENTPANEL_TOKEN": "324b85156e8b553d6f6bdd52d452a40998cba8e27c83cb6149db12c7f4da336c"
+        "AGENTHOTEL_URL": "http://localhost",
+        "AGENTHOTEL_TOKEN": "324b85156e8b553d6f6bdd52d452a40998cba8e27c83cb6149db12c7f4da336c"
       },
       "enabled": true
     }
   },
   "permission": {
-    "agentpanel_*": "allow"
+    "agenthotel_*": "allow"
   },
   "snapshot": false
 }

@@ -39,7 +39,7 @@ function Connect() {
       description: 'Claude with MCP support via the desktop app',
       config: {
         mcpServers: {
-          agentpanel: {
+          agenthotel: {
             command: 'npx',
             args: ['-y', '@modelcontextprotocol/server-remote', mcpEndpoint],
             env: {
@@ -57,7 +57,7 @@ function Connect() {
         mcp: {
           servers: [
             {
-              name: 'agentpanel',
+              name: 'agenthotel',
               url: mcpEndpoint,
               auth: {
                 type: 'bearer',
@@ -74,7 +74,7 @@ function Connect() {
       description: 'NousResearch Hermes with MCP tools',
       config: {
         mcp_servers: {
-          agentpanel: {
+          agenthotel: {
             command: 'http',
             url: mcpEndpoint,
             headers: {
@@ -91,7 +91,7 @@ function Connect() {
       config: {
         mcp: {
           servers: {
-            agentpanel: {
+            agenthotel: {
               type: 'remote',
               url: mcpEndpoint,
               headers: {
@@ -110,7 +110,7 @@ function Connect() {
         mcp: {
           servers: [
             {
-              name: 'agentpanel',
+              name: 'agenthotel',
               type: 'remote',
               url: mcpEndpoint,
               headers: {
@@ -129,7 +129,7 @@ function Connect() {
         mcp: {
           endpoints: [
             {
-              name: 'agentpanel',
+              name: 'agenthotel',
               url: mcpEndpoint,
               auth: {
                 type: 'bearer',
@@ -146,7 +146,7 @@ function Connect() {
       description: 'Cursor IDE with MCP tools',
       config: {
         mcpServers: {
-          agentpanel: {
+          agenthotel: {
             serverUrl: mcpEndpoint,
             headers: {
               Authorization: `Bearer ${token || '<YOUR_TOKEN>'}`

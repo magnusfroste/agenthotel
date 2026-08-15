@@ -36,7 +36,7 @@ schema:
     dashboardPassword:
       type: string
       title: Dashboard Password
-      default: agentpanel
+      default: agenthotel
     hermesModel:
       type: string
       title: Model

@@ -176,7 +176,7 @@ function AgentDetail() {
           {agent.runtime !== 'docker-app' && agent.runtime !== 'compose' && (
             <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={handleRebuild} title="Rebuild the runtime's template image, then redeploy (picks up Dockerfile edits)"><Hammer size={15} color="currentColor" /> Rebuild image</button>
           )}
-          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setShowExportModal(true)} title="Download service as zip (migrate to another AgentPanel)"><Download size={15} color="currentColor" /> Export</button>
+          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setShowExportModal(true)} title="Download service as zip (migrate to another AgentHotel)"><Download size={15} color="currentColor" /> Export</button>
           <button className="btn btn-danger" onClick={handleDelete} title="Delete"><Trash2 size={15} color="white" /></button>
         </div>
       </div>
@@ -325,7 +325,7 @@ function AgentDetail() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">Export service</h3>
             <p className="modal-text">
-              Download <strong>{agent.name}</strong> as a zip you can import on any AgentPanel instance.
+              Download <strong>{agent.name}</strong> as a zip you can import on any AgentHotel instance.
               Environment variables and API keys are included in plain text.
             </p>
             <div className="modal-actions" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
@@ -575,7 +575,7 @@ function getCredentials(agent) {
   if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
   if (agent.runtime === 'hermes') {
     creds.push({ label: 'Dashboard Username', value: 'admin' })
-    creds.push({ label: 'Dashboard Password', value: c.HERMES_DASHBOARD_PASSWORD || 'agentpanel' })
+    creds.push({ label: 'Dashboard Password', value: c.HERMES_DASHBOARD_PASSWORD || 'agenthotel' })
   }
   if (c.OPENAI_API_KEY) creds.push({ label: 'OpenAI API Key', value: c.OPENAI_API_KEY })
   if (c.OPENROUTER_API_KEY) creds.push({ label: 'OpenRouter API Key', value: c.OPENROUTER_API_KEY })

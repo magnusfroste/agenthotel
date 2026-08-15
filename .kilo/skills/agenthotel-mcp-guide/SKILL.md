@@ -1,12 +1,12 @@
 ---
-name: agentpanel-mcp-guide
-description: Komplett guide för att använda AgentPanel MCP - verktyg, arbetsflöden och exempel
+name: agenthotel-mcp-guide
+description: Komplett guide för att använda AgentHotel MCP - verktyg, arbetsflöden och exempel
 ---
 
-# AgentPanel MCP Guide
+# AgentHotel MCP Guide
 
 ## Vad är MCP?
-MCP (Model Context Protocol) är ett protokoll som låter AI-agenter interagera med externa system. AgentPanel MCP ger dig full kontroll över hela panelen via standardiserade verktygsanrop.
+MCP (Model Context Protocol) är ett protokoll som låter AI-agenter interagera med externa system. AgentHotel MCP ger dig full kontroll över hela panelen via standardiserade verktygsanrop.
 
 ## Konfiguration
 MCP-servern körs som en lokal subprocess och kommunicerar via stdio. Konfigurationen finns i `kilo.json`:
@@ -14,13 +14,13 @@ MCP-servern körs som en lokal subprocess och kommunicerar via stdio. Konfigurat
 ```json
 {
   "mcp": {
-    "agentpanel": {
+    "agenthotel": {
       "type": "local",
       "command": ["node", "server.js"],
       "workdir": "./backend/mcp",
       "environment": {
-        "AGENTPANEL_URL": "http://localhost",
-        "AGENTPANEL_TOKEN": "<auth-token>"
+        "AGENTHOTEL_URL": "http://localhost",
+        "AGENTHOTEL_TOKEN": "<auth-token>"
       },
       "enabled": true
     }
@@ -31,25 +31,25 @@ MCP-servern körs som en lokal subprocess och kommunicerar via stdio. Konfigurat
 ## Alla tillgängliga verktyg
 
 ### Agent-hantering
-- `agentpanel_list_agents` - Lista alla agenter
-- `agentpanel_create_agent` - Skapa ny agent
-- `agentpanel_get_agent_status` - Hämta agentstatus
-- `agentpanel_get_agent_logs` - Hämta agentloggar
-- `agentpanel_update_agent` - Uppdatera agentkonfiguration
-- `agentpanel_redeploy_agent` - Omplacera agent
-- `agentpanel_delete_agent` - Ta bort agent
-- `agentpanel_list_runtimes` - Lista tillgängliga runtimes
+- `agenthotel_list_agents` - Lista alla agenter
+- `agenthotel_create_agent` - Skapa ny agent
+- `agenthotel_get_agent_status` - Hämta agentstatus
+- `agenthotel_get_agent_logs` - Hämta agentloggar
+- `agenthotel_update_agent` - Uppdatera agentkonfiguration
+- `agenthotel_redeploy_agent` - Omplacera agent
+- `agenthotel_delete_agent` - Ta bort agent
+- `agenthotel_list_runtimes` - Lista tillgängliga runtimes
 
 ### Provider-hantering
-- `agentpanel_list_providers` - Lista AI-leverantörer
-- `agentpanel_create_provider` - Skapa leverantör
-- `agentpanel_update_provider` - Uppdatera leverantör
-- `agentpanel_delete_provider` - Ta bort leverantör
+- `agenthotel_list_providers` - Lista AI-leverantörer
+- `agenthotel_create_provider` - Skapa leverantör
+- `agenthotel_update_provider` - Uppdatera leverantör
+- `agenthotel_delete_provider` - Ta bort leverantör
 
 ### System
-- `agentpanel_get_settings` - Hämta inställningar
-- `agentpanel_update_settings` - Uppdatera inställningar
-- `agentpanel_docker_prune` - Rensa Docker-resurser
+- `agenthotel_get_settings` - Hämta inställningar
+- `agenthotel_update_settings` - Uppdatera inställningar
+- `agenthotel_docker_prune` - Rensa Docker-resurser
 
 ## Arbetsflöden
 
@@ -57,12 +57,12 @@ MCP-servern körs som en lokal subprocess och kommunicerar via stdio. Konfigurat
 
 **Steg 1: Kolla tillgängliga runtimes**
 ```javascript
-agentpanel_list_runtimes()
+agenthotel_list_runtimes()
 ```
 
 **Steg 2: Skapa agenten**
 ```javascript
-agentpanel_create_agent({
+agenthotel_create_agent({
   name: "claw",
   runtime: "openclaw",
   domain: "claw.froste.eu",
@@ -76,12 +76,12 @@ agentpanel_create_agent({
 
 **Steg 3: Verifiera status**
 ```javascript
-agentpanel_get_agent_status({ id: "openclaw-claw-1234567890" })
+agenthotel_get_agent_status({ id: "openclaw-claw-1234567890" })
 ```
 
 **Steg 4: Kolla loggar om något går fel**
 ```javascript
-agentpanel_get_agent_logs({ 
+agenthotel_get_agent_logs({ 
   id: "openclaw-claw-1234567890", 
   tail: 50 
 })
@@ -90,7 +90,7 @@ agentpanel_get_agent_logs({
 ### 2. Skapa en Hermes-agent
 
 ```javascript
-agentpanel_create_agent({
+agenthotel_create_agent({
   name: "hermes",
   runtime: "hermes",
   domain: "hermes.froste.eu",
@@ -104,7 +104,7 @@ agentpanel_create_agent({
 ### 3. Uppdatera API-nyckel för en agent
 
 ```javascript
-agentpanel_update_agent({
+agenthotel_update_agent({
   id: "openclaw-claw-1234567890",
   config: {
     OPENAI_API_KEY: "ny-api-nyckel"
@@ -116,13 +116,13 @@ agentpanel_update_agent({
 ### 4. Omplacera en agent som fastnat
 
 ```javascript
-agentpanel_redeploy_agent({ id: "openclaw-claw-1234567890" })
+agenthotel_redeploy_agent({ id: "openclaw-claw-1234567890" })
 ```
 
 ### 5. Ta bort en agent
 
 ```javascript
-agentpanel_delete_agent({ id: "openclaw-claw-1234567890" })
+agenthotel_delete_agent({ id: "openclaw-claw-1234567890" })
 ```
 Detta stoppar containern, tar bort den, och raderar Caddy-routen.
 
@@ -130,7 +130,7 @@ Detta stoppar containern, tar bort den, och raderar Caddy-routen.
 
 **Skapa provider:**
 ```javascript
-agentpanel_create_provider({
+agenthotel_create_provider({
   name: "OpenAI",
   type: "openai",
   baseUrl: "https://api.openai.com/v1",
@@ -141,7 +141,7 @@ agentpanel_create_provider({
 
 **Uppdatera provider:**
 ```javascript
-agentpanel_update_provider({
+agenthotel_update_provider({
   id: "provider-123",
   apiKey: "ny-nyckel"
 })
@@ -151,12 +151,12 @@ agentpanel_update_provider({
 
 **Kolla inställningar:**
 ```javascript
-agentpanel_get_settings()
+agenthotel_get_settings()
 ```
 
 **Ändra panel-domän:**
 ```javascript
-agentpanel_update_settings({
+agenthotel_update_settings({
   panel_domain: "panel.froste.eu"
 })
 ```
@@ -164,7 +164,7 @@ agentpanel_update_settings({
 
 **Rensa Docker:**
 ```javascript
-agentpanel_docker_prune()
+agenthotel_docker_prune()
 ```
 Returnerar hur mycket utrymme som frigjordes.
 
@@ -222,17 +222,17 @@ Returnerar hur mycket utrymme som frigjordes.
 ## Felsökning via MCP
 
 ### Agent startar inte
-1. Kolla status: `agentpanel_get_agent_status({ id: "..." })`
-2. Kolla loggar: `agentpanel_get_agent_logs({ id: "...", tail: 100 })`
-3. Försök omplacera: `agentpanel_redeploy_agent({ id: "..." })`
+1. Kolla status: `agenthotel_get_agent_status({ id: "..." })`
+2. Kolla loggar: `agenthotel_get_agent_logs({ id: "...", tail: 100 })`
+3. Försök omplacera: `agenthotel_redeploy_agent({ id: "..." })`
 
 ### Domän fungerar inte
-1. Verifiera att agenten har domän satt: `agentpanel_list_agents()`
+1. Verifiera att agenten har domän satt: `agenthotel_list_agents()`
 2. Kolla att DNS-pekar till serverns IP
-3. Kolla Caddy-loggar: `docker logs agentpanel-caddy`
+3. Kolla Caddy-loggar: `docker logs agenthotel-caddy`
 
 ### API-nyckel fungerar inte
-1. Uppdatera nyckeln: `agentpanel_update_agent({ id: "...", config: { OPENAI_API_KEY: "ny" } })`
+1. Uppdatera nyckeln: `agenthotel_update_agent({ id: "...", config: { OPENAI_API_KEY: "ny" } })`
 2. Verifiera att nyckeln är korrekt
 3. Kolla agentloggar för felmeddelanden
 
@@ -249,7 +249,7 @@ Returnerar hur mycket utrymme som frigjordes.
 
 ```javascript
 // 1. Skapa OpenClaw-agent
-const result = await agentpanel_create_agent({
+const result = await agenthotel_create_agent({
   name: "assistant",
   runtime: "openclaw",
   domain: "assistant.froste.eu",
@@ -262,16 +262,16 @@ const result = await agentpanel_create_agent({
 const agentId = result.id;
 
 // 2. Vänta några sekunder, kolla sedan status
-await agentpanel_get_agent_status({ id: agentId });
+await agenthotel_get_agent_status({ id: agentId });
 
 // 3. Om status är "running", testa att nå domänen
 // (manuellt i browser eller med curl)
 
 // 4. Om problem, kolla loggar
-await agentpanel_get_agent_logs({ id: agentId, tail: 50 });
+await agenthotel_get_agent_logs({ id: agentId, tail: 50 });
 
 // 5. Om behöver omplacera
-await agentpanel_redeploy_agent({ id: agentId });
+await agenthotel_redeploy_agent({ id: agentId });
 
 // 6. När agenten fungerar, spara ID för framtida användning
 ```

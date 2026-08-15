@@ -5,7 +5,7 @@ const path = require('path');
 // COMPOSE_PROJECT is interpolated into shell commands — restrict it to a safe
 // character set to prevent shell injection.
 function resolveProjectName(id, config) {
-  const name = config?.COMPOSE_PROJECT || `agentpanel-${id}`;
+  const name = config?.COMPOSE_PROJECT || `agenthotel-${id}`;
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid COMPOSE_PROJECT "${name}": only letters, digits, underscores and hyphens are allowed`);
   }

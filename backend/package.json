@@ -1,7 +1,7 @@
 {
-  "name": "agentpanel-backend",
+  "name": "agenthotel-backend",
   "version": "1.0.0",
-  "description": "AgentPanel - Easypanel for AI Agents",
+  "description": "AgentHotel - Easypanel for AI Agents",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -3,7 +3,7 @@
   "name": "Docker App",
   "description": "Generic Docker image deployment",
   "version": "1.0.0",
-  "author": "AgentPanel",
+  "author": "AgentHotel",
   "defaultImage": "",
   "defaultPort": 80,
   "configFields": [

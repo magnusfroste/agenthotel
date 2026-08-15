@@ -3,7 +3,7 @@
   "name": "Hermes Agent",
   "description": "NousResearch Hermes Agent — multi-tool AI agent with MCP support",
   "version": "1.0.0",
-  "author": "AgentPanel",
+  "author": "AgentHotel",
   "defaultImage": "nousresearch/hermes-agent:latest",
   "defaultPort": 9119,
   "configFields": [
@@ -18,7 +18,7 @@
       "key": "HERMES_DASHBOARD_PASSWORD",
       "label": "Dashboard Password",
       "type": "password",
-      "default": "agentpanel",
+      "default": "agenthotel",
       "description": "Lösenord för dashboard (användarnamn: admin)"
     }
   ],

@@ -1,19 +1,19 @@
 ---
-name: agentpanel-settings
-description: Hantera AgentPanel-inställningar och systemunderhåll
+name: agenthotel-settings
+description: Hantera AgentHotel-inställningar och systemunderhåll
 ---
 
-# AgentPanel Settings & Maintenance
+# AgentHotel Settings & Maintenance
 
 ## Översikt
-Denna skill ger dig verktyg för att administrera AgentPanel-inställningar och utföra systemunderhåll via MCP.
+Denna skill ger dig verktyg för att administrera AgentHotel-inställningar och utföra systemunderhåll via MCP.
 
 ## Tillgängliga MCP-verktyg
 
 ### get_settings
 Hämta aktuella panel-inställningar.
 ```
-Användning: agentpanel_get_settings
+Användning: agenthotel_get_settings
 Returnerar: Objekt med inställningar (exkluderar känslig data som lösenordshash och auth_token)
 
 Exempel return:
@@ -32,7 +32,7 @@ Parametrar:
 OBS: När panel_domain ändras, uppdateras Caddy-routningen automatiskt och Let's Encrypt-certifikat begärs.
 
 Exempel:
-agentpanel_update_settings({
+agenthotel_update_settings({
   panel_domain: "panel.froste.eu"
 })
 ```
@@ -40,7 +40,7 @@ agentpanel_update_settings({
 ### docker_prune
 Rensa oanvända Docker-resurser.
 ```
-Användning: agentpanel_docker_prune
+Användning: agenthotel_docker_prune
 Returnerar: Objekt med resultat:
 {
   "success": true,
@@ -85,12 +85,12 @@ Används för att frigöra diskutrymme genom att ta bort:
 
 1. **Visa aktuella inställningar:**
    ```
-   agentpanel_get_settings()
+   agenthotel_get_settings()
    ```
 
 2. **Ändra panel-domän:**
    ```
-   agentpanel_update_settings({
+   agenthotel_update_settings({
      panel_domain: "newpanel.froste.eu"
    })
    ```
@@ -98,7 +98,7 @@ Används för att frigöra diskutrymme genom att ta bort:
 
 3. **Rensa Docker:**
    ```
-   agentpanel_docker_prune()
+   agenthotel_docker_prune()
    ```
    Används regelbundet för att hålla systemet rent.
 
@@ -107,18 +107,18 @@ Används för att frigöra diskutrymme genom att ta bort:
 - **Backend:** Node.js/Express på port 8080 (internt)
 - **Frontend:** React/Vite, serveras via nginx
 - **Caddy:** Reverse proxy, hanterar HTTPS och routing
-- **Databas:** SQLite (`/data/agentpanel.db`)
+- **Databas:** SQLite (`/data/agenthotel.db`)
 - **Docker:** Hanterar agent-containers via dockerode
 
 ## Felsökning
 
 ### Panel inte tillgänglig
 1. Kolla att Caddy kör: `docker ps | grep caddy`
-2. Kolla Caddy-loggar: `docker logs agentpanel-caddy`
+2. Kolla Caddy-loggar: `docker logs agenthotel-caddy`
 3. Verifiera DNS-pekar till serverns IP
 
 ### Backend problem
-1. Kolla backend-loggar: `docker logs agentpanel-backend`
+1. Kolla backend-loggar: `docker logs agenthotel-backend`
 2. Verifiera att `/var/run/docker.sock` är monterad
 3. Kolla att databasen är åtkomlig
 

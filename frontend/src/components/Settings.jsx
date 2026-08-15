@@ -100,7 +100,7 @@ function Settings() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `agentpanel-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.download = `agenthotel-export-${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
       showMessage('success', 'Export downloaded — store it safely, it contains API keys')
@@ -210,7 +210,7 @@ function Settings() {
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', fontWeight: '700' }}>Settings</h1>
         <p style={{ margin: 0, color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
-          Configure your AgentPanel instance
+          Configure your AgentHotel instance
         </p>
       </div>
 
@@ -249,7 +249,7 @@ function Settings() {
               placeholder="panel.example.com"
               style={inputStyle}
             />
-            <div style={helpTextStyle}>The domain where AgentPanel is accessible</div>
+            <div style={helpTextStyle}>The domain where AgentHotel is accessible</div>
           </div>
 
           <div style={formGroupStyle}>
@@ -327,7 +327,7 @@ function Settings() {
             <input
               type="text"
               name="default_network"
-              value={settings.default_network || 'agentpanel_agentpanel'}
+              value={settings.default_network || 'agenthotel_agenthotel'}
               onChange={handleChange}
               style={inputStyle}
             />
@@ -557,7 +557,7 @@ function Settings() {
           Backup & Migration
         </h2>
         <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
-          Move this instance to another VPS: export here, import on the new AgentPanel instance.
+          Move this instance to another VPS: export here, import on the new AgentHotel instance.
           Agents, providers (including API keys) and panel settings are included — admin credentials are never exported.
         </p>
 

@@ -1,4 +1,4 @@
-# AgentPanel - Agent Instructions
+# AgentHotel - Agent Instructions
 
 ## Architecture
 
@@ -43,7 +43,7 @@ Backend supports four agent runtimes in `backend/plugins/`:
 
 Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-app which pulls images directly).
 
-**Template images are only built once** — deploy reuses `<runtime>-agentpanel:latest` if it exists. After changing a template Dockerfile (e.g. the openclaw entrypoint that generates `openclaw.json` from `<SLUG>_API_KEY` / `<SLUG>_BASE_URL` / `<SLUG>_MODELS` env triplets), remove the image (`docker rmi <runtime>-agentpanel:latest`) and redeploy the agent to rebuild.
+**Template images are only built once** — deploy reuses `<runtime>-agenthotel:latest` if it exists. After changing a template Dockerfile (e.g. the openclaw entrypoint that generates `openclaw.json` from `<SLUG>_API_KEY` / `<SLUG>_BASE_URL` / `<SLUG>_MODELS` env triplets), remove the image (`docker rmi <runtime>-agenthotel:latest`) and redeploy the agent to rebuild.
 
 ## Install Script
 

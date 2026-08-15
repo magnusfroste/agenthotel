@@ -1,5 +1,5 @@
 const Database = require('better-sqlite3');
-const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
 
 function getProvider(name) {
   return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);

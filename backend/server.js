@@ -26,7 +26,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
-const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
 // WAL: readers (UI polling, MCP) don't block behind writers (uptime checks,
 // event logging) — matters once many agents share the database.
 db.pragma('journal_mode = WAL');
@@ -217,7 +217,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   // Default values for new settings
   if (!settings.caddy_email) settings.caddy_email = '';
   if (!settings.default_timeout) settings.default_timeout = '30';
-  if (!settings.default_network) settings.default_network = 'agentpanel_agentpanel';
+  if (!settings.default_network) settings.default_network = 'agenthotel_agenthotel';
   if (!settings.rate_limit_enabled) settings.rate_limit_enabled = 'false';
   if (!settings.rate_limit_requests) settings.rate_limit_requests = '100';
   if (!settings.require_https) settings.require_https = 'true';
@@ -360,7 +360,7 @@ app.post('/api/docker/prune', requireAuth, async (req, res) => {
   }
 });
 
-// Orphaned AgentPanel volumes: named volumes created for agents that no
+// Orphaned AgentHotel volumes: named volumes created for agents that no
 // longer exist in the DB (e.g. old test agents) and that no container
 // mounts. Volumes belonging to existing agents — running or stopped — are
 // never flagged, and neither are the panel's own volumes.
@@ -375,10 +375,10 @@ async function listOrphanedVolumes() {
   }
   const agentIds = db.prepare('SELECT id FROM agents').all().map(r => r.id);
   const belongsToAgent = (name) =>
-    agentIds.some(id => name.startsWith(`agentpanel-${id}-`) || name.startsWith(`agentpanel-${id}_`));
+    agentIds.some(id => name.startsWith(`agenthotel-${id}-`) || name.startsWith(`agenthotel-${id}_`));
 
   return (Volumes || [])
-    .filter(v => v.Name.startsWith('agentpanel-') && !inUse.has(v.Name) && !belongsToAgent(v.Name))
+    .filter(v => v.Name.startsWith('agenthotel-') && !inUse.has(v.Name) && !belongsToAgent(v.Name))
     .map(v => ({ name: v.Name, createdAt: v.CreatedAt || null, driver: v.Driver }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -814,11 +814,11 @@ async function getSelfInfo() {
   return selfInfoCache;
 }
 
-// Named volumes belonging to an agent: agentpanel-<id>-<path> for regular
-// runtimes, <composeProject>_<volume> (default project agentpanel-<id>) for
+// Named volumes belonging to an agent: agenthotel-<id>-<path> for regular
+// runtimes, <composeProject>_<volume> (default project agenthotel-<id>) for
 // compose agents.
 async function listAgentVolumes(agent) {
-  const prefixes = [`agentpanel-${agent.id}-`, `agentpanel-${agent.id}_`];
+  const prefixes = [`agenthotel-${agent.id}-`, `agenthotel-${agent.id}_`];
   if (agent.runtime === 'compose') {
     try {
       const cfg = JSON.parse(agent.config || '{}');
@@ -865,7 +865,7 @@ app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
       // Consistency: copying a live volume can yield corrupt data (Easypanel
       // has the same requirement).
       const containers = await docker.listContainers({ all: false });
-      const containerName = `agentpanel-${agent.id}`;
+      const containerName = `agenthotel-${agent.id}`;
       const running = containers.some(c => (c.Names || []).some(n => n.replace(/^\//, '') === containerName));
       if (running) {
         return res.status(400).json({ error: 'Stop the agent before exporting its data' });
@@ -874,7 +874,7 @@ app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
     }
 
     const manifest = {
-      app: 'agentpanel-agent',
+      app: 'agenthotel-agent',
       version: 1,
       exportedAt: new Date().toISOString(),
       includesVolumes: volumeNames.length > 0,
@@ -898,11 +898,11 @@ app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
 
     archive.append(JSON.stringify(manifest, null, 2), { name: 'agent.json' });
     archive.append(
-`AgentPanel service export: ${agent.name}
+`AgentHotel service export: ${agent.name}
 Exported: ${manifest.exportedAt}
 Volume data included: ${volumeNames.length > 0 ? `yes (${volumeNames.length} volume(s))` : 'no'}
 
-Import this zip on any AgentPanel instance (Dashboard > Import Agent, or
+Import this zip on any AgentHotel instance (Dashboard > Import Agent, or
 POST /api/agents/import). The agent is created in stopped state — redeploy
 it to build/pull the image and start the container.
 
@@ -997,11 +997,11 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
       if (!entry) throw new Error('agent.json not found in zip');
       manifest = JSON.parse(entry.getData().toString('utf8'));
     } catch (err) {
-      return res.status(400).json({ error: 'Not a valid AgentPanel service zip: ' + err.message });
+      return res.status(400).json({ error: 'Not a valid AgentHotel service zip: ' + err.message });
     }
 
-    if (manifest.app !== 'agentpanel-agent' || !manifest.agent) {
-      return res.status(400).json({ error: 'Not a valid AgentPanel service zip' });
+    if (manifest.app !== 'agenthotel-agent' || !manifest.agent) {
+      return res.status(400).json({ error: 'Not a valid AgentHotel service zip' });
     }
 
     const a = manifest.agent;
@@ -1045,7 +1045,7 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
         fs.copyFileSync(tmpZip, stagedZip);
 
         const customProject = a.runtime === 'compose' && a.config && a.config.COMPOSE_PROJECT;
-        const oldPrefixes = [`agentpanel-${a.id}-`, `agentpanel-${a.id}_`];
+        const oldPrefixes = [`agenthotel-${a.id}-`, `agenthotel-${a.id}_`];
         if (customProject) oldPrefixes.push(`${a.config.COMPOSE_PROJECT}_`);
         for (const entryName of volumeEntries) {
           const oldVol = path.basename(entryName, '.tar');
@@ -1057,7 +1057,7 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
           // new agent id.
           const newVol = (prefix === `${a.config?.COMPOSE_PROJECT}_` && customProject)
             ? `${a.config.COMPOSE_PROJECT}_${suffix}`
-            : `agentpanel-${id}${prefix.endsWith('_') ? '_' : '-'}${suffix}`;
+            : `agenthotel-${id}${prefix.endsWith('_') ? '_' : '-'}${suffix}`;
           await docker.createVolume({ Name: newVol });
           const [result] = await docker.run(image,
             ['node', '/app/lib/restore-volume.js', stagedZip.replace(/^\/data/, '/staging'), entryName, '/vol'],
@@ -1093,8 +1093,8 @@ function enqueueDeploy(work) {
 }
 
 async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
-  const containerName = `agentpanel-${id}`;
-  const baseImage = `${runtime}-agentpanel:latest`;
+  const containerName = `agenthotel-${id}`;
+  const baseImage = `${runtime}-agenthotel:latest`;
 
   // Optional memory cap (MB) — guards the host against a single agent
   // OOMing the whole fleet. Stripped from config so it doesn't leak into
@@ -1164,7 +1164,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
           volumePaths.forEach(volumePath => {
             const safeName = volumePath.replace(/\//g, '-').replace(/^-/, '').replace(/[^a-zA-Z0-9_.-]/g, '');
             if (safeName) {
-              volumes.push(`agentpanel-${id}-${safeName}:${volumePath}`);
+              volumes.push(`agenthotel-${id}-${safeName}:${volumePath}`);
             }
           });
         });
@@ -1182,7 +1182,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
         } else {
           const [hostPath, containerPath] = vol.split(':');
           if (hostPath && containerPath) {
-            volumes.push(`agentpanel-${id}-${hostPath}:${containerPath}`);
+            volumes.push(`agenthotel-${id}-${hostPath}:${containerPath}`);
           }
         }
       }
@@ -1190,7 +1190,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   }
   
   if (volumes.length === 0) {
-    volumes = [`agentpanel-${id}-data:/data`];
+    volumes = [`agenthotel-${id}-data:/data`];
   }
   
   const envVars = plugin.buildEnv(envConfig);
@@ -1216,10 +1216,10 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       Binds: volumes
     },
     Labels: {
-      'agentpanel.agent': 'true',
-      'agentpanel.id': id,
-      'agentpanel.runtime': runtime,
-      'agentpanel.name': name
+      'agenthotel.agent': 'true',
+      'agenthotel.id': id,
+      'agenthotel.runtime': runtime,
+      'agenthotel.name': name
     }
   };
 
@@ -1228,11 +1228,11 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   }
 
   if (domain) {
-    containerConfig.Labels['agentpanel.domain'] = domain;
+    containerConfig.Labels['agenthotel.domain'] = domain;
   }
 
   const networkRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_network');
-  const networkName = networkRow?.value || 'agentpanel_agentpanel';
+  const networkName = networkRow?.value || 'agenthotel_agenthotel';
 
   const container = await docker.createContainer(containerConfig);
   try {
@@ -1315,11 +1315,11 @@ async function addCaddyRoute(domain, containerName, port) {
   }
 }
 
-// Remove the named volumes created for an agent (agentpanel-<id>-*). Called on
+// Remove the named volumes created for an agent (agenthotel-<id>-*). Called on
 // agent deletion only — global volume pruning would destroy stopped agents' data.
 async function removeAgentVolumes(id) {
   try {
-    const prefix = `agentpanel-${id}-`;
+    const prefix = `agenthotel-${id}-`;
     const { Volumes } = await docker.listVolumes();
     for (const vol of (Volumes || [])) {
       if (vol.Name && vol.Name.startsWith(prefix)) {
@@ -1356,7 +1356,7 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
       const config = JSON.parse(agent.config || '{}');
       await plugin.remove(agent.id, config);
     } else {
-      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      const container = docker.getContainer(`agenthotel-${req.params.id}`);
       try {
         await container.stop();
         await container.remove();
@@ -1382,7 +1382,7 @@ app.post('/api/agents/:id/stop', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const container = docker.getContainer(`agenthotel-${req.params.id}`);
     await container.stop();
 
     db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
@@ -1398,7 +1398,7 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const container = docker.getContainer(`agenthotel-${req.params.id}`);
     await container.start();
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
@@ -1435,7 +1435,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
       await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
     } else {
-      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      const container = docker.getContainer(`agenthotel-${req.params.id}`);
       try { await container.stop(); await container.remove(); } catch (e) {}
 
       if (agent.domain) {
@@ -1474,7 +1474,7 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
 
     let applied = 'on next deploy';
     try {
-      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      const container = docker.getContainer(`agenthotel-${req.params.id}`);
       const info = await container.inspect();
       if (info.State.Running) {
         await container.update({
@@ -1522,7 +1522,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
         await plugin.stop(agent.id, config);
         await plugin.deploy(agent.id, agent.name, config, plugin);
       } else {
-        const container = docker.getContainer(`agentpanel-${req.params.id}`);
+        const container = docker.getContainer(`agenthotel-${req.params.id}`);
         try { await container.stop(); await container.remove(); } catch (e) {}
 
         if (agent.domain) {
@@ -1543,7 +1543,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
 
 app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const container = docker.getContainer(`agenthotel-${req.params.id}`);
     const logs = await container.logs({
       stdout: true, stderr: true,
       tail: parseInt(req.query.tail) || 100,
@@ -1572,7 +1572,7 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
   (async () => {
     let stream = null;
     try {
-      const container = docker.getContainer(`agentpanel-${req.params.id}`);
+      const container = docker.getContainer(`agenthotel-${req.params.id}`);
       console.log('[Terminal] Got container, creating exec...');
       const agentRow = db.prepare('SELECT runtime FROM agents WHERE id = ?').get(req.params.id);
       const terminalUser = runtimes[agentRow?.runtime]?.terminalUser;
@@ -1719,7 +1719,7 @@ app.get('/api/runtimes', requireAuth, (req, res) => {
 
 app.get('/api/agents/:id/status', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const container = docker.getContainer(`agenthotel-${req.params.id}`);
     const info = await container.inspect();
     res.json({
       status: info.State.Running ? 'running' : 'stopped',
@@ -1735,7 +1735,7 @@ app.get('/api/agents/:id/status', requireAuth, async (req, res) => {
 // container is missing or stopped so the UI can show a friendly empty state.
 app.get('/api/agents/:id/stats', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agentpanel-${req.params.id}`);
+    const container = docker.getContainer(`agenthotel-${req.params.id}`);
     const info = await container.inspect().catch(() => null);
     if (!info || !info.State.Running) return res.json({ running: false });
 
@@ -1978,7 +1978,7 @@ app.get('/api/system/status', requireAuth, (req, res) => {
       os,
       uptime,
       dockerVersion,
-      agentpanel: {
+      agenthotel: {
         branch: gitBranch,
         commit: gitCommit
       }
@@ -1990,7 +1990,7 @@ app.get('/api/system/status', requireAuth, (req, res) => {
 
 app.post('/api/system/restart-panel', requireAuth, (req, res) => {
   try {
-    res.json({ message: 'Restarting AgentPanel...' });
+    res.json({ message: 'Restarting AgentHotel...' });
     // The backend container's id is its hostname; restart it via the mounted
     // docker socket (there is no docker-compose.yml inside /app).
     setTimeout(() => {
@@ -2009,7 +2009,7 @@ app.post('/api/system/restart-docker', requireAuth, (req, res) => {
 
 app.post('/api/system/update', requireAuth, async (req, res) => {
   // No .git or docker-compose.yml exists inside the container.
-  res.status(501).json({ error: 'Updating AgentPanel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
+  res.status(501).json({ error: 'Updating AgentHotel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
 });
 
 app.post('/api/system/reboot', requireAuth, (req, res) => {
@@ -2021,7 +2021,7 @@ app.post('/api/system/notify-test', requireAuth, async (req, res) => {
   if (!anyChannelConfigured(db)) {
     return res.status(400).json({ error: 'No notification channel configured — set a webhook URL or Telegram credentials first' });
   }
-  await sendNotification(db, 'AgentPanel test notification — if you see this, alerts are working.');
+  await sendNotification(db, 'AgentHotel test notification — if you see this, alerts are working.');
   res.json({ success: true });
 });
 
@@ -2040,9 +2040,9 @@ app.get('/api/system/export', requireAuth, (req, res) => {
       if (row) settings[key] = row.value;
     }
     const stamp = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Disposition', `attachment; filename="agentpanel-export-${stamp}.json"`);
+    res.setHeader('Content-Disposition', `attachment; filename="agenthotel-export-${stamp}.json"`);
     res.json({
-      app: 'agentpanel',
+      app: 'agenthotel',
       version: 1,
       exportedAt: new Date().toISOString(),
       agents,
@@ -2056,8 +2056,8 @@ app.get('/api/system/export', requireAuth, (req, res) => {
 
 app.post('/api/system/import', requireAuth, (req, res) => {
   const data = req.body;
-  if (!data || data.app !== 'agentpanel' || typeof data.version !== 'number') {
-    return res.status(400).json({ error: 'Not a valid AgentPanel export file' });
+  if (!data || data.app !== 'agenthotel' || typeof data.version !== 'number') {
+    return res.status(400).json({ error: 'Not a valid AgentHotel export file' });
   }
   if (data.version > 1) {
     return res.status(400).json({ error: `Export version ${data.version} is newer than this panel supports` });
@@ -2242,7 +2242,7 @@ app.get('/api/certificates', requireAuth, async (req, res) => {
     // sibling .json carrying SANs + ACME renewal metadata. The Caddy admin API's
     // /pki/certificates/local only exposes the internal CA, not LE certs, so we
     // read the real leaf certs from disk via docker exec and parse them here.
-    const output = await execCapture('agentpanel-caddy', [
+    const output = await execCapture('agenthotel-caddy', [
       'sh', '-c',
       "for f in $(find /data/caddy/certificates -name '*.crt' 2>/dev/null); do echo \"===FILE:$f\"; cat \"$f\"; echo '===END'; done"
     ]);
@@ -2333,10 +2333,10 @@ app.get('/api/domains', requireAuth, async (req, res) => {
       domains.unshift({
         id: 'panel-route',
         domain: panelHost,
-        container: 'agentpanel-frontend',
+        container: 'agenthotel-frontend',
         port: '80',
         url: `https://${panelHost}`,
-        agentName: 'AgentPanel',
+        agentName: 'AgentHotel',
         runtime: 'panel',
         status: 'running',
         orphaned: false
@@ -2440,7 +2440,7 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
     const currentCommit = process.env.GIT_COMMIT || 'unknown';
     
     const fetch = require('node-fetch');
-    const githubRes = await fetch('https://api.github.com/repos/magnusfroste/agentpanel/commits/main');
+    const githubRes = await fetch('https://api.github.com/repos/magnusfroste/agenthotel/commits/main');
     const githubData = await githubRes.json();
     
     // GitHub returns an error object (e.g. rate limit) without a sha — don't crash.
@@ -2468,7 +2468,7 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
 
 app.post('/api/system/upgrade', requireAuth, async (req, res) => {
   // No .git or docker-compose.yml exists inside the container.
-  res.status(501).json({ error: 'Upgrading AgentPanel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
+  res.status(501).json({ error: 'Upgrading AgentHotel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
 });
 
 app.get('/api/system/ip', requireAuth, async (req, res) => {
@@ -2517,7 +2517,7 @@ async function checkAgentUptime(fetch, agent) {
       uptimeState.set(agent.id, isUp);
       const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
       logEvent(isUp ? 'agent.up' : 'agent.down', agent.id, msg);
-      sendNotification(db, `AgentPanel: ${msg}`).catch(() => {});
+      sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
     }
   } catch (err) {
     console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
@@ -2576,19 +2576,19 @@ async function runResourceChecks() {
       resourceAlertState[key] = true;
       const msg = `${label} usage at ${pct}% (threshold ${threshold}%)`;
       logEvent(`resource.${key}`, null, msg);
-      sendNotification(db, `AgentPanel WARNING: ${msg}`).catch(() => {});
+      sendNotification(db, `AgentHotel WARNING: ${msg}`).catch(() => {});
     } else if (pct < threshold - 5 && resourceAlertState[key]) {
       resourceAlertState[key] = false;
       const msg = `${label} usage back to ${pct}%`;
       logEvent(`resource.${key}.recovered`, null, msg);
-      sendNotification(db, `AgentPanel OK: ${msg}`).catch(() => {});
+      sendNotification(db, `AgentHotel OK: ${msg}`).catch(() => {});
     }
   }
 }
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`AgentPanel backend running on port ${PORT}`);
+  console.log(`AgentHotel backend running on port ${PORT}`);
   hostExecAvailable(); // probe + log host exec availability at startup
   await initPanelRoute();
   setInterval(() => {

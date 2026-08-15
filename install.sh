@@ -4,7 +4,7 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 echo "╔════════════════════════════════════════╗"
-echo "║     AgentPanel Installer v1.0.0       ║"
+echo "║     AgentHotel Installer v1.0.0       ║"
 echo "║   Easypanel for AI Agents             ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
@@ -38,8 +38,8 @@ command_exists() {
   command -v "$@" > /dev/null 2>&1
 }
 
-INSTALL_DIR="/opt/agentpanel"
-GITHUB_REPO="https://github.com/magnusfroste/agentpanel.git"
+INSTALL_DIR="/opt/agenthotel"
+GITHUB_REPO="https://github.com/magnusfroste/agenthotel.git"
 
 echo ""
 echo "Installing Docker..."
@@ -85,7 +85,7 @@ else
 fi
 
 echo ""
-echo "Setting up AgentPanel..."
+echo "Setting up AgentHotel..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f "$SCRIPT_DIR/docker-compose.yml" ] && [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
@@ -102,7 +102,7 @@ fi
 cd "$INSTALL_DIR"
 
 echo ""
-echo "Building and starting AgentPanel..."
+echo "Building and starting AgentHotel..."
 docker compose build
 docker compose up -d
 

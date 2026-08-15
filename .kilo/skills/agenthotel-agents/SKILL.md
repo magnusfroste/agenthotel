@@ -1,19 +1,19 @@
 ---
-name: agentpanel-agents
-description: Hantera AI-agenter i AgentPanel - skapa, lista, uppdatera, ta bort, deploya om
+name: agenthotel-agents
+description: Hantera AI-agenter i AgentHotel - skapa, lista, uppdatera, ta bort, deploya om
 ---
 
-# AgentPanel Agent Administration
+# AgentHotel Agent Administration
 
 ## Översikt
-Denna skill ger dig verktyg för att administrera AI-agenter i AgentPanel via MCP.
+Denna skill ger dig verktyg för att administrera AI-agenter i AgentHotel via MCP.
 
 ## Tillgängliga MCP-verktyg
 
 ### list_agents
 Lista alla agenter i systemet.
 ```
-Användning: agentpanel_list_agents
+Användning: agenthotel_list_agents
 Returnerar: Array av agentobjekt med id, name, runtime, domain, status, config
 ```
 
@@ -29,7 +29,7 @@ Parametrar:
 - config (object, optional): Runtime-specifik konfiguration
 
 Exempel:
-agentpanel_create_agent({
+agenthotel_create_agent({
   name: "claw",
   runtime: "openclaw",
   domain: "claw.froste.eu",
@@ -142,7 +142,7 @@ Configfält:
 
 1. **Skapa agent med domän:**
    ```
-   agentpanel_create_agent({
+   agenthotel_create_agent({
      name: "minagent",
      runtime: "openclaw",
      domain: "minagent.froste.eu",
@@ -152,17 +152,17 @@ Configfält:
 
 2. **Kontrollera status:**
    ```
-   agentpanel_get_agent_status({ id: "agent-id" })
+   agenthotel_get_agent_status({ id: "agent-id" })
    ```
 
 3. **Visa loggar vid problem:**
    ```
-   agentpanel_get_agent_logs({ id: "agent-id", tail: 50 })
+   agenthotel_get_agent_logs({ id: "agent-id", tail: 50 })
    ```
 
 4. **Uppdatera konfiguration:**
    ```
-   agentpanel_update_agent({
+   agenthotel_update_agent({
      id: "agent-id",
      config: { OPENAI_API_KEY: "ny-nyckel" }
    })
@@ -170,7 +170,7 @@ Configfält:
 
 5. **Ta bort agent:**
    ```
-   agentpanel_delete_agent({ id: "agent-id" })
+   agenthotel_delete_agent({ id: "agent-id" })
    ```
 
 ## Viktigt att tänka på

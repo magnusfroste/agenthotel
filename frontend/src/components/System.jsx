@@ -261,8 +261,8 @@ function System() {
             <div className="sysinfo-item">
               <GitBranch size={18} className="sysinfo-icon" />
               <div>
-                <div className="sysinfo-label">AgentPanel</div>
-                <div className="sysinfo-value">{systemInfo.agentpanel.branch} ({systemInfo.agentpanel.commit})</div>
+                <div className="sysinfo-label">AgentHotel</div>
+                <div className="sysinfo-value">{systemInfo.agenthotel.branch} ({systemInfo.agenthotel.commit})</div>
               </div>
             </div>
           </div>
@@ -532,7 +532,7 @@ function System() {
         <div className="control-grid">
           <div className="control-card">
             <div className="control-card-icon blue"><RefreshCw size={20} /></div>
-            <div className="control-card-title">Restart AgentPanel</div>
+            <div className="control-card-title">Restart AgentHotel</div>
             <div className="control-card-description">
               Restarts the panel backend. The UI will be unavailable for a few seconds.
             </div>
@@ -542,7 +542,7 @@ function System() {
           </div>
           <div className="control-card">
             <div className="control-card-icon green"><Download size={20} /></div>
-            <div className="control-card-title">Update AgentPanel</div>
+            <div className="control-card-title">Update AgentHotel</div>
             <div className="control-card-description">
               Pull the latest version and rebuild. Runs on the host via SSH.
             </div>
@@ -586,9 +586,9 @@ function System() {
           <div className="modal">
             <h3 className="modal-title">Confirm Action</h3>
             <p className="modal-text">
-              {confirmAction === 'restart-panel' && 'Are you sure you want to restart AgentPanel? This will briefly interrupt service.'}
+              {confirmAction === 'restart-panel' && 'Are you sure you want to restart AgentHotel? This will briefly interrupt service.'}
               {confirmAction === 'restart-docker' && 'Are you sure you want to restart Docker? All containers will be affected.'}
-              {confirmAction === 'update' && 'Are you sure you want to update AgentPanel to the latest version?'}
+              {confirmAction === 'update' && 'Are you sure you want to update AgentHotel to the latest version?'}
               {confirmAction === 'reboot' && 'WARNING: This will reboot the entire server. All services will be interrupted.'}
             </p>
             <div className="modal-actions">

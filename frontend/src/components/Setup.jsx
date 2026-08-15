@@ -43,7 +43,7 @@ function Setup({ onDone }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h1 className="auth-title">AgentPanel</h1>
+        <h1 className="auth-title">AgentHotel</h1>
         <p className="auth-subtitle">Create your admin account</p>
 
         {error && <div className="error">{error}</div>}

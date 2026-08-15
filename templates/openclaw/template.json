@@ -3,7 +3,7 @@
   "name": "OpenClaw",
   "description": "Persistent AI agent with gateway, tools and browser",
   "version": "1.0.0",
-  "author": "AgentPanel",
+  "author": "AgentHotel",
   "defaultImage": "ghcr.io/openclaw/openclaw:latest",
   "defaultPort": 18789,
   "configFields": [

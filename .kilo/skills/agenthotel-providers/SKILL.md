@@ -1,19 +1,19 @@
 ---
-name: agentpanel-providers
-description: Hantera AI-leverantörer (providers) i AgentPanel - skapa, lista, uppdatera, ta bort
+name: agenthotel-providers
+description: Hantera AI-leverantörer (providers) i AgentHotel - skapa, lista, uppdatera, ta bort
 ---
 
-# AgentPanel Provider Administration
+# AgentHotel Provider Administration
 
 ## Översikt
-Denna skill ger dig verktyg för att administrera AI-leverantörer i AgentPanel via MCP.
+Denna skill ger dig verktyg för att administrera AI-leverantörer i AgentHotel via MCP.
 
 ## Tillgängliga MCP-verktyg
 
 ### list_providers
 Lista alla konfigurerade AI-leverantörer.
 ```
-Användning: agentpanel_list_providers
+Användning: agenthotel_list_providers
 Returnerar: Array av provider-objekt med id, name, type, baseUrl, apiKey, models
 ```
 
@@ -28,7 +28,7 @@ Parametrar:
 - models (array, optional): Lista över tillgängliga modeller
 
 Exempel:
-agentpanel_create_provider({
+agenthotel_create_provider({
   name: "OpenAI",
   type: "openai",
   baseUrl: "https://api.openai.com/v1",
@@ -49,7 +49,7 @@ Parametrar:
 - models (array, optional): Uppdaterad modellista
 
 Exempel:
-agentpanel_update_provider({
+agenthotel_update_provider({
   id: "provider-id",
   apiKey: "ny-api-nyckel"
 })
@@ -68,7 +68,7 @@ OBS: Detta påverkar inte befintliga agenter som använder leverantören.
 
 1. **Skapa leverantör:**
    ```
-   agentpanel_create_provider({
+   agenthotel_create_provider({
      name: "Min OpenAI",
      type: "openai",
      baseUrl: "https://api.openai.com/v1",
@@ -78,12 +78,12 @@ OBS: Detta påverkar inte befintliga agenter som använder leverantören.
 
 2. **Lista alla leverantörer:**
    ```
-   agentpanel_list_providers()
+   agenthotel_list_providers()
    ```
 
 3. **Uppdatera API-nyckel:**
    ```
-   agentpanel_update_provider({
+   agenthotel_update_provider({
      id: "provider-id",
      apiKey: "ny-nyckel"
    })
@@ -91,7 +91,7 @@ OBS: Detta påverkar inte befintliga agenter som använder leverantören.
 
 4. **Lägg till modeller:**
    ```
-   agentpanel_update_provider({
+   agenthotel_update_provider({
      id: "provider-id",
      models: ["gpt-4", "gpt-4-turbo"]
    })
@@ -99,7 +99,7 @@ OBS: Detta påverkar inte befintliga agenter som använder leverantören.
 
 5. **Ta bort leverantör:**
    ```
-   agentpanel_delete_provider({ id: "provider-id" })
+   agenthotel_delete_provider({ id: "provider-id" })
    ```
 
 ## Viktigt att tänka på

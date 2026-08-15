@@ -77,7 +77,7 @@ const essentials = {
 };
 
 // Canonical providers: default base URL + API mode. Custom providers
-// configured in AgentPanel (e.g. Hetzner) arrive as <SLUG>_API_KEY /
+// configured in AgentHotel (e.g. Hetzner) arrive as <SLUG>_API_KEY /
 // <SLUG>_BASE_URL / <SLUG>_MODELS env triplets and become selectable
 // providers too — anything OpenAI-compatible defaults to
 // 'openai-completions'.

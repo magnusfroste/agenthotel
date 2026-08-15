@@ -1,16 +1,24 @@
-# AgentPanel
+# AgentHotel
 
-**Inspired by Easypanel — spin up your agents, monitor and observe.**
+**Self-hosted control panel for AI agents. Check them in, watch them work.**
 
-AgentPanel is a self-hosted control panel for AI agents and Docker apps. Point it at a VPS, and you get one-click agent deployment with automatic HTTPS, live logs, web terminals, domain management and provider-aware API key injection — all from a clean web UI, and all scriptable through an MCP server.
+AgentHotel turns one VPS into a hotel for AI agents. Each guest gets its own room — an isolated container with its own memory and CPU allowance, its own domain with automatic HTTPS, and persistent state that survives restarts, redeploys and nights. You run the front desk: a web UI, a live view of every room, and an MCP server so your own AI tools can check guests in and out for you.
 
-## Why AgentPanel?
+## Why a hotel?
 
-Running AI agents on your own server usually means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentPanel removes all of that:
+Because that is what running several agents actually is. The metaphor is not decoration — it is how the panel is built:
 
-- **Spin up** an agent in seconds — pick a runtime, name it, done. HTTPS and routing are automatic.
-- **Monitor** everything from one dashboard — status, resource usage, logs, domains and certificates, live.
-- **Observe & control** — open a web terminal into any container, edit environment variables, redeploy, or let your own AI tools manage the panel over MCP.
+| Front desk | What it does |
+|---|---|
+| **Check in** | Pick a runtime, name the agent, done. Domain, TLS and routing are automatic. |
+| **Rooms** | Each agent is capped at its own RAM and CPU, so no guest starves the others — or the hotel. |
+| **No vacancy** | The panel warns you before you overbook the host, not after. |
+| **Guests remember** | Sessions, memory and workspace files live in volumes that outlive the container. |
+| **Room keys** | Provider API keys are configured once and injected into every agent that needs them. |
+| **Housekeeping** | Stopped containers, dangling images and build cache are reclaimed on a schedule. |
+| **The ledger** | Health, uptime, resource use and events — from the UI or over MCP. |
+
+Running AI agents on your own server otherwise means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentHotel removes all of that.
 
 ## Features
 
@@ -59,8 +67,8 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 On a fresh VPS (Ubuntu/Debian), as root:
 
 ```bash
-git clone https://github.com/magnusfroste/agentpanel.git
-cd agentpanel
+git clone https://github.com/magnusfroste/agenthotel.git
+cd agenthotel
 ./install.sh        # installs Docker, then:
 docker compose up -d
 ```
@@ -91,12 +99,12 @@ The built-in observability (per-agent stats, uptime checks, activity log) is int
 
 ## MCP Integration
 
-AgentPanel exposes an MCP endpoint so your own agents can manage the platform:
+AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 
 ```json
 {
   "mcpServers": {
-    "agentpanel": {
+    "agenthotel": {
       "url": "https://panel.yourdomain.com/mcp",
       "headers": { "Authorization": "Bearer YOUR_TOKEN" }
     }

@@ -1,5 +1,5 @@
 const Database = require('better-sqlite3');
-const db = new Database(process.env.DB_PATH || '/data/agentpanel.db');
+const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
 
 function getProvider(name) {
   return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
@@ -79,7 +79,7 @@ module.exports = {
     // Newer Hermes image fails closed: a non-loopback dashboard needs an auth
     // provider. Use HTTP Basic Auth so the chat UI is reachable via Caddy.
     const user = config.HERMES_DASHBOARD_BASIC_AUTH_USERNAME || 'admin';
-    const pass = config.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD || (config.HERMES_DASHBOARD_PASSWORD || 'agentpanel');
+    const pass = config.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD || (config.HERMES_DASHBOARD_PASSWORD || 'agenthotel');
 
     const env = [
       'HERMES_DASHBOARD=1',

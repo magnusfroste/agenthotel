@@ -1,4 +1,4 @@
-# AgentPanel — Session Status (2026-07-27)
+# AgentHotel — Session Status (2026-07-27)
 
 ## Vad som åstadkoms denna session
 
@@ -82,7 +82,7 @@ server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`)
 - `b00b8f1` feat: skeleton loaders and improved empty state for Certificates
 
 ## Nuvarande state
-- **panel.froste.eu** → AgentPanel (HTTP 200)
+- **panel.froste.eu** → AgentHotel (HTTP 200)
 - **hermes.froste.eu** → Hermes dashboard (HTTP 302, login-sida)
 - **Hermes chat** → fungerar (`hermes -z "say PONG"` → `PONG`, modell gpt-5.4)
 - 4 LE-cert (panel, claw, claw3, hermes), alla giltiga till okt 2026
@@ -91,19 +91,19 @@ server.js injicerade API-nycklar baserat på `provider.type` (alla var `openai`)
 ## Hermes-dashboard inloggning
 - URL: https://hermes.froste.eu/login
 - Användarnamn: `admin`
-- Lösenord: `agentpanel` (sätts via `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`)
+- Lösenord: `agenthotel` (sätts via `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`)
 - Credentials visas i portalen: Agents → hermes → Credentials-tab
 
 ## Nyckelkommandon
 ```bash
 # Auth-token
-docker exec agentpanel-backend node -e "const db=require('better-sqlite3')('/data/agentpanel.db'); console.log(db.prepare(\"SELECT value FROM settings WHERE key='auth_token'\").get().value)"
+docker exec agenthotel-backend node -e "const db=require('better-sqlite3')('/data/agenthotel.db'); console.log(db.prepare(\"SELECT value FROM settings WHERE key='auth_token'\").get().value)"
 
 # Testa hermes-chatt
-docker exec agentpanel-hermes-hermes-<ID> hermes -z "say PONG"
+docker exec agenthotel-hermes-hermes-<ID> hermes -z "say PONG"
 
 # Kontrollera hermes config
-docker exec agentpanel-hermes-hermes-<ID> head -4 /opt/data/config.yaml
+docker exec agenthotel-hermes-hermes-<ID> head -4 /opt/data/config.yaml
 
 # Backend-loggar
 docker compose logs -f backend

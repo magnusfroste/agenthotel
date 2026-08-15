@@ -5,8 +5,8 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-const BACKEND_URL = process.env.AGENTPANEL_URL || 'http://localhost:8080';
-const AUTH_TOKEN = process.env.AGENTPANEL_TOKEN;
+const BACKEND_URL = process.env.AGENTHOTEL_URL || 'http://localhost:8080';
+const AUTH_TOKEN = process.env.AGENTHOTEL_TOKEN;
 
 async function apiRequest(path, method = 'GET', body = null) {
   const fetch = (await import('node-fetch')).default;
@@ -28,7 +28,7 @@ async function apiRequest(path, method = 'GET', body = null) {
 
 const server = new Server(
   {
-    name: 'agentpanel-mcp',
+    name: 'agenthotel-mcp',
     version: '1.0.0',
   },
   {
@@ -43,7 +43,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'list_agents',
-        description: 'List all agents in AgentPanel',
+        description: 'List all agents in AgentHotel',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -323,7 +323,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('AgentPanel MCP server running on stdio');
+  console.error('AgentHotel MCP server running on stdio');
 }
 
 main().catch((error) => {

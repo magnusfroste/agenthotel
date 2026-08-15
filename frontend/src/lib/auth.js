@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'agentpanel_token';
+const TOKEN_KEY = 'agenthotel_token';
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);

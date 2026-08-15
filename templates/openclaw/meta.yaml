@@ -7,7 +7,7 @@ description: |
 instructions: |
   After deployment, access OpenClaw at the assigned domain. Configure your
   LLM provider API keys in the agent settings. The gateway token is 
-  auto-generated and shown in the AgentPanel credentials section.
+  auto-generated and shown in the AgentHotel credentials section.
 
 changeLog:
   - date: 2025-01-25

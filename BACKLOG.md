@@ -1,4 +1,4 @@
-# AgentPanel Backlog
+# AgentHotel Backlog
 
 ## ✅ Implementerade Funktioner
 
@@ -20,12 +20,12 @@
 - ✅ **Dark Mode Toggle** - I sidebar (☀️/🌙)
 - ✅ **Start/Stop Agents** - Spara CPU/RAM genom att stoppa agenter
 - ✅ **IP & Version Display** - Visa serverns IP och version i sidebar
-- ✅ **Upgrade Button** - Uppgradera AgentPanel direkt från UI
+- ✅ **Upgrade Button** - Uppgradera AgentHotel direkt från UI
 - ✅ **Docs Link** - Länk till GitHub-repo i sidebar
 - ✅ **Active Agents List** - Visa alla aktiva agenter i sidebar med status
 
 ### System Control
-- ✅ **Restart Panel** - Starta om AgentPanel
+- ✅ **Restart Panel** - Starta om AgentHotel
 - ✅ **Restart Docker** - Starta om Docker-tjänsten
 - ✅ **Update Panel** - Git pull + rebuild + restart
 - ✅ **Reboot Server** - Starta om hela VPS:en

@@ -1,4 +1,4 @@
-# AgentPanel Template System
+# AgentHotel Template System
 
 ## Översikt
 Template-systemet gör det möjligt att standardisera deployment av olika AI-agenter trots att de har olika krav och konfigurationer.

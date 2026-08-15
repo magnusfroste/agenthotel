@@ -95,7 +95,7 @@ async function collectAgentStats(docker, db) {
   const out = await Promise.all(agents.map(async (agent) => {
     const base = { id: agent.id, name: agent.name, runtime: agent.runtime };
     try {
-      const container = docker.getContainer(`agentpanel-${agent.id}`);
+      const container = docker.getContainer(`agenthotel-${agent.id}`);
       const info = await container.inspect();
       if (!info.State.Running) {
         return { ...base, running: false, status: info.State.Status };

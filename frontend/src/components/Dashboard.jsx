@@ -154,7 +154,7 @@ function Dashboard() {
           <button className="btn" onClick={handlePrune} disabled={pruning} style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Trash2 size={16} color="white" /> {pruning ? 'Pruning…' : 'Prune Docker'}
           </button>
-          <label className="btn btn-secondary" title="Import a service zip exported from any AgentPanel" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
+          <label className="btn btn-secondary" title="Import a service zip exported from any AgentHotel" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
             <Upload size={16} color="currentColor" /> Import Agent
             <input type="file" accept=".zip,application/zip" onChange={handleImportService} style={{ display: 'none' }} />
           </label>
@@ -200,7 +200,7 @@ function Dashboard() {
           </div>
           <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>No agents yet</h2>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
-            Deploy your first AI agent or Docker Compose app to get started with AgentPanel.
+            Deploy your first AI agent or Docker Compose app to get started with AgentHotel.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1rem' }}>
             <Link to="/create" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

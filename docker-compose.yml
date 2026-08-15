@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: agentpanel-backend
+    container_name: agenthotel-backend
     restart: unless-stopped
     # pid: host + privileged let the backend nsenter into PID 1's namespaces
     # so the Server Console runs commands on the VPS host. privileged is needed
@@ -21,22 +21,22 @@ services:
     oom_score_adj: -500
     environment:
       - PORT=8080
-      - DB_PATH=/data/agentpanel.db
+      - DB_PATH=/data/agenthotel.db
       - CADDY_API_URL=http://caddy:2019
       - GIT_COMMIT=${GIT_COMMIT:-unknown}
       - GIT_VERSION=${GIT_VERSION:-unknown}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - agentpanel-data:/data
+      - agenthotel-data:/data
       - ./templates:/templates
     depends_on:
       - caddy
     networks:
-      - agentpanel
+      - agenthotel
 
   caddy:
     image: caddy:2
-    container_name: agentpanel-caddy
+    container_name: agenthotel-caddy
     restart: unless-stopped
     cpu_shares: 2048
     oom_score_adj: -500
@@ -50,26 +50,26 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      - agentpanel
+      - agenthotel
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: agentpanel-frontend
+    container_name: agenthotel-frontend
     restart: unless-stopped
     cpu_shares: 2048
     oom_score_adj: -500
     depends_on:
       - backend
     networks:
-      - agentpanel
+      - agenthotel
 
 volumes:
-  agentpanel-data:
+  agenthotel-data:
   caddy-data:
   caddy-config:
 
 networks:
-  agentpanel:
+  agenthotel:
     driver: bridge

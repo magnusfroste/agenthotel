@@ -1,7 +1,7 @@
 {
-  "name": "agentpanel-mcp",
+  "name": "agenthotel-mcp",
   "version": "1.0.0",
-  "description": "MCP server for AgentPanel administration",
+  "description": "MCP server for AgentHotel administration",
   "main": "server.js",
   "type": "module",
   "scripts": {
