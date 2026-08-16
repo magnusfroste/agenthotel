@@ -16,6 +16,7 @@ const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
+const { listTemplates, getTemplate } = require('./lib/templates');
 const { execFile, execFileSync } = require('child_process');
 
 const app = express();
@@ -1715,6 +1716,18 @@ app.get('/api/runtimes', requireAuth, (req, res) => {
     defaultPort: plugin.defaultPort,
     configFields: plugin.configFields
   })));
+});
+
+// The template library. Same deployable set as /api/runtimes, enriched with
+// the presentation metadata in templates/<id>/meta.yaml.
+app.get('/api/templates', requireAuth, (req, res) => {
+  res.json(listTemplates(runtimes));
+});
+
+app.get('/api/templates/:id', requireAuth, (req, res) => {
+  const template = getTemplate(req.params.id, runtimes);
+  if (!template) return res.status(404).json({ error: 'Template not found' });
+  res.json(template);
 });
 
 app.get('/api/agents/:id/status', requireAuth, async (req, res) => {

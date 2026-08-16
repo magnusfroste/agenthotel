@@ -29,6 +29,11 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Start / Stop / Redeploy / Delete** from the dashboard, with one-click Open on the agent's URL
 - **Web terminal** — full TTY shell into any container via WebSocket + xterm.js
 
+### Template Library
+- **Browsable library** — every deployable runtime as a card with its category, tags, default image and port, filtered by search, category or tag
+- **Template detail page** — what the template is, what to do after deployment, benefits, features, upstream links, changelog, and the exact config fields the deploy form will ask for
+- **Data-driven** — presentation lives in `templates/<id>/meta.yaml`, so a new template needs no frontend change; edits are picked up without restarting the backend
+
 ### Deploy Anything
 - **Docker App runtime** — deploy any Docker image with port, env vars and volume mounts
 - **Compose runtime** — paste a `docker-compose.yml` with env-var editor and YAML validation
@@ -112,7 +117,7 @@ AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 }
 ```
 
-Tools: `list_agents`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `system_status`, `list_runtimes`.
+Tools: `list_agents`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `system_status`, `list_runtimes`, `list_templates`, `get_template`.
 
 ## Architecture
 
@@ -136,6 +141,7 @@ Three containers, one `docker-compose.yml`:
 | --- | --- |
 | Agents | `GET/POST /api/agents`, `GET/PUT/DELETE /api/agents/:id`, `/start`, `/stop`, `/redeploy`, `/logs`, `/terminal` (WS) |
 | Observability | `GET /api/agents/:id/stats`, `GET /api/agents/:id/uptime`, `GET /api/events` |
+| Templates | `GET /api/templates`, `GET /api/templates/:id`, `GET /api/runtimes` |
 | Providers | `GET/POST /api/providers`, `PUT/DELETE /api/providers/:id`, `/test`, `/models` |
 | Domains & TLS | `GET /api/domains`, `DELETE /api/domains/:id`, `GET /api/certificates` |
 | System | `GET /api/system/stats`, `/status`, `/version`, `/check-update`, `POST /api/docker/prune`, `GET /api/docker/cleanup-history` |

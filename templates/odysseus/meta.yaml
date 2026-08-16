@@ -1,4 +1,7 @@
 name: Odysseus
+category: AI Agent
+icon: bot
+color: "#8b5cf6"
 description: |
   Self-hosted AI workspace with chat, agents, deep research, and memory.
   A comprehensive platform for AI-powered workflows and knowledge management.
@@ -17,34 +20,6 @@ links:
     url: https://odysseus.ai
   - label: Documentation
     url: https://docs.odysseus.ai
-
-schema:
-  type: object
-  required:
-    - appServiceName
-    - appServiceImage
-    - adminPassword
-  properties:
-    appServiceName:
-      type: string
-      title: Service Name
-      default: odysseus
-    appServiceImage:
-      type: string
-      title: Docker Image
-      default: odysseus:latest
-    adminPassword:
-      type: string
-      title: Admin Password
-      default: ""
-    authEnabled:
-      type: boolean
-      title: Enable Authentication
-      default: true
-    openaiApiKey:
-      type: string
-      title: OpenAI API Key
-      default: ""
 
 benefits:
   - title: All-in-One Workspace

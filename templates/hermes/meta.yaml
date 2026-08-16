@@ -1,4 +1,7 @@
 name: Hermes Agent
+category: AI Agent
+icon: zap
+color: "#3b82f6"
 description: |
   NousResearch Hermes Agent — multi-tool AI agent with MCP support,
   dashboard interface, and extensive skill library. Deploy a powerful
@@ -18,41 +21,6 @@ links:
     url: https://nousresearch.com
   - label: Documentation
     url: https://docs.nousresearch.com/hermes
-
-schema:
-  type: object
-  required:
-    - appServiceName
-    - appServiceImage
-  properties:
-    appServiceName:
-      type: string
-      title: Service Name
-      default: hermes
-    appServiceImage:
-      type: string
-      title: Docker Image
-      default: nousresearch/hermes-agent:latest
-    dashboardPassword:
-      type: string
-      title: Dashboard Password
-      default: agenthotel
-    hermesModel:
-      type: string
-      title: Model
-      default: openai/gpt-4.1
-    openaiApiKey:
-      type: string
-      title: OpenAI API Key
-      default: ""
-    anthropicApiKey:
-      type: string
-      title: Anthropic API Key
-      default: ""
-    openrouterApiKey:
-      type: string
-      title: OpenRouter API Key
-      default: ""
 
 benefits:
   - title: Extensive Tool Library

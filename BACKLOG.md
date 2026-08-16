@@ -103,11 +103,16 @@ Varje template i `templates/` har:
 
 ### Funktioner att Implementera
 
-#### 1. Template Library (Admin UI)
-- Visa alla templates i ett grid/list-vy
-- Filter på tags (AI, Self-Hosted, etc.)
-- Preview av template-detaljer
-- One-click deploy från template
+#### 1. Template Library (Admin UI) ✅ Implementerad
+- ✅ Grid-vy över alla templates, driven av `GET /api/templates`
+- ✅ Filter på kategori och tags + fritextsökning
+- ✅ Detaljsida (`/templates/:id`) med instruktioner, benefits, features, links, changelog och konfigfält
+- ✅ One-click deploy från både kort och detaljsida
+- ✅ MCP: `list_templates`, `get_template`
+
+Presentationen ligger i `templates/<id>/meta.yaml` (se AGENTS.md). Konfigurationen
+kommer från `plugin.configFields` — de divergerande `schema:`-blocken i meta.yaml
+är borttagna.
 
 #### 2. Template Schema
 - JSON Schema-baserat konfigurationsformulär
@@ -192,9 +197,11 @@ Varje template i `templates/` har:
 
 1. ~~**Fixa Terminal/CLI**~~ ✅ Klar
 2. ~~**Daily Docker Cleanup**~~ ✅ Klar
-3. **Template Library UI** - Bygga admin-gränssnitt för templates
+3. ~~**Template Library UI**~~ ✅ Klar
 4. **Agent Traffic Stats** - Besöksstatistik per agent via Caddy access-logg
-5. **Template Marketplace** - Dela templates med community (långsiktigt)
+5. **Schema-baserat deploy-formulär** - generera formuläret från `configFields`
+6. **Custom Templates** - importera från Git URL eller klistrad compose-fil
+7. **Template Marketplace** - Dela templates med community (långsiktigt)
 
 ---
 

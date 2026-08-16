@@ -1,0 +1,42 @@
+name: Docker App
+category: Docker App
+icon: container
+color: "#f59e0b"
+description: |
+  Deploy any Docker image as a guest. Give it an image, a port and the env
+  vars it needs — AgentHotel handles the room: domain, TLS, routing, resource
+  caps and persistent volumes.
+
+instructions: |
+  Enter the full image name (for example `nginx:latest` or
+  `ghcr.io/owner/app:v1`) and the port the container listens on. Add extra
+  environment variables one `KEY=VALUE` per line, and volumes one
+  `host:container` per line. The image is pulled on deploy, so private
+  registries must already be authenticated on the host.
+
+links:
+  - label: Docker Hub
+    url: https://hub.docker.com
+
+benefits:
+  - title: Run Anything
+    description: Any public or locally available Docker image, no template needed
+  - title: Batteries Included
+    description: Domain, HTTPS certificate and reverse-proxy route are automatic
+  - title: Same Guardrails
+    description: CPU and RAM caps apply exactly as they do to agent runtimes
+
+features:
+  - title: Custom Port
+    description: Route the domain to whichever port the container listens on
+  - title: Volume Mounts
+    description: Persist data across redeploys with host:container mounts
+  - title: Environment Variables
+    description: Free-form KEY=VALUE env, injected at container creation
+  - title: Web Terminal
+    description: Full TTY shell into the container from the panel
+
+tags:
+  - Docker
+  - Generic
+  - Self-Hosted

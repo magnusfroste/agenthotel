@@ -1,58 +1,63 @@
-import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { Bot, PawPrint, Layers, Container, Zap, Package, Server, Database, ArrowRight, Info } from 'lucide-react'
-
-const RUNTIME_ICONS = {
-  hermes: Zap,
-  openclaw: PawPrint,
-  odysseus: Bot,
-  'docker-app': Container,
-  compose: Layers
-}
-
-const RUNTIME_CATEGORIES = {
-  hermes: 'AI Agent',
-  openclaw: 'AI Agent',
-  odysseus: 'AI Agent',
-  'docker-app': 'Docker App',
-  compose: 'Docker Compose'
-}
-
-const RUNTIME_COLORS = {
-  hermes: '#3b82f6',
-  openclaw: '#10b981',
-  odysseus: '#8b5cf6',
-  'docker-app': '#f59e0b',
-  compose: '#ec4899'
-}
+import { templateIcon } from '../lib/templateIcons'
+import { Package, Server, Database, ArrowRight, Info, Search, X } from 'lucide-react'
 
 function Templates() {
-  const [runtimes, setRuntimes] = useState([])
+  const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selectedCategory, setSelectedCategory] = useState('all')
+  const [category, setCategory] = useState('all')
+  const [tag, setTag] = useState(null)
+  const [query, setQuery] = useState('')
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetchRuntimes()
+    fetchTemplates()
   }, [])
 
-  async function fetchRuntimes() {
+  async function fetchTemplates() {
     try {
-      const res = await authFetch('/api/runtimes')
+      const res = await authFetch('/api/templates')
       const data = await res.json()
-      setRuntimes(data)
+      setTemplates(Array.isArray(data) ? data : [])
     } catch (err) {
-      console.error('Failed to fetch runtimes:', err)
+      console.error('Failed to fetch templates:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const categories = ['all', 'AI Agent', 'Docker App', 'Docker Compose']
-  const filteredRuntimes = selectedCategory === 'all' 
-    ? runtimes 
-    : runtimes.filter(rt => RUNTIME_CATEGORIES[rt.id] === selectedCategory)
+  // Categories and tags come from the templates themselves, so adding a
+  // meta.yaml is enough to make a new filter appear.
+  const categories = useMemo(
+    () => ['all', ...Array.from(new Set(templates.map(t => t.category))).sort()],
+    [templates]
+  )
+  const tags = useMemo(
+    () => Array.from(new Set(templates.flatMap(t => t.tags || []))).sort(),
+    [templates]
+  )
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return templates.filter(t => {
+      if (category !== 'all' && t.category !== category) return false
+      if (tag && !(t.tags || []).includes(tag)) return false
+      if (!q) return true
+      const haystack = [t.name, t.description, t.defaultImage, ...(t.tags || [])]
+        .filter(Boolean).join(' ').toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [templates, category, tag, query])
+
+  const hasFilters = category !== 'all' || tag || query.trim()
+
+  function clearFilters() {
+    setCategory('all')
+    setTag(null)
+    setQuery('')
+  }
 
   if (loading) {
     return (
@@ -60,7 +65,7 @@ function Templates() {
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ width: '180px', height: '32px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
           {[...Array(5)].map((_, i) => (
             <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: '0.6rem', padding: '1.5rem', animation: 'pulse 1.5s ease-in-out infinite' }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '0.5rem', background: 'var(--bg-tertiary)', marginBottom: '1rem' }} />
@@ -76,28 +81,40 @@ function Templates() {
 
   return (
     <div>
-      <div style={{ marginBottom: '2rem' }}>
+      <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ margin: '0 0 0.5rem 0' }}>Templates</h1>
         <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-          Choose a template to deploy. Each template is pre-configured with sensible defaults.
+          Pick a template to check a new guest in. Each one is pre-configured with sensible defaults.
         </p>
       </div>
 
-      {/* Category Filter */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+      {/* Search */}
+      <div style={{ position: 'relative', marginBottom: '1rem', maxWidth: '420px' }}>
+        <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search templates…"
+          style={{ width: '100%', padding: '0.55rem 0.75rem 0.55rem 2.25rem' }}
+        />
+      </div>
+
+      {/* Category filter */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         {categories.map(cat => (
           <button
             key={cat}
-            onClick={() => setSelectedCategory(cat)}
+            onClick={() => setCategory(cat)}
             style={{
               padding: '0.5rem 1rem',
               borderRadius: '0.5rem',
-              border: selectedCategory === cat ? '1px solid #3b82f6' : '1px solid var(--border)',
-              background: selectedCategory === cat ? 'rgba(59,130,246,0.1)' : 'var(--bg-secondary)',
-              color: selectedCategory === cat ? '#3b82f6' : 'var(--text-primary)',
+              border: category === cat ? '1px solid #3b82f6' : '1px solid var(--border)',
+              background: category === cat ? 'rgba(59,130,246,0.1)' : 'var(--bg-secondary)',
+              color: category === cat ? '#3b82f6' : 'var(--text-primary)',
               cursor: 'pointer',
               fontSize: '0.875rem',
-              fontWeight: selectedCategory === cat ? '600' : '400',
+              fontWeight: category === cat ? '600' : '400',
               transition: 'all 0.15s'
             }}
           >
@@ -106,64 +123,109 @@ function Templates() {
         ))}
       </div>
 
-      {/* Templates Grid */}
-      {filteredRuntimes.length === 0 ? (
+      {/* Tag filter */}
+      {tags.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {tags.map(t => (
+            <button
+              key={t}
+              onClick={() => setTag(tag === t ? null : t)}
+              style={{
+                padding: '0.25rem 0.65rem',
+                borderRadius: '999px',
+                border: '1px solid ' + (tag === t ? '#3b82f6' : 'var(--border)'),
+                background: tag === t ? 'rgba(59,130,246,0.12)' : 'transparent',
+                color: tag === t ? '#3b82f6' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                transition: 'all 0.15s'
+              }}
+            >
+              {t}
+            </button>
+          ))}
+          {hasFilters && (
+            <button
+              onClick={clearFilters}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.25rem',
+                padding: '0.25rem 0.65rem', borderRadius: '999px',
+                border: '1px solid var(--border)', background: 'transparent',
+                color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.75rem'
+              }}
+            >
+              <X size={12} /> Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Grid */}
+      {filtered.length === 0 ? (
         <div className="empty-state">
           <Info size={40} color="var(--text-secondary)" style={{ margin: '0 auto 1rem' }} />
-          <h2>No templates in this category</h2>
-          <p>Try selecting a different category.</p>
+          <h2>No templates match</h2>
+          <p>Try a different search or clear the filters.</p>
+          {hasFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>Clear filters</button>
+          )}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
-          {filteredRuntimes.map(rt => {
-            const Icon = RUNTIME_ICONS[rt.id] || Container
-            const category = RUNTIME_CATEGORIES[rt.id]
-            const color = RUNTIME_COLORS[rt.id] || '#3b82f6'
-            
+          {filtered.map(tpl => {
+            const Icon = templateIcon(tpl.icon)
             return (
-              <div 
-                key={rt.id} 
+              <div
+                key={tpl.id}
                 className="template-card"
-                onClick={() => navigate(`/create?runtime=${rt.id}`)}
+                onClick={() => navigate(`/templates/${tpl.id}`)}
               >
                 <div className="template-card-header">
-                  <div className="template-card-icon" style={{ background: color }}>
+                  <div className="template-card-icon" style={{ background: tpl.color }}>
                     <Icon size={24} color="white" />
                   </div>
-                  <span className="template-card-category">
-                    {category}
-                  </span>
+                  <span className="template-card-category">{tpl.category}</span>
                 </div>
 
-                <h3 className="template-card-title">{rt.name}</h3>
-                <p className="template-card-description">
-                  {rt.description}
-                </p>
+                <h3 className="template-card-title">{tpl.name}</h3>
+                <p className="template-card-description">{tpl.description}</p>
+
+                {(tpl.tags || []).length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                    {tpl.tags.slice(0, 4).map(t => (
+                      <span key={t} style={{
+                        padding: '0.15rem 0.5rem', borderRadius: '999px',
+                        background: 'var(--bg-tertiary)', color: 'var(--text-secondary)',
+                        fontSize: '0.7rem'
+                      }}>{t}</span>
+                    ))}
+                  </div>
+                )}
 
                 <div className="template-card-meta">
-                  {rt.defaultImage && (
+                  {tpl.defaultImage && (
                     <div className="template-card-meta-item">
                       <Package size={14} color="currentColor" />
-                      <span style={{ fontFamily: 'monospace' }}>{rt.defaultImage}</span>
+                      <span style={{ fontFamily: 'monospace' }}>{tpl.defaultImage}</span>
                     </div>
                   )}
                   <div className="template-card-meta-item">
                     <Server size={14} color="currentColor" />
-                    <span>Port: {rt.defaultPort}</span>
+                    <span>Port: {tpl.defaultPort}</span>
                   </div>
-                  {rt.configFields && rt.configFields.length > 0 && (
+                  {tpl.configFieldCount > 0 && (
                     <div className="template-card-meta-item">
                       <Database size={14} color="currentColor" />
-                      <span>{rt.configFields.length} config fields</span>
+                      <span>{tpl.configFieldCount} config fields</span>
                     </div>
                   )}
                 </div>
 
-                <button 
+                <button
                   className="btn btn-primary"
                   onClick={(e) => {
                     e.stopPropagation()
-                    navigate(`/create?runtime=${rt.id}`)
+                    navigate(`/create?runtime=${tpl.id}`)
                   }}
                 >
                   Deploy <ArrowRight size={16} color="white" />
@@ -173,23 +235,6 @@ function Templates() {
           })}
         </div>
       )}
-
-      {/* Info Box */}
-      <div style={{
-        marginTop: '2rem',
-        padding: '1rem',
-        background: 'var(--bg-secondary)',
-        borderRadius: '0.5rem',
-        fontSize: '0.85rem',
-        color: 'var(--text-secondary)'
-      }}>
-        <strong>About Templates:</strong>
-        <p style={{ margin: '0.5rem 0 0 0' }}>
-          Templates are pre-configured runtime environments. AI Agent templates (Hermes, OpenClaw, Odysseus) 
-          come with built-in support for multiple LLM providers. Generic App and Compose templates allow 
-          you to deploy any Docker image or multi-container application.
-        </p>
-      </div>
     </div>
   )
 }

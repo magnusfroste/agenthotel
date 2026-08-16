@@ -45,6 +45,16 @@ Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-a
 
 **Template images are only built once** — deploy reuses `<runtime>-agenthotel:latest` if it exists. After changing a template Dockerfile (e.g. the openclaw entrypoint that generates `openclaw.json` from `<SLUG>_API_KEY` / `<SLUG>_BASE_URL` / `<SLUG>_MODELS` env triplets), remove the image (`docker rmi <runtime>-agenthotel:latest`) and redeploy the agent to rebuild.
 
+## Template Library
+
+`GET /api/templates` and `/api/templates/:id` (plus the `list_templates` / `get_template` MCP tools) are served by `backend/lib/templates.js`.
+
+The **runtime plugins drive the list** — a runtime without a `meta.yaml` still appears, using the plugin's own name and description. `templates/<id>/meta.yaml` only adds presentation: `name`, `category`, `icon`, `color`, `description`, `instructions`, `benefits`, `features`, `links`, `changeLog`, `tags`. The `icon` is a name resolved to a Lucide component in `frontend/src/lib/templateIcons.js`, so adding a template needs no frontend change.
+
+**`plugin.configFields` is the single source of truth for configuration.** meta.yaml files used to carry a parallel `schema:` block that had already diverged from the real field names (`hermesModel` vs `HERMES_MODEL`); those blocks are gone. If the schema-driven deploy form on the backlog gets built, generate it from `configFields` — they are already typed (`text`/`password`/`number`/`textarea`, with `required`, `default`, `placeholder`). Never reintroduce a second config definition.
+
+Parsed meta.yaml is cached per file and invalidated on mtime, so editing a template on the host shows up without restarting the backend. A malformed meta.yaml logs `[Templates] Failed to parse …` and falls back to plugin metadata — one broken file never takes the library down.
+
 ## Install Script
 
 `install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). **No parameters required** - just run as root.

@@ -1,0 +1,43 @@
+name: Docker Compose
+category: Docker Compose
+icon: layers
+color: "#ec4899"
+description: |
+  Paste a full docker-compose.yml and deploy the whole stack as one guest.
+  For multi-container applications — app plus database, worker and cache —
+  that belong together and should check in and out as a unit.
+
+instructions: |
+  Paste your compose YAML, give the project a name (letters, digits,
+  underscores and hyphens only — it becomes the compose project name), and
+  add any environment variables the file interpolates. The panel routes the
+  agent's domain to the service you expose; other services stay internal to
+  the project network.
+
+links:
+  - label: Compose file reference
+    url: https://docs.docker.com/reference/compose-file/
+
+benefits:
+  - title: Multi-Container Stacks
+    description: App, database, worker and cache deployed and torn down together
+  - title: Bring Your Own YAML
+    description: Existing compose files work as-is, no rewriting into a template
+  - title: One Guest, One Domain
+    description: The stack gets a single domain with automatic HTTPS
+
+features:
+  - title: YAML Validation
+    description: The compose file is checked before anything is deployed
+  - title: Env Var Editor
+    description: Supply the values your compose file interpolates
+  - title: Project Isolation
+    description: Each deployment runs under its own compose project name
+  - title: Grouped Lifecycle
+    description: Start, stop and delete act on every service in the stack
+
+tags:
+  - Docker
+  - Compose
+  - Multi-Container
+  - Self-Hosted

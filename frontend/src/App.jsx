@@ -15,6 +15,7 @@ import Certificates from './components/Certificates'
 import Profile from './components/Profile'
 import Domains from './components/Domains'
 import Templates from './components/Templates'
+import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
 import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X } from 'lucide-react'
@@ -300,6 +301,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/templates" element={<Templates />} />
+              <Route path="/templates/:id" element={<TemplateDetail />} />
               <Route path="/create" element={<CreateAgent />} />
               <Route path="/compose" element={<Compose />} />
               <Route path="/agent/:id" element={<AgentDetail />} />

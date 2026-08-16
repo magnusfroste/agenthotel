@@ -4,6 +4,7 @@ const { demuxDockerBuffer } = require('./lib/demux');
 const {
   collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
 } = require('./lib/observability');
+const { listTemplates, getTemplate } = require('./lib/templates');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
 // is readable by every connected agent, so keys must never travel over it —
@@ -139,6 +140,20 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
     run_cleanup: {
       description: 'Prune stopped containers, dangling images, unused networks and unused build cache. Never touches volumes. Returns what was reclaimed',
       inputSchema: { type: 'object', properties: {} }
+    },
+    list_templates: {
+      description: 'List the template library — every deployable runtime with its category, tags and defaults',
+      inputSchema: { type: 'object', properties: {} }
+    },
+    get_template: {
+      description: 'Full detail for one template: description, post-deploy instructions, benefits, features, links and the config fields the deploy form expects. Use the template id as the runtime for create_agent',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          template_id: { type: 'string', description: 'The template id, e.g. "hermes"' }
+        },
+        required: ['template_id']
+      }
     }
   };
 
@@ -337,6 +352,18 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
           configFields: plugin.configFields
         }));
         return { content: [{ type: 'text', text: JSON.stringify(runtimeList, null, 2) }] };
+      }
+
+      case 'list_templates': {
+        return { content: [{ type: 'text', text: JSON.stringify(listTemplates(runtimes), null, 2) }] };
+      }
+
+      case 'get_template': {
+        const template = getTemplate(args.template_id, runtimes);
+        if (!template) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: `Unknown template: ${args.template_id}` }) }], isError: true };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(template, null, 2) }] };
       }
 
       default:
