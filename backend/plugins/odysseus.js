@@ -7,6 +7,9 @@ module.exports = {
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'LLM_HOST', label: 'LLM Host', type: 'text', required: false },
     { key: 'AUTH_ENABLED', label: 'Auth Enabled', type: 'select', options: ['true', 'false'], default: 'true' },
+    // setup.py seeds the admin from BOTH env vars; without the username it fell
+    // back to a generated password nobody could read. Both are sent through.
+    { key: 'ODYSSEUS_ADMIN_USER', label: 'Admin Username', type: 'text', default: 'admin' },
     { key: 'ODYSSEUS_ADMIN_PASSWORD', label: 'Admin Password', type: 'password', required: true }
   ],
 
@@ -22,7 +25,7 @@ module.exports = {
       'CHROMADB_PORT=8000',
       'SEARXNG_INSTANCE=http://searxng:8080'
     ];
-    const keys = ['OPENAI_API_KEY', 'LLM_HOST', 'AUTH_ENABLED', 'ODYSSEUS_ADMIN_PASSWORD'];
+    const keys = ['OPENAI_API_KEY', 'LLM_HOST', 'AUTH_ENABLED', 'ODYSSEUS_ADMIN_USER', 'ODYSSEUS_ADMIN_PASSWORD'];
     for (const key of keys) {
       if (config[key]) env.push(`${key}=${config[key]}`);
     }
