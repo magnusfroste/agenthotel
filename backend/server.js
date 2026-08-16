@@ -16,7 +16,7 @@ const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 
 const app = express();
 expressWs(app);
@@ -151,6 +151,15 @@ function hostExecAvailable() {
     console.log(`[Host Exec] nsenter into host namespaces ${hostExecChecked ? 'available' : 'NOT available — console commands will run inside the container'}`);
   }
   return hostExecChecked;
+}
+
+// nsenter arguments that drop a command into PID 1's namespaces, i.e. onto the
+// host. Everything after these is the command to run.
+const HOST_NS_ARGS = ['-t', '1', '-m', '-u', '-i', '-n', '-p', '--'];
+
+// Single-quote a value for safe interpolation into a /bin/sh command string.
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 // Login shell to use on the host: bash if present, sh otherwise. Cached.
@@ -2007,11 +2016,6 @@ app.post('/api/system/restart-docker', requireAuth, (req, res) => {
   res.status(501).json({ error: 'Restarting Docker must be done on the host via ssh: systemctl restart docker' });
 });
 
-app.post('/api/system/update', requireAuth, async (req, res) => {
-  // No .git or docker-compose.yml exists inside the container.
-  res.status(501).json({ error: 'Updating AgentHotel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
-});
-
 app.post('/api/system/reboot', requireAuth, (req, res) => {
   // The container cannot reboot the host.
   res.status(501).json({ error: 'Rebooting the server must be done on the host via ssh: reboot' });
@@ -2425,10 +2429,26 @@ app.put('/api/profile/password', requireAuth, (req, res) => {
   }
 });
 
+// GIT_COMMIT/GIT_VERSION are baked into the image at build time (ARG -> ENV in
+// backend/Dockerfile), so they describe the code that is actually running and
+// change exactly when the image is rebuilt.
+function currentCommit() {
+  const commit = (process.env.GIT_COMMIT || '').trim();
+  return commit && commit !== 'unknown' ? commit : 'unknown';
+}
+
+// Commits are compared as 7-char prefixes: GIT_COMMIT comes from
+// `git rev-parse --short HEAD`, whose length varies with repo size, while
+// GitHub returns the full sha.
+function shortSha(sha) {
+  return (sha || '').trim().substring(0, 7);
+}
+
 app.get('/api/system/version', requireAuth, (req, res) => {
   try {
-    const commit = process.env.GIT_COMMIT || 'unknown';
-    const version = process.env.GIT_VERSION || commit;
+    const commit = currentCommit();
+    const tagged = (process.env.GIT_VERSION || '').trim();
+    const version = tagged && tagged !== 'unknown' ? tagged : commit;
     res.json({ version, commit });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2437,8 +2457,8 @@ app.get('/api/system/version', requireAuth, (req, res) => {
 
 app.get('/api/system/check-update', requireAuth, async (req, res) => {
   try {
-    const currentCommit = process.env.GIT_COMMIT || 'unknown';
-    
+    const current = currentCommit();
+
     const fetch = require('node-fetch');
     const githubRes = await fetch('https://api.github.com/repos/magnusfroste/agenthotel/commits/main');
     const githubData = await githubRes.json();
@@ -2447,17 +2467,17 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
     if (!githubData || !githubData.sha) {
       return res.json({
         hasUpdate: false,
-        currentVersion: currentCommit.substring(0, 7),
+        currentVersion: shortSha(current),
         error: githubData?.message || 'Could not fetch latest commit from GitHub'
       });
     }
-    
-    const latestCommit = githubData.sha.substring(0, 7);
-    const hasUpdate = currentCommit !== 'unknown' && currentCommit !== latestCommit;
-    
+
+    const latestCommit = shortSha(githubData.sha);
+    const hasUpdate = current !== 'unknown' && shortSha(current) !== latestCommit;
+
     res.json({
       hasUpdate,
-      currentVersion: currentCommit.substring(0, 7),
+      currentVersion: shortSha(current),
       latestVersion: latestCommit,
       remoteCommit: latestCommit
     });
@@ -2466,9 +2486,141 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/system/upgrade', requireAuth, async (req, res) => {
-  // No .git or docker-compose.yml exists inside the container.
-  res.status(501).json({ error: 'Upgrading AgentHotel must be done on the host via ssh: git pull && docker compose build && docker compose up -d' });
+// Self-upgrade: there is no checkout inside the container, but the backend runs
+// with pid: host + privileged, so it can nsenter onto the host and drive the
+// real `git pull && docker compose build && docker compose up -d` there.
+const UPGRADE_SCRIPT_PATH = '/tmp/agenthotel-upgrade.sh';
+const UPGRADE_LOG_PATH = '/var/log/agenthotel-upgrade.log';
+const UPGRADE_SSH_HINT = 'Upgrade on the host via ssh: cd <install dir> && git pull && docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) && docker compose up -d';
+let upgradeStartedAt = null;
+
+// Where the panel's own compose project lives on the host. docker compose
+// stamps the project directory onto every container it creates, so the install
+// path never has to be hardcoded (AGENTHOTEL_DIR overrides it if it ever is).
+async function hostProjectDir() {
+  if (process.env.AGENTHOTEL_DIR) return process.env.AGENTHOTEL_DIR;
+  const info = await docker.getContainer(os.hostname()).inspect();
+  const labels = (info.Config && info.Config.Labels) || {};
+  return labels['com.docker.compose.project.working_dir'] || null;
+}
+
+// The upgrade recreates this very container, so the script must outlive it:
+// it leaves the panel's process group (setsid, done by the launcher) and its
+// cgroup, otherwise `docker compose up -d` kills the process running it.
+function buildUpgradeScript(dir) {
+  return `#!/bin/sh
+# Generated by AgentHotel's self-upgrade endpoint. Runs on the host.
+trap '' HUP INT TERM
+# Escape the panel container's cgroup — docker kills everything left in it
+# when the container is recreated a few lines further down.
+echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true
+for tasks in /sys/fs/cgroup/*/tasks; do echo $$ > "$tasks" 2>/dev/null || true; done
+
+set -e
+cd ${shQuote(dir)}
+echo "=== upgrade started $(date -u +%Y-%m-%dT%H:%M:%SZ) in $(pwd)"
+git pull --ff-only
+COMMIT=$(git rev-parse --short HEAD)
+echo "=== building $COMMIT"
+docker compose build --build-arg GIT_COMMIT="$COMMIT"
+echo "=== restarting"
+docker compose up -d
+echo "=== upgrade finished at $COMMIT"
+`;
+}
+
+async function upgradeHandler(req, res) {
+  if (!hostExecAvailable()) {
+    return res.status(501).json({
+      error: `Cannot reach the host (nsenter into the host namespaces failed). ${UPGRADE_SSH_HINT}`
+    });
+  }
+
+  // A second upgrade racing the first would fight over the same checkout.
+  if (upgradeStartedAt && Date.now() - upgradeStartedAt < 15 * 60 * 1000) {
+    return res.status(409).json({ error: 'An upgrade is already running.' });
+  }
+
+  let dir;
+  try {
+    dir = await hostProjectDir();
+  } catch (err) {
+    return res.status(500).json({ error: `Could not inspect the panel container: ${err.message}` });
+  }
+  if (!dir) {
+    return res.status(501).json({
+      error: `Could not locate the AgentHotel checkout on the host. Set AGENTHOTEL_DIR, or ${UPGRADE_SSH_HINT}`
+    });
+  }
+
+  try {
+    execFileSync('nsenter', [...HOST_NS_ARGS, '/bin/sh', '-c',
+      `test -f ${shQuote(`${dir}/docker-compose.yml`)} && test -d ${shQuote(`${dir}/.git`)}`
+    ], { stdio: 'ignore' });
+  } catch (err) {
+    return res.status(501).json({
+      error: `${dir} on the host is not a git checkout of AgentHotel. ${UPGRADE_SSH_HINT}`
+    });
+  }
+
+  // Write the script onto the host via stdin, then launch it with setsid so it
+  // survives this container being recreated. The launcher itself exits at once.
+  // The braces matter: `&` would otherwise background the whole AND-list, and a
+  // background job's stdin is /dev/null — cat would read EOF instead of the
+  // script.
+  const launcher = `cat > ${UPGRADE_SCRIPT_PATH} && chmod +x ${UPGRADE_SCRIPT_PATH} && `
+    + `{ setsid ${UPGRADE_SCRIPT_PATH} </dev/null >${UPGRADE_LOG_PATH} 2>&1 & }`;
+  const child = spawn('nsenter', [...HOST_NS_ARGS, '/bin/sh', '-c', launcher], {
+    stdio: ['pipe', 'ignore', 'pipe']
+  });
+
+  let stderr = '';
+  let replied = false;
+  const reply = (status, body) => {
+    if (replied) return;
+    replied = true;
+    res.status(status).json(body);
+  };
+
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.on('error', err => reply(500, { error: `Failed to start the upgrade: ${err.message}` }));
+  // An EPIPE here (launcher died before reading the script) is an unhandled
+  // 'error' event otherwise, which would take the whole panel down.
+  child.stdin.on('error', err => reply(500, { error: `Failed to start the upgrade: ${err.message}` }));
+  child.on('exit', code => {
+    if (code !== 0) {
+      return reply(500, { error: `Failed to start the upgrade: ${stderr.trim() || `exit code ${code}`}` });
+    }
+    upgradeStartedAt = Date.now();
+    logEvent('system.upgrade', null, `Self-upgrade started on the host in ${dir}`);
+    reply(202, {
+      started: true,
+      dir,
+      log: UPGRADE_LOG_PATH,
+      currentVersion: shortSha(currentCommit())
+    });
+  });
+  child.stdin.end(buildUpgradeScript(dir));
+}
+
+app.post('/api/system/upgrade', requireAuth, upgradeHandler);
+// Older name for the same action.
+app.post('/api/system/update', requireAuth, upgradeHandler);
+
+// Tail of the host-side upgrade log, so the UI (or a curl) can see how the
+// build is going — including after the panel restarted mid-upgrade.
+app.get('/api/system/upgrade-log', requireAuth, (req, res) => {
+  if (!hostExecAvailable()) {
+    return res.status(501).json({ error: 'Cannot reach the host (nsenter into the host namespaces failed).' });
+  }
+  execFile('nsenter', [...HOST_NS_ARGS, '/bin/sh', '-c', `tail -n 200 ${UPGRADE_LOG_PATH} 2>/dev/null`], {
+    timeout: 10000,
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024
+  }, (err, stdout) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ log: stdout || '', path: UPGRADE_LOG_PATH });
+  });
 });
 
 app.get('/api/system/ip', requireAuth, async (req, res) => {

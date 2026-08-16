@@ -138,7 +138,7 @@ Three containers, one `docker-compose.yml`:
 | Observability | `GET /api/agents/:id/stats`, `GET /api/agents/:id/uptime`, `GET /api/events` |
 | Providers | `GET/POST /api/providers`, `PUT/DELETE /api/providers/:id`, `/test`, `/models` |
 | Domains & TLS | `GET /api/domains`, `DELETE /api/domains/:id`, `GET /api/certificates` |
-| System | `GET /api/system/stats`, `/status`, `/version`, `/check-update`, `POST /api/docker/prune`, `GET /api/docker/cleanup-history` |
+| System | `GET /api/system/stats`, `/status`, `/version`, `/check-update`, `/upgrade-log`, `POST /api/system/upgrade`, `/api/docker/prune`, `GET /api/docker/cleanup-history` |
 | Auth | `GET/POST /api/setup`, `POST /api/login`, Bearer token for everything else |
 
 Full list in [`backend/server.js`](backend/server.js).
@@ -146,8 +146,9 @@ Full list in [`backend/server.js`](backend/server.js).
 ## Development
 
 ```bash
-# Rebuild and restart after changes
-docker compose build backend frontend
+# Rebuild and restart after changes. GIT_COMMIT is baked into the backend image
+# at build time — without it the panel reports its version as "unknown".
+docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) backend frontend
 docker compose up -d
 
 # Logs
