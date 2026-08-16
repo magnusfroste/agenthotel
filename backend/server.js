@@ -1304,6 +1304,14 @@ async function addCaddyRoute(domain, containerName, port) {
     }]
   };
 
+  // The @id is derived from the domain, so re-adding a route Caddy already has
+  // makes it reject the WHOLE config ("duplicate ID ... found at routes/2 and
+  // routes/3"). That turned every redeploy of an agent with a domain into a
+  // failure that had already torn down the old container — the agent ended up
+  // deleted and marked failed. Drop any existing route first; a 404 here just
+  // means there was nothing to replace.
+  await fetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' }).catch(() => {});
+
   const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
