@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authFetch } from '../lib/auth'
+import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload } from 'lucide-react'
 
@@ -50,18 +50,18 @@ function Dashboard() {
 
   async function toggleAgent(id, status) {
     const action = status === 'running' ? 'stop' : 'start'
-    try { 
-      await authFetch(`/api/agents/${id}/${action}`, { method: 'POST' })
+    try {
+      await authFetchOk(`/api/agents/${id}/${action}`, { method: 'POST' })
       fetchAgents()
       toast.success(`Agent ${action === 'start' ? 'started' : 'stopped'}`)
     }
-    catch (err) { toast.error('Action failed') }
+    catch (err) { toast.error(`Failed to ${action} agent: ` + err.message) }
   }
 
   async function handleDelete(id, name) {
     if (!confirm(`Delete ${name}? This cannot be undone.`)) return
-    try { await authFetch(`/api/agents/${id}`, { method: 'DELETE' }); fetchAgents() }
-    catch (err) { console.error('Failed to delete agent:', err) }
+    try { await authFetchOk(`/api/agents/${id}`, { method: 'DELETE' }); fetchAgents(); toast.success(`${name} deleted`) }
+    catch (err) { toast.error('Delete failed: ' + err.message) }
   }
 
   function formatBytes(bytes) {

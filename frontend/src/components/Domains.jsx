@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authFetch } from '../lib/auth'
+import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { ExternalLink, Trash2, RefreshCw, Globe } from 'lucide-react'
 
@@ -22,7 +22,7 @@ function Domains() {
   async function removeRoute(id, domain) {
     if (!confirm(`Remove the Caddy route for ${domain}? (The container is not deleted.)`)) return
     try {
-      await authFetch(`/api/domains/${id}`, { method: 'DELETE' })
+      await authFetchOk(`/api/domains/${id}`, { method: 'DELETE' })
       await fetchDomains()
       toast.success(`Route for ${domain} removed`)
     } catch (err) { toast.error('Failed to remove: ' + err.message) }

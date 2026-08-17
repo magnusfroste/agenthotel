@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { authFetch } from '../lib/auth'
+import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
@@ -60,7 +60,7 @@ function AgentDetail() {
 
   async function handleAction(path, method = 'POST', body = null) {
     try {
-      await authFetch(`/api/agents/${id}/${path}`, {
+      await authFetchOk(`/api/agents/${id}/${path}`, {
         method,
         ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})
       })
@@ -81,7 +81,7 @@ function AgentDetail() {
 
   async function handleDelete() {
     if (!confirm('Delete this agent? This cannot be undone.')) return
-    try { await authFetch(`/api/agents/${id}`, { method: 'DELETE' }); navigate('/') }
+    try { await authFetchOk(`/api/agents/${id}`, { method: 'DELETE' }); navigate('/') }
     catch (err) { notify('error', 'Delete failed: ' + err.message) }
   }
 
