@@ -574,8 +574,24 @@ function getCredentials(agent) {
   const creds = []
   if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
   if (agent.runtime === 'hermes') {
-    creds.push({ label: 'Dashboard Username', value: 'admin' })
-    creds.push({ label: 'Dashboard Password', value: c.HERMES_DASHBOARD_PASSWORD || 'agenthotel' })
+    // Mirror the precedence in plugins/hermes.js buildEnv — reading only
+    // HERMES_DASHBOARD_PASSWORD showed the default to anyone who had set
+    // HERMES_DASHBOARD_BASIC_AUTH_PASSWORD, i.e. the wrong password.
+    creds.push({ label: 'Dashboard Username', value: c.HERMES_DASHBOARD_BASIC_AUTH_USERNAME || 'admin' })
+    creds.push({
+      label: 'Dashboard Password',
+      value: c.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD || c.HERMES_DASHBOARD_PASSWORD || 'agenthotel'
+    })
+  }
+  if (agent.runtime === 'odysseus') {
+    creds.push({ label: 'Admin Username', value: c.ODYSSEUS_ADMIN_USER || 'admin' })
+    if (c.ODYSSEUS_ADMIN_PASSWORD) {
+      creds.push({ label: 'Admin Password', value: c.ODYSSEUS_ADMIN_PASSWORD })
+    } else {
+      // setup.py generates one on first boot and prints it to the container
+      // log; there is nothing in the config to show.
+      creds.push({ label: 'Admin Password', value: 'Generated on first boot — see the Logs tab' })
+    }
   }
   if (c.OPENAI_API_KEY) creds.push({ label: 'OpenAI API Key', value: c.OPENAI_API_KEY })
   if (c.OPENROUTER_API_KEY) creds.push({ label: 'OpenRouter API Key', value: c.OPENROUTER_API_KEY })
