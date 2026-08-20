@@ -3,6 +3,8 @@ module.exports = {
   description: 'Self-hosted AI workspace — chat, agents, deep research, memory',
   defaultImage: 'odysseus:latest',
   defaultPort: 7000,
+  // uvicorn answers 302 to /login when healthy.
+  healthCheck: { type: 'http', path: '/', expectBelow: 500 },
   configFields: [
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'LLM_HOST', label: 'LLM Host', type: 'text', required: false },

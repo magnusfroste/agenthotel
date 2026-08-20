@@ -17,6 +17,10 @@ module.exports = {
   // every time, 2048 boots clean. deployAgent takes the larger of this and the
   // host default.
   defaultMemoryMB: 2048,
+  // What "working" means for this runtime: the gateway answering on its port.
+  // Evaluated against the container directly, so it holds for agents with no
+  // domain and tells an app failure apart from a routing failure.
+  healthCheck: { type: 'http', path: '/', expectBelow: 500 },
   // What this runtime needs FROM a model, expressed as the request parameters
   // it actually sends. Probed against the operator's own models at deploy
   // time — see lib/modelSelect.js. OpenClaw emits custom-type tools, which

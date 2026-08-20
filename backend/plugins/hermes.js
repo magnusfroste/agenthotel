@@ -54,6 +54,9 @@ module.exports = {
   // Declared here so lib/modelSelect.js can probe for it rather than relying
   // on a hardcoded model name being right on someone else's account.
   modelConfigKey: 'HERMES_MODEL',
+  // The dashboard answers 302 (login redirect) when healthy — anything under
+  // 500 means the app is up and talking.
+  healthCheck: { type: 'http', path: '/', expectBelow: 500 },
   modelRequirements: { reasoning: { effort: 'low' } },
   fallbackModel: 'gpt-5.4',
   configFields: [

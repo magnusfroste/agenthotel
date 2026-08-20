@@ -17,6 +17,7 @@ const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate } = require('./lib/templates');
+const { evaluateHealth } = require('./lib/agentHealth');
 const { execFile, execFileSync } = require('child_process');
 
 const app = express();
@@ -791,7 +792,7 @@ app.get('/api/agents', requireAuth, (req, res) => {
   // List view: deliberately no config — it holds API keys and compose files,
   // and this endpoint is polled every few seconds by the sidebar/dashboard.
   // The detail endpoint below serves config when it's actually needed.
-  const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
+  const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, health, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
   res.json(agents);
 });
 
@@ -2556,6 +2557,67 @@ app.get('/api/system/ip', requireAuth, async (req, res) => {
 });
 
 // Uptime monitoring: probe every running agent with a domain every 60s, keep
+// agents.status was written once at deploy and never reconciled, so the
+// dashboard reported whatever the last write said — "running" for a container
+// that had been restart-looping behind a 502 for an hour. This asks each
+// runtime's declared criterion (lib/agentHealth.js) what its real state is and
+// writes that back, so the panel shows what is true rather than what was
+// intended.
+try {
+  db.exec('ALTER TABLE agents ADD COLUMN health TEXT');
+} catch (_) { /* column already present */ }
+
+const healthState = new Map();
+
+async function runHealthChecks() {
+  const fetch = require('node-fetch');
+  const agents = db.prepare('SELECT id, name, runtime, port, status FROM agents').all();
+
+  for (const agent of agents) {
+    const plugin = runtimes[agent.runtime];
+    let result;
+    try {
+      result = await evaluateHealth(docker, fetch, agent, plugin);
+    } catch (err) {
+      console.error(`[Health] ${agent.name}: ${err.message}`);
+      continue;
+    }
+
+    const status = result.state === 'stopped' ? 'stopped'
+      : result.state === 'missing' ? 'failed'
+      : result.healthy ? 'running'
+      : 'unhealthy';
+
+    // Written every sweep: the reason string carries the current detail even
+    // when the coarse status has not changed.
+    db.prepare('UPDATE agents SET status = ?, health = ? WHERE id = ?')
+      .run(status, `${result.state}: ${result.reason}`, agent.id);
+
+    // A deliberately stopped agent is not a fault — never alert on it.
+    if (result.state === 'stopped') { healthState.delete(agent.id); continue; }
+
+    const prev = healthState.get(agent.id);
+    if (prev === undefined) {
+      healthState.set(agent.id, result.healthy);
+      // Same trap as the uptime monitor: an agent broken from its first
+      // observation never transitions, so seeding quietly would keep exactly
+      // the failure we are trying to surface invisible.
+      if (!result.healthy) {
+        const msg = `Agent ${agent.name} is not healthy (${result.state}: ${result.reason})`;
+        logEvent('agent.unhealthy', agent.id, msg);
+        sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
+      }
+    } else if (prev !== result.healthy) {
+      healthState.set(agent.id, result.healthy);
+      const msg = result.healthy
+        ? `Agent ${agent.name} is healthy again`
+        : `Agent ${agent.name} is not healthy (${result.state}: ${result.reason})`;
+      logEvent(result.healthy ? 'agent.healthy' : 'agent.unhealthy', agent.id, msg);
+      sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
+    }
+  }
+}
+
 // 7 days of history, and log agent.down/agent.up events on state transitions
 // only (uptimeState tracks the last known ok-state per agent).
 const uptimeState = new Map();
@@ -2674,6 +2736,11 @@ app.listen(PORT, '0.0.0.0', async () => {
   setInterval(() => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
   }, 60 * 1000);
+  setInterval(() => {
+    runHealthChecks().catch(err => console.error('[Health] Error:', err.message));
+  }, 60 * 1000);
+  runHealthChecks().catch(() => {}); // reconcile immediately, don't wait a minute
+  console.log('[Health] Runtime health criteria enabled (60s interval)');
   console.log('[Uptime] Monitoring enabled (60s interval)');
   setInterval(() => {
     runResourceChecks().catch(err => console.error('[Resources] Error:', err.message));
