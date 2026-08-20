@@ -378,8 +378,17 @@ async function listOrphanedVolumes() {
   const belongsToAgent = (name) =>
     agentIds.some(id => name.startsWith(`agenthotel-${id}-`) || name.startsWith(`agenthotel-${id}_`));
 
+  // Anonymous volumes (Docker's 64-hex names) are the ones that actually
+  // accumulate — one per redeploy of any image declaring a VOLUME we did not
+  // map. They are never user-named, and inUse already excludes anything
+  // attached to a container (running or stopped), so an unattached one is
+  // genuinely stranded. Deliberately NOT widened to arbitrary named volumes:
+  // those belong to other applications on this host and must never be offered
+  // for deletion here.
+  const isAnonymous = (name) => /^[0-9a-f]{64}$/.test(name);
+
   return (Volumes || [])
-    .filter(v => v.Name.startsWith('agenthotel-') && !inUse.has(v.Name) && !belongsToAgent(v.Name))
+    .filter(v => (v.Name.startsWith('agenthotel-') || isAnonymous(v.Name)) && !inUse.has(v.Name) && !belongsToAgent(v.Name))
     .map(v => ({ name: v.Name, createdAt: v.CreatedAt || null, driver: v.Driver }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -1190,6 +1199,33 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     });
   }
   
+  // Docker creates a volume for every VOLUME the IMAGE declares — including
+  // ones inherited from the base image, which never appear in the template's
+  // own Dockerfile text. Those got no -v mapping, so Docker minted an
+  // anonymous volume per container. The consequences were severe and silent:
+  // the state lived somewhere the panel did not manage, a redeploy swapped in
+  // a fresh empty volume and stranded the old one, exports omitted it
+  // entirely, and the leak was invisible because the orphan view only matches
+  // the agenthotel- prefix. hermes keeps ALL of its state in /opt/data,
+  // declared by nousresearch/hermes-agent and absent from our Dockerfile.
+  // Ask the image what it actually declares instead of guessing from text.
+  try {
+    const imageInfo = await docker.getImage(imageToRun).inspect();
+    const declared = Object.keys((imageInfo && imageInfo.Config && imageInfo.Config.Volumes) || {});
+    const mapped = new Set(volumes.map(v => v.split(':')[1]).filter(Boolean));
+    for (const volumePath of declared) {
+      if (!volumePath.startsWith('/') || mapped.has(volumePath)) continue;
+      const safeName = volumePath.replace(/\//g, '-').replace(/^-/, '').replace(/[^a-zA-Z0-9_.-]/g, '');
+      if (!safeName) continue;
+      volumes.push(`agenthotel-${id}-${safeName}:${volumePath}`);
+      console.log(`[Deploy] Naming inherited image volume ${volumePath} for ${id}`);
+    }
+  } catch (err) {
+    // Not inspectable (e.g. a docker-app image not pulled yet on first deploy)
+    // — fall back to the Dockerfile-derived list rather than failing the deploy.
+    console.warn(`[Deploy] Could not read declared volumes from ${imageToRun}: ${err.message}`);
+  }
+
   if (volumes.length === 0) {
     volumes = [`agenthotel-${id}-data:/data`];
   }
