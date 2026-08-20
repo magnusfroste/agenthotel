@@ -50,6 +50,12 @@ module.exports = {
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
   defaultPort: 9119,
+  // Hermes sends reasoning.effort; models that predate it reject the request.
+  // Declared here so lib/modelSelect.js can probe for it rather than relying
+  // on a hardcoded model name being right on someone else's account.
+  modelConfigKey: 'HERMES_MODEL',
+  modelRequirements: { reasoning: { effort: 'low' } },
+  fallbackModel: 'gpt-5.4',
   configFields: [
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },

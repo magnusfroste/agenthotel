@@ -17,6 +17,15 @@ module.exports = {
   // every time, 2048 boots clean. deployAgent takes the larger of this and the
   // host default.
   defaultMemoryMB: 2048,
+  // What this runtime needs FROM a model, expressed as the request parameters
+  // it actually sends. Probed against the operator's own models at deploy
+  // time — see lib/modelSelect.js. OpenClaw emits custom-type tools, which
+  // older models reject with "unknown_parameter: Invalid value: 'custom'".
+  modelConfigKey: 'OPENCLAW_MODEL_PRIMARY',
+  modelRequirements: {
+    tools: [{ type: 'custom', custom: { name: 'agenthotel_probe' } }]
+  },
+  fallbackModel: 'gpt-5.3',
   // The entrypoint starts as root but sudo's down to node for the gateway, so the
   // state volumes are owned by node. Exec'ing a terminal as root would litter them
   // with root-owned files that OpenClaw can no longer write.

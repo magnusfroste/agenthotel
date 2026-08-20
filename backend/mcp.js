@@ -181,7 +181,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
         // Auto-inject API keys from providers + default models (shared with
         // server.js /api/agents via lib/providerEnv.js).
-        const finalConfig = injectProviderEnv(db, args.config);
+        const finalConfig = await injectProviderEnv(db, args.config, plugin);
 
         const agentConfig = plugin.buildConfig({ name: args.name, domain: args.domain, image, port, config: finalConfig });
 

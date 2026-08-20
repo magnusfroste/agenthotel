@@ -20,7 +20,7 @@ const slugify = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // Returns a new config object with provider env vars and default models
 // injected. Never mutates the input.
-function injectProviderEnv(db, config) {
+async function injectProviderEnv(db, config, plugin) {
   const finalConfig = { ...(config || {}) };
 
   const providers = db.prepare('SELECT name, type, apiKey, baseUrl, models FROM providers').all();
@@ -70,23 +70,41 @@ function injectProviderEnv(db, config) {
 
   // Set default model if not specified. Hermes needs a model that accepts
   // reasoning.effort; gpt-5.4 works, whereas gpt-4o rejects it.
-  // These literals name models on whoever's account the default was written
-  // for. On an account holding neither, the agent boots healthy and then fails
-  // every single turn with "model_not_found: The requested model does not
-  // exist" — which reads as a broken runtime, not a config default. Prefer a
-  // model the operator actually configured on the provider; their list, their
-  // order. The literals stay as a last resort for a provider with no models
-  // listed. An explicit model on the agent overrides all of this.
-  if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
-    const { firstConfiguredModel } = require('./defaultModel');
-    if (finalConfig.OPENAI_API_KEY) {
-      const model = firstConfiguredModel('OpenAI');
-      finalConfig.OPENCLAW_MODEL_PRIMARY = model ? `openai/${model}` : 'openai/gpt-5.3';
-      finalConfig.HERMES_MODEL = model ? `openai/${model}` : 'openai/gpt-5.4';
-    } else if (finalConfig.OPENROUTER_API_KEY) {
-      const model = firstConfiguredModel('OpenRouter');
-      finalConfig.OPENCLAW_MODEL_PRIMARY = model ? `openrouter/${model}` : 'openrouter/openai/gpt-5.3';
-      finalConfig.HERMES_MODEL = model ? `openrouter/${model}` : 'openrouter/openai/gpt-5.4';
+  // Which model to default to is a question only the runtime and the
+  // operator's provider can answer together: the runtime knows what it sends,
+  // the provider knows what it has. A hardcoded literal guesses at both and
+  // was wrong on this account twice over — first naming a model that did not
+  // exist, then one that existed but was too old for the request shape.
+  //
+  // So the runtime declares its requirements (plugin.modelRequirements) and
+  // lib/modelSelect.js probes the operator's configured models with exactly
+  // those parameters, caching each verdict. Runtimes with no declaration
+  // (odysseus, docker-app, compose) never reach this and are unaffected.
+  const modelKey = plugin && plugin.modelConfigKey;
+  if (modelKey && !finalConfig[modelKey]) {
+    const { selectModel } = require('./modelSelect');
+    const candidates = [
+      { envKey: 'OPENAI_API_KEY', name: 'OpenAI', prefix: 'openai' },
+      { envKey: 'OPENROUTER_API_KEY', name: 'OpenRouter', prefix: 'openrouter' }
+    ];
+    for (const { envKey, name, prefix } of candidates) {
+      if (!finalConfig[envKey]) continue;
+      const row = providers.find(p => (p.name || '').toLowerCase() === name.toLowerCase());
+      if (!row) continue;
+      let chosen = null;
+      try {
+        chosen = await selectModel(db, row, plugin.name || modelKey, plugin.modelRequirements);
+      } catch (err) {
+        console.warn(`[ProviderEnv] Model selection failed for ${name}: ${err.message}`);
+      }
+      // Nothing passed (or probing was not possible): fall back to the
+      // runtime's literal so a deploy still produces a usable config rather
+      // than an agent with no model at all.
+      finalConfig[modelKey] = `${prefix}/${chosen || plugin.fallbackModel}`;
+      if (!chosen) {
+        console.warn(`[ProviderEnv] No configured ${name} model satisfied ${plugin.name || modelKey}; using ${plugin.fallbackModel}`);
+      }
+      break;
     }
   }
 
