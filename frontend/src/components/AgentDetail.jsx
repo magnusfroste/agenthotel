@@ -4,7 +4,7 @@ import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
-  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer
+  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer, Activity
 } from 'lucide-react'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
@@ -151,13 +151,28 @@ function AgentDetail() {
             <h1 style={{ margin: 0 }}>{agent.name}</h1>
             <span style={{
               padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.72rem', fontWeight: 600,
-              background: running ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b',
+              background: running ? '#10b981'
+                : agent.status === 'unhealthy' || agent.status === 'failed' ? '#ef4444'
+                : agent.status === 'stopped' ? '#6b7280' : '#f59e0b',
               color: 'white', textTransform: 'uppercase', letterSpacing: '0.03em'
             }}>{agent.status}</span>
           </div>
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.3rem' }}>
             {agent.runtime} · {agent.image?.split('/').pop()}
           </div>
+          {/* The reason behind the badge — this is the page an operator opens
+              after seeing a red card, so the "why" belongs here in full. */}
+          {agent.health && (
+            <div style={{
+              fontSize: '0.85rem', marginTop: '0.35rem', display: 'flex',
+              alignItems: 'center', gap: '0.4rem',
+              color: agent.health.startsWith('healthy') || agent.health.startsWith('stopped')
+                ? 'var(--text-secondary)' : '#ef4444'
+            }}>
+              <Activity size={14} color="currentColor" />
+              <span>{agent.health}</span>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {appUrl && (

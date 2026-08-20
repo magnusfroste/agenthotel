@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity } from 'lucide-react'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -78,7 +78,31 @@ function Dashboard() {
     return 'low'
   }
 
-  const statusColor = (s) => s === 'running' ? '#10b981' : s === 'stopped' ? '#ef4444' : '#f59e0b'
+  // 'unhealthy' and 'failed' are the states that need attention, so they get
+  // the alarming colour. A stopped agent is a deliberate act, not a fault —
+  // it used to share red with genuine failures, which buried them.
+  const statusColor = (s) =>
+    s === 'running' ? '#10b981'
+      : s === 'unhealthy' || s === 'failed' ? '#ef4444'
+      : s === 'stopped' ? '#6b7280'
+      : '#f59e0b'
+
+  // The backend writes health as "<state>: <reason>", e.g. "healthy: HTTP 200"
+  // or "restarting: restarted 3 times".
+  const healthState = (h) => (h || '').split(':')[0].trim()
+  const healthColor = (h) => {
+    const state = healthState(h)
+    if (state === 'healthy') return 'var(--text-secondary)'
+    if (state === 'stopped') return 'var(--text-secondary)'
+    return '#ef4444'
+  }
+  const healthText = (h) => {
+    const [state, ...rest] = (h || '').split(':')
+    const reason = rest.join(':').trim()
+    // For a healthy agent the reason alone is the informative half; for a
+    // broken one the state is what the operator needs to read first.
+    return state.trim() === 'healthy' ? reason || 'healthy' : (h || '').trim()
+  }
 
   const visibleAgents = agents
     .filter(a => {
@@ -231,7 +255,9 @@ function Dashboard() {
             }}>
               <option value="all">All statuses</option>
               <option value="running">Running</option>
+              <option value="unhealthy">Unhealthy</option>
               <option value="stopped">Stopped</option>
+              <option value="failed">Failed</option>
               <option value="creating">Creating</option>
               <option value="redeploying">Redeploying</option>
             </select>
@@ -272,6 +298,12 @@ function Dashboard() {
                       <Package size={14} color="currentColor" />
                       <span>{agent.image?.split('/').pop()}</span>
                     </div>
+                    {agent.health && (
+                      <div className="agent-card-meta-item" style={{ color: healthColor(agent.health) }}>
+                        <Activity size={14} color="currentColor" />
+                        <span title={agent.health}>{healthText(agent.health)}</span>
+                      </div>
+                    )}
                   </div>
                 </Link>
                 <div className="agent-card-actions">
