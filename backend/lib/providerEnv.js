@@ -70,13 +70,23 @@ function injectProviderEnv(db, config) {
 
   // Set default model if not specified. Hermes needs a model that accepts
   // reasoning.effort; gpt-5.4 works, whereas gpt-4o rejects it.
+  // These literals name models on whoever's account the default was written
+  // for. On an account holding neither, the agent boots healthy and then fails
+  // every single turn with "model_not_found: The requested model does not
+  // exist" — which reads as a broken runtime, not a config default. Prefer a
+  // model the operator actually configured on the provider; their list, their
+  // order. The literals stay as a last resort for a provider with no models
+  // listed. An explicit model on the agent overrides all of this.
   if (!finalConfig.OPENCLAW_MODEL_PRIMARY && !finalConfig.HERMES_MODEL) {
+    const { firstConfiguredModel } = require('./defaultModel');
     if (finalConfig.OPENAI_API_KEY) {
-      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openai/gpt-5.3';
-      finalConfig.HERMES_MODEL = 'openai/gpt-5.4';
+      const model = firstConfiguredModel('OpenAI');
+      finalConfig.OPENCLAW_MODEL_PRIMARY = model ? `openai/${model}` : 'openai/gpt-5.3';
+      finalConfig.HERMES_MODEL = model ? `openai/${model}` : 'openai/gpt-5.4';
     } else if (finalConfig.OPENROUTER_API_KEY) {
-      finalConfig.OPENCLAW_MODEL_PRIMARY = 'openrouter/openai/gpt-5.3';
-      finalConfig.HERMES_MODEL = 'openrouter/openai/gpt-5.4';
+      const model = firstConfiguredModel('OpenRouter');
+      finalConfig.OPENCLAW_MODEL_PRIMARY = model ? `openrouter/${model}` : 'openrouter/openai/gpt-5.3';
+      finalConfig.HERMES_MODEL = model ? `openrouter/${model}` : 'openrouter/openai/gpt-5.4';
     }
   }
 

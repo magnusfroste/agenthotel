@@ -10,6 +10,13 @@ module.exports = {
   description: 'OpenClaw — persistent AI agent with gateway, tools and browser',
   defaultImage: 'ghcr.io/openclaw/openclaw:latest',
   defaultPort: 18789,
+  // OpenClaw npm-installs @openclaw/codex on first boot. That install peaks
+  // around 700 MB RSS on top of the running gateway, so the panel's 1024 MB
+  // default OOM-kills it, startup migrations never complete, the gateway
+  // refuses to report ready and the agent 502s forever. Verified: 1024 fails
+  // every time, 2048 boots clean. deployAgent takes the larger of this and the
+  // host default.
+  defaultMemoryMB: 2048,
   // The entrypoint starts as root but sudo's down to node for the gateway, so the
   // state volumes are owned by node. Exec'ing a terminal as root would litter them
   // with root-owned files that OpenClaw can no longer write.

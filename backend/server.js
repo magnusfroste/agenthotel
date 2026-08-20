@@ -1116,7 +1116,18 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // from host-wide env vars; per-agent overrides live in the agent config
   // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
   const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
-  const memLimitMB = parseInt(MEMORY_LIMIT_MB) || parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
+  // A runtime may need more than the host default just to finish booting.
+  // OpenClaw npm-installs its codex plugin on first start; at 1024 MB that
+  // install is OOM-killed (~700 MB RSS on top of the gateway), startup
+  // migrations never complete, the gateway refuses to report ready, and the
+  // agent 502s forever. It failed 100% of the time out of the box. So a plugin
+  // can declare a floor, and we take the larger of that and the host default —
+  // a generous DEFAULT_AGENT_MEM_MB still wins, a frugal one cannot drop a
+  // runtime below what it needs to start. An explicit per-agent
+  // MEMORY_LIMIT_MB always overrides both.
+  const runtimeFloorMB = parseInt(plugin.defaultMemoryMB) || 0;
+  const hostDefaultMB = parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
+  const memLimitMB = parseInt(MEMORY_LIMIT_MB) || Math.max(runtimeFloorMB, hostDefaultMB);
   const cpuLimit = parseFloat(CPU_LIMIT) || parseFloat(process.env.DEFAULT_AGENT_CPU) || 1;
 
   let imageToRun = image;
@@ -2570,6 +2581,18 @@ async function checkAgentUptime(fetch, agent) {
     const prev = uptimeState.get(agent.id);
     if (prev === undefined) {
       uptimeState.set(agent.id, isUp);
+      // Seeding the first observation silently is only right when the agent
+      // starts healthy. An agent that is broken from birth never transitions,
+      // so it would never fire agent.down and never notify — it just sits
+      // there looking fine. That is exactly how an openclaw agent OOM-killed
+      // at boot stayed invisible for an hour: 502 on every check from the
+      // first one, no state change, no event, and a dashboard still showing
+      // the status written at deploy time.
+      if (!isUp) {
+        const msg = `Agent ${agent.name} never came up (${statusCode ?? 'unreachable'})`;
+        logEvent('agent.down', agent.id, msg);
+        sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
+      }
     } else if (prev !== isUp) {
       uptimeState.set(agent.id, isUp);
       const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
