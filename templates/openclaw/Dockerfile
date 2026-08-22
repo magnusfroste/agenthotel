@@ -6,7 +6,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo build-essential \
     python3 python3-pip python3-venv python3-dev \
-    git ripgrep curl wget ca-certificates \
+    git ripgrep curl wget ca-certificates tmux \
     jq unzip zip openssh-client \
     && rm -rf /var/lib/apt/lists/*
 

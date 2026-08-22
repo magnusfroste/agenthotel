@@ -1633,11 +1633,44 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
       console.log('[Terminal] Got container, creating exec...');
       const agentRow = db.prepare('SELECT runtime FROM agents WHERE id = ?').get(req.params.id);
       const terminalUser = runtimes[agentRow?.runtime]?.terminalUser;
-      // /bin/sh is dash in Debian-based agent images — no arrow-key history,
-      // no line editing. Prefer bash when the image ships one.
+      // The shell used to be bound to this WebSocket: closing the Console tab,
+      // navigating away, reloading, or a network blip killed it along with
+      // whatever was running. Wrapping it in a tmux session moves the shell
+      // into the container, so reconnecting reattaches to the same prompt with
+      // its scrollback and running commands intact. `new -A` means
+      // create-or-attach, so the first visit starts one and every later visit
+      // resumes it.
+      //
+      // Tuned to be invisible rather than to expose tmux:
+      //   status off      — no tmux chrome; it looks like a plain shell
+      //   prefix None     — do NOT steal Ctrl-B, which is readline's
+      //                     cursor-left; stealing it would break line editing
+      //   mouse on        — the wheel scrolls tmux's history, since tmux's
+      //                     alternate screen otherwise disables xterm.js
+      //                     scrollback
+      //   history-limit   — bounded, so a long-lived session cannot grow
+      //                     without limit in container memory
+      //
+      // Falls back to the previous behaviour whenever tmux is missing, which
+      // is the normal case for docker-app images built from arbitrary bases.
+      const TMUX_CONF = [
+        'set -g status off',
+        'set -g mouse on',
+        'set -g history-limit 10000',
+        'set -g default-terminal "xterm-256color"',
+        'set -g aggressive-resize on',
+        'unbind C-b',
+        'set -g prefix None'
+      ].join('\n');
+      const plainShell = 'command -v bash >/dev/null 2>&1 && exec bash -i || exec sh -i';
+      const persistentShell =
+        `if command -v tmux >/dev/null 2>&1; then ` +
+        `printf '%s\\n' '${TMUX_CONF}' > /tmp/.agenthotel-tmux.conf 2>/dev/null; ` +
+        `exec tmux -f /tmp/.agenthotel-tmux.conf new -A -s agenthotel; ` +
+        `else ${plainShell}; fi`;
       const shellCmd = process.env.DEFAULT_SHELL
         ? [process.env.DEFAULT_SHELL]
-        : ['/bin/sh', '-c', 'command -v bash >/dev/null 2>&1 && exec bash -i || exec sh -i'];
+        : ['/bin/sh', '-c', persistentShell];
       const exec = await container.exec({
         AttachStdin: true, AttachStdout: true, AttachStderr: true,
         Tty: true,

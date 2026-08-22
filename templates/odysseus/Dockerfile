@@ -3,7 +3,7 @@ FROM python:3.11-slim
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ripgrep sudo \
+    git curl ripgrep sudo tmux \
     chromium \
     chromium-common \
     chromium-driver \

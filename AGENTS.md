@@ -55,6 +55,35 @@ The **runtime plugins drive the list** — a runtime without a `meta.yaml` still
 
 Parsed meta.yaml is cached per file and invalidated on mtime, so editing a template on the host shows up without restarting the backend. A malformed meta.yaml logs `[Templates] Failed to parse …` and falls back to plugin metadata — one broken file never takes the library down.
 
+## Persistent Web Terminal
+
+The Console tab's shell runs inside a tmux session (`tmux new -A -s agenthotel`),
+so it lives in the container rather than on the WebSocket. Closing the tab,
+navigating away, reloading or a network blip no longer kills the shell or
+whatever is running in it — reconnecting reattaches to the same prompt with its
+scrollback intact. A redeploy still ends it, since the container is replaced.
+
+tmux is configured to be invisible rather than to expose itself:
+
+- `status off` — no tmux chrome; it reads as a plain shell
+- `prefix None` — **do not change this.** The default prefix is Ctrl-B, which is
+  readline's cursor-left; stealing it breaks line editing in every shell session
+- `mouse on` — tmux's alternate screen disables xterm.js scrollback, so the
+  wheel has to scroll tmux's own history instead
+- `history-limit 10000` — bounded, so a long-lived session cannot grow without
+  limit in container memory
+
+The config is written to `/tmp/.agenthotel-tmux.conf` at connect time rather
+than baked into the images, so it also applies to any docker-app image that
+happens to ship tmux. When tmux is absent — the normal case for arbitrary
+docker-app bases — the handler falls back to the previous `bash -i` / `sh -i`
+behaviour, so nothing regresses. `tmux` is installed in the hermes, openclaw and
+odysseus templates.
+
+Consequence worth knowing: a forgotten session keeps running. That is the point,
+but a runaway command will keep consuming the agent's CPU allowance with nobody
+attached; the resource caps bound it and the health check surfaces the fallout.
+
 ## Install Script
 
 `install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). **No parameters required** - just run as root.

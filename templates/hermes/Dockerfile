@@ -5,7 +5,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     python3 python3-pip python3-venv \
-    git ripgrep sudo curl \
+    git ripgrep sudo curl tmux \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/bin
