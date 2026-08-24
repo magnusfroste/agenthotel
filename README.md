@@ -163,6 +163,20 @@ docker compose logs -f backend
 
 See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations), and [BACKLOG.md](BACKLOG.md) for the roadmap.
 
+## Trademarks
+
+AgentHotel deploys upstream projects' own container images, and the fleet and
+template cards show each project's own logo so you can tell one guest from
+another at a glance. The OpenClaw, Hermes and Odysseus names and marks belong to
+their respective projects and are used here only to identify the software the
+panel runs — the same way an app catalogue lists what it can install. AgentHotel
+is not affiliated with or endorsed by any of them.
+
+Logos live in `frontend/public/logos/` and are bundled rather than hotlinked, so
+the panel makes no third-party requests. If you maintain one of these projects
+and would rather your mark were not used, open an issue and it comes out.
+
 ## License
 
-MIT
+MIT covers AgentHotel's own code. The bundled logos are the property of their
+respective projects and are not covered by it.
