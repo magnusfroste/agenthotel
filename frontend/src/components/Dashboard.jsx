@@ -141,7 +141,7 @@ function Dashboard() {
     return (
       <div>
         <div className="page-header">
-          <h1 className="page-title">Agent Fleet</h1>
+          <h1 className="page-title">Fleet</h1>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
             <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
@@ -173,7 +173,7 @@ function Dashboard() {
   return (
     <div>
       <div className="page-header">
-        <h1 className="page-title">Agent Fleet</h1>
+        <h1 className="page-title">Fleet</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn" onClick={handlePrune} disabled={pruning} style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Trash2 size={16} color="white" /> {pruning ? 'Pruning…' : 'Prune Docker'}
