@@ -3,6 +3,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # Baked into the image, not passed at runtime: the reported version must
+      # describe the code in the image and change only when it is rebuilt.
+      # `docker compose build --build-arg GIT_COMMIT=...` overrides these.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_VERSION: ${GIT_VERSION:-unknown}
     container_name: agenthotel-backend
     restart: unless-stopped
     # pid: host + privileged let the backend nsenter into PID 1's namespaces
@@ -23,8 +29,6 @@ services:
       - PORT=8080
       - DB_PATH=/data/agenthotel.db
       - CADDY_API_URL=http://caddy:2019
-      - GIT_COMMIT=${GIT_COMMIT:-unknown}
-      - GIT_VERSION=${GIT_VERSION:-unknown}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agenthotel-data:/data

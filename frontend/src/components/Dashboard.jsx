@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity } from 'lucide-react'
+import { templateIcon } from '../lib/templateIcons'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -12,11 +13,16 @@ function Dashboard() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('name')
+  // Runtime icon and colour come from the template library (meta.yaml), so a
+  // card shows the same mark as its template and a new runtime needs no change
+  // here. Fetched once — this is presentation metadata, not live state.
+  const [runtimeMeta, setRuntimeMeta] = useState({})
   const toast = useToast()
 
   useEffect(() => {
     fetchAgents()
     fetchSystemStats()
+    fetchRuntimeMeta()
     const interval = setInterval(() => { if (!document.hidden) { fetchAgents(); fetchSystemStats() } }, 10000)
     return () => clearInterval(interval)
   }, [])
@@ -27,6 +33,16 @@ function Dashboard() {
       setAgents(await res.json())
     } catch (err) { console.error('Failed to fetch agents:', err) }
     finally { setLoading(false) }
+  }
+
+  async function fetchRuntimeMeta() {
+    try {
+      const res = await authFetch('/api/templates')
+      const list = await res.json()
+      setRuntimeMeta(Object.fromEntries(
+        (Array.isArray(list) ? list : []).map(t => [t.id, { icon: t.icon, color: t.color }])
+      ))
+    } catch (err) { console.error('Failed to fetch runtime metadata:', err) }
   }
 
   async function fetchSystemStats() {
@@ -285,9 +301,28 @@ function Dashboard() {
                       <div className="agent-card-title">{agent.name}</div>
                       <div className="agent-card-subtitle">{agent.runtime}</div>
                     </div>
-                    <span className="status-badge" style={{ background: statusColor(agent.status) }}>
-                      {agent.status}
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>
+                      <span className="status-badge" style={{ background: statusColor(agent.status) }}>
+                        {agent.status}
+                      </span>
+                      {(() => {
+                        const meta = runtimeMeta[agent.runtime]
+                        if (!meta) return null
+                        const Icon = templateIcon(meta.icon)
+                        return (
+                          <div
+                            title={agent.runtime}
+                            style={{
+                              width: '34px', height: '34px', borderRadius: '0.5rem',
+                              background: meta.color, display: 'flex',
+                              alignItems: 'center', justifyContent: 'center'
+                            }}
+                          >
+                            <Icon size={19} color="white" />
+                          </div>
+                        )
+                      })()}
+                    </div>
                   </div>
                   <div className="agent-card-meta">
                     <div className={`agent-card-meta-item ${url ? 'clickable' : ''}`}>

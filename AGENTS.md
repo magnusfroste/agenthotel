@@ -110,8 +110,11 @@ Endpoints:
 
 No test suite, linting, or CI exists. To test changes:
 ```bash
-# Rebuild and restart containers
-docker compose build
+# Rebuild and restart containers. GIT_COMMIT is a build arg baked into the
+# backend image (ARG -> ENV in backend/Dockerfile) and is what
+# /api/system/version and /api/system/check-update report — always pass it, or
+# the panel reports its version as "unknown".
+docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose up -d
 
 # Check logs

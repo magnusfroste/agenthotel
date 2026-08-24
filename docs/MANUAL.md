@@ -52,6 +52,6 @@ Agents can never starve the panel or freeze the host:
 ## Operations
 
 - **Backups / migration** — System page: full instance export/import, or per-agent zip export (optionally including volume data; stop the agent first for a consistent copy).
-- **Updates** — System page checks for new versions and can upgrade in place (git pull + rebuild).
+- **Updates** — the sidebar offers an Upgrade button when the running commit differs from `main`. It runs `git pull && docker compose build && docker compose up -d` on the host, in the checkout the panel was started from, and the panel restarts into the new image (progress: `GET /api/system/upgrade-log`, or `/var/log/agenthotel-upgrade.log` on the host). Requires the host access the panel already uses for the Server Console; without it the button reports the ssh command to run instead.
 - **Cleanup** — daily automatic Docker prune (agent volumes are never touched); history on the System page.
 - **Alerts** — webhook (Slack/Discord) or Telegram notifications for agent down/recovered and host disk/memory thresholds.

@@ -83,19 +83,51 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
 
   async function handleUpgrade() {
     if (!confirm('This will upgrade AgentHotel to the latest version. The panel will be temporarily unavailable. Continue?')) return
-    
+
     setUpgrading(true)
     try {
-      await authFetch('/api/system/upgrade', { method: 'POST' })
-      toast.success('Upgrade initiated. Panel will restart...')
-      setTimeout(() => {
-        window.location.reload()
-      }, 30000)
+      const res = await authFetch('/api/system/upgrade', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Upgrade failed. Please check logs.')
+        setUpgrading(false)
+        return
+      }
+      toast.success('Upgrade started. The panel restarts once the new image is built…')
+      waitForNewVersion(data.currentVersion || updateInfo?.currentVersion)
     } catch (err) {
       console.error('Failed to upgrade:', err)
       toast.error('Upgrade failed. Please check logs.')
       setUpgrading(false)
     }
+  }
+
+  // The build takes a few minutes and restarts the backend, so poll for a
+  // version different from the one we started on rather than reloading blindly.
+  function waitForNewVersion(before) {
+    // /api/system/version reports GIT_COMMIT verbatim, the upgrade endpoint
+    // reports it shortened — compare on a common prefix.
+    const short = (sha) => (sha || '').substring(0, 7)
+    const deadline = Date.now() + 15 * 60 * 1000
+    const poll = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(poll)
+        toast.error('Upgrade is taking longer than expected. Check /api/system/upgrade-log.')
+        setUpgrading(false)
+        return
+      }
+      try {
+        const res = await authFetch('/api/system/version')
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.commit && short(data.commit) !== short(before)) {
+          clearInterval(poll)
+          window.location.reload()
+        }
+      } catch (err) {
+        // Backend is restarting — keep polling.
+      }
+    }, 5000)
   }
 
   function isActive(path) {

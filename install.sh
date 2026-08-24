@@ -103,7 +103,10 @@ cd "$INSTALL_DIR"
 
 echo ""
 echo "Building and starting AgentHotel..."
-docker compose build
+# Bake the checked-out commit into the image so the panel reports the version it
+# is actually running (and can tell when a real update is available).
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+docker compose build --build-arg GIT_COMMIT="$GIT_COMMIT"
 docker compose up -d
 
 echo ""
