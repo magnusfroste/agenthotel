@@ -1,6 +1,9 @@
 name: Odysseus
 category: AI Agent
 icon: bot
+# Upstream's own mark, bundled locally under frontend/public/logos so the
+# panel makes no third-party requests and still works offline.
+logo: /logos/odysseus.png
 color: "#8b5cf6"
 description: |
   Self-hosted AI workspace with chat, agents, deep research, and memory.

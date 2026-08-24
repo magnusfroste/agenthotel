@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { templateIcon } from '../lib/templateIcons'
+import RuntimeMark from './RuntimeMark'
 import {
   ArrowLeft, ArrowRight, Package, Server, ExternalLink, Check, Sparkles, Info, AlertCircle
 } from 'lucide-react'
@@ -85,7 +85,6 @@ function TemplateDetail() {
     )
   }
 
-  const Icon = templateIcon(template.icon)
 
   return (
     <div>
@@ -98,12 +97,7 @@ function TemplateDetail() {
 
       {/* Header */}
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        <div style={{
-          width: '64px', height: '64px', borderRadius: '0.6rem', background: template.color,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-        }}>
-          <Icon size={32} color="white" />
-        </div>
+        <RuntimeMark meta={template} size={64} iconSize={32} />
         <div style={{ flex: 1, minWidth: '240px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
             <h1 style={{ margin: 0 }}>{template.name}</h1>

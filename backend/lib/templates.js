@@ -68,6 +68,9 @@ function summarize(id, plugin) {
     description: text(meta.description) || plugin.description || '',
     category: text(meta.category) || defaults.category || 'Other',
     icon: text(meta.icon) || defaults.icon || 'container',
+    // Path to the runtime's real logo, served from the frontend's public dir.
+    // Optional: the icon above stays the fallback for runtimes without one.
+    logo: text(meta.logo) || null,
     color: text(meta.color) || defaults.color || '#3b82f6',
     tags: list(meta.tags).filter(t => typeof t === 'string'),
     defaultImage: plugin.defaultImage || '',

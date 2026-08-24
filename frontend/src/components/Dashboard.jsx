@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity } from 'lucide-react'
-import { templateIcon } from '../lib/templateIcons'
+import RuntimeMark from './RuntimeMark'
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -40,7 +40,7 @@ function Dashboard() {
       const res = await authFetch('/api/templates')
       const list = await res.json()
       setRuntimeMeta(Object.fromEntries(
-        (Array.isArray(list) ? list : []).map(t => [t.id, { icon: t.icon, color: t.color }])
+        (Array.isArray(list) ? list : []).map(t => [t.id, { icon: t.icon, color: t.color, logo: t.logo, name: t.name }])
       ))
     } catch (err) { console.error('Failed to fetch runtime metadata:', err) }
   }
@@ -305,23 +305,7 @@ function Dashboard() {
                       <span className="status-badge" style={{ background: statusColor(agent.status) }}>
                         {agent.status}
                       </span>
-                      {(() => {
-                        const meta = runtimeMeta[agent.runtime]
-                        if (!meta) return null
-                        const Icon = templateIcon(meta.icon)
-                        return (
-                          <div
-                            title={agent.runtime}
-                            style={{
-                              width: '34px', height: '34px', borderRadius: '0.5rem',
-                              background: meta.color, display: 'flex',
-                              alignItems: 'center', justifyContent: 'center'
-                            }}
-                          >
-                            <Icon size={19} color="white" />
-                          </div>
-                        )
-                      })()}
+                      <RuntimeMark meta={runtimeMeta[agent.runtime]} />
                     </div>
                   </div>
                   <div className="agent-card-meta">

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { templateIcon } from '../lib/templateIcons'
+import RuntimeMark from './RuntimeMark'
 import { Package, Server, Database, ArrowRight, Info, Search, X } from 'lucide-react'
 
 function Templates() {
@@ -173,7 +173,6 @@ function Templates() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
           {filtered.map(tpl => {
-            const Icon = templateIcon(tpl.icon)
             return (
               <div
                 key={tpl.id}
@@ -181,9 +180,7 @@ function Templates() {
                 onClick={() => navigate(`/templates/${tpl.id}`)}
               >
                 <div className="template-card-header">
-                  <div className="template-card-icon" style={{ background: tpl.color }}>
-                    <Icon size={24} color="white" />
-                  </div>
+                  <RuntimeMark meta={tpl} size={48} iconSize={24} />
                   <span className="template-card-category">{tpl.category}</span>
                 </div>
 
