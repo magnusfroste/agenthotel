@@ -511,6 +511,24 @@ async function runScheduledCleanup() {
 setInterval(runScheduledCleanup, 24 * 60 * 60 * 1000);
 console.log('[Cleanup] Scheduled daily Docker cleanup enabled');
 
+// One-time migration: MCP enablement used to be a file at /app/mcp/config.json,
+// which lives in the image rather than a volume — so it silently reset on every
+// rebuild, and kept a copy of the token for no reason. It is a setting now, on
+// the data volume, and it is what actually gates the endpoint. Installs that had
+// already enabled MCP keep it on; everyone else starts off, which is the safer
+// default for a surface that can create and delete agents.
+try {
+  const existing = db.prepare("SELECT value FROM settings WHERE key = 'mcp_enabled'").get();
+  if (!existing) {
+    let legacy = false;
+    try { legacy = fs.existsSync('/app/mcp/config.json'); } catch (_) {}
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('mcp_enabled', legacy ? 'true' : 'false');
+    console.log(`[MCP] Endpoint ${legacy ? 'enabled (migrated from config.json)' : 'disabled — enable it on the System page'}`);
+  }
+} catch (err) {
+  console.error('[MCP] Could not initialise mcp_enabled:', err.message);
+}
+
 // Run a command inside a container and resolve with the captured stdout/stderr.
 // Used to introspect other containers (e.g. read Caddy's managed certificates).
 async function execCapture(containerName, cmd) {
@@ -2384,7 +2402,8 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
     const mcpConfigFile = path.join(mcpDir, 'config.json');
     
     let mcpInstalled = fs.existsSync(mcpServerFile);
-    let mcpConfigured = fs.existsSync(mcpConfigFile);
+    const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'mcp_enabled'").get();
+    let mcpConfigured = enabledRow ? enabledRow.value === 'true' : fs.existsSync(mcpConfigFile);
     let mcpRunning = false;
     let mcpEndpoint = null;
     let mcpToken = null;
@@ -2414,6 +2433,19 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
   }
 });
 
+// Turning MCP off is the other half of a switch. Without it the only way to
+// revoke an agent's access was to rotate the token, which breaks every other
+// client at the same time.
+app.post('/api/system/mcp-disable', requireAuth, (req, res) => {
+  try {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('mcp_enabled','false') ON CONFLICT(key) DO UPDATE SET value='false'").run();
+    logEvent('mcp.disabled', null, 'MCP endpoint disabled');
+    res.json({ enabled: false });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/system/mcp-enable', requireAuth, async (req, res) => {
   try {
     const fs = require('fs');
@@ -2431,6 +2463,11 @@ app.post('/api/system/mcp-enable', requireAuth, async (req, res) => {
       return res.status(500).json({ error: 'No auth token found' });
     }
     
+    // The flag is what gates the endpoint now; the file is written only so an
+    // older panel rolled back onto this data still reads as enabled.
+    db.prepare("INSERT INTO settings (key, value) VALUES ('mcp_enabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    logEvent('mcp.enabled', null, 'MCP endpoint enabled');
+
     const config = {
       endpoint: '/mcp',
       token: authToken,
@@ -2654,6 +2691,26 @@ function currentCommit() {
 function shortSha(sha) {
   return (sha || '').trim().substring(0, 7);
 }
+
+// Rotate the panel token. There is exactly one — the same value authenticates
+// the UI, the REST API and MCP — so this is how access is revoked once a token
+// has been shared with an agent, pasted somewhere it should not have been, or
+// simply outlived its purpose. Without it a leaked token was permanent, and
+// the token is root-equivalent on this host.
+//
+// Every other client breaks immediately, by design: connected MCP clients, other
+// browsers, any script holding the old value. The caller gets the new token back
+// so the session that rotated stays signed in.
+app.post('/api/system/token/rotate', requireAuth, (req, res) => {
+  try {
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'auth_token'").run(token);
+    logEvent('auth.token_rotated', null, 'Panel token rotated — other clients must reconnect');
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/system/version', requireAuth, (req, res) => {
   try {

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authFetch } from '../lib/auth'
+import { authFetch, authFetchOk, getToken, setToken } from '../lib/auth'
 import { useToast } from './Toast'
-import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers } from 'lucide-react'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers, Copy } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
@@ -54,6 +54,53 @@ function System() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function rotateToken() {
+    if (!confirm(
+      'Generate a new panel token?\n\n' +
+      'The current one stops working immediately. Every MCP client, script and ' +
+      'other browser using it must be given the new value. This browser stays ' +
+      'signed in.\n\n' +
+      'Do this if the token has been shared or exposed.'
+    )) return
+    try {
+      const res = await authFetchOk('/api/system/token/rotate', { method: 'POST' })
+      const data = await res.json()
+      // Store it, or this session locks itself out the moment the old value dies.
+      setToken(data.token)
+      toast.success('New token generated — copy it and update your MCP clients')
+      fetchMcpStatus()
+    } catch (err) {
+      toast.error('Could not rotate token: ' + err.message)
+    }
+  }
+
+  async function disableMcp() {
+    if (!confirm(
+      'Turn MCP off?\n\n' +
+      'The endpoint starts answering 403 immediately. Every connected agent and ' +
+      'client loses access until it is turned back on. The token is unchanged, ' +
+      'so they reconnect without new credentials.'
+    )) return
+    try {
+      await authFetchOk('/api/system/mcp-disable', { method: 'POST' })
+      toast.success('MCP disabled')
+      fetchMcpStatus()
+    } catch (err) {
+      toast.error('Could not disable MCP: ' + err.message)
+    }
+  }
+
+  function copyMcpToken() {
+    // The masked value cannot be pasted anywhere useful, and the real one was
+    // only on the Connect page — so reading the token meant leaving this
+    // screen mid-task. Same token the browser already uses for its requests.
+    const full = getToken()
+    if (!full) { toast.error('No token in this session — sign in again'); return }
+    navigator.clipboard.writeText(full)
+      .then(() => toast.success('MCP token copied'))
+      .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))
   }
 
   async function fetchCapacity() {
@@ -420,9 +467,22 @@ sysctl -w vm.swappiness=10`}</pre>
             )}
             {mcpStatus.token && (
               <div className="sysinfo-item">
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div className="sysinfo-label">Token</div>
-                  <div className="sysinfo-value text-mono">{mcpStatus.token}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    {/* Stays masked: the point is to copy it, not read it off a
+                        screen. The full value is the token this browser already
+                        holds for its own requests, so copying exposes nothing new. */}
+                    <div className="sysinfo-value text-mono">{mcpStatus.token}</div>
+                    <button onClick={copyMcpToken} title="Copy the full token"
+                      className="btn btn-secondary" style={{ padding: "0.25rem 0.5rem" }}>
+                      <Copy size={14} color="currentColor" />
+                    </button>
+                    <button onClick={rotateToken} title="Generate a new token and invalidate this one"
+                      className="btn btn-secondary" style={{ padding: "0.25rem 0.5rem" }}>
+                      <RefreshCw size={14} color="currentColor" />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -430,6 +490,11 @@ sysctl -w vm.swappiness=10`}</pre>
           {!mcpStatus.configured && (
             <button onClick={enableMcp} className="btn btn-primary">
               Enable MCP
+            </button>
+          )}
+          {mcpStatus.configured && (
+            <button onClick={disableMcp} className="btn btn-secondary">
+              Disable MCP
             </button>
           )}
           {mcpStatus.configured && (

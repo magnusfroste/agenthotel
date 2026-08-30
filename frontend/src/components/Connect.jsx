@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { authFetch, getToken } from '../lib/auth'
 import { Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle } from 'lucide-react'
 
 function Connect() {
+  const [tools, setTools] = useState(null)
+  const [mcpOn, setMcpOn] = useState(null)
+
   const [token, setToken] = useState('')
   const [panelDomain, setPanelDomain] = useState('')
   const [copied, setCopied] = useState('')
@@ -19,6 +23,20 @@ function Connect() {
       
       const storedToken = getToken()
       if (storedToken) setToken(storedToken)
+      // Ask the MCP endpoint what it serves rather than listing names by hand.
+      // The hardcoded list had drifted to eight of eighteen tools, so the page
+      // told operators the panel could do less than half of what it can — the
+      // same second-source-of-truth problem as the schema blocks in meta.yaml.
+      // Read the same flag that gates the endpoint, so this page cannot hand out
+      // an endpoint and a token for something that will answer 403.
+      authFetch('/api/system/mcp-status')
+        .then(r => r.json())
+        .then(st => {
+          setMcpOn(Boolean(st.configured))
+          if (st.configured && storedToken) fetchTools(storedToken)
+          else setTools([])
+        })
+        .catch(() => { setMcpOn(false); setTools([]) })
     } catch (err) {
       console.error('Failed to fetch config:', err)
     }
@@ -155,6 +173,36 @@ function Connect() {
         }
       }
     }
+  }
+
+  async function fetchTools(bearer) {
+    try {
+      const res = await fetch('/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      })
+      const data = await res.json()
+      // tools is an object keyed by name, not an array.
+      const listed = (data && data.result && data.result.tools) || {}
+      setTools(Object.entries(listed).map(([name, t]) => ({ name, description: t.description || '' })))
+    } catch (err) {
+      console.error('Failed to read MCP tools:', err)
+      setTools([])
+    }
+  }
+
+  if (mcpOn === false) {
+    return (
+      <div className="empty-state">
+        <h2>MCP is turned off</h2>
+        <p>
+          The endpoint answers 403 while it is off, so there is nothing to connect to yet.
+          Turn it on under <Link to="/system">System → MCP Server</Link>, then come back
+          here for the configuration snippets.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -305,14 +353,18 @@ function Connect() {
       }}>
         <h3 style={{ margin: '0 0 1rem 0', color: '#3b82f6' }}>Available MCP Tools</h3>
         <div style={{ fontSize: '0.875rem', lineHeight: '1.6' }}>
-          <strong>list_agents</strong> — List all AI agents<br />
-          <strong>get_agent</strong> — Get detailed agent information<br />
-          <strong>create_agent</strong> — Create and deploy a new agent<br />
-          <strong>delete_agent</strong> — Delete an agent and its container<br />
-          <strong>redeploy_agent</strong> — Redeploy an agent with latest image<br />
-          <strong>get_agent_logs</strong> — Get logs from an agent container<br />
-          <strong>system_status</strong> — Get system information and resource usage<br />
-          <strong>list_runtimes</strong> — List available agent runtimes
+          {tools === null && <span style={{ color: 'var(--text-secondary)' }}>Loading…</span>}
+          {tools && tools.length === 0 && (
+            <span style={{ color: 'var(--text-secondary)' }}>
+              Could not read the tool list — the MCP endpoint did not answer.
+            </span>
+          )}
+          {tools && tools.map(t => (
+            <div key={t.name} style={{ marginBottom: '0.35rem' }}>
+              <strong>{t.name}</strong>
+              {t.description ? <> — {t.description}</> : null}
+            </div>
+          ))}
         </div>
       </div>
     </div>

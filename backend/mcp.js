@@ -480,6 +480,20 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
   }
 
   function requireMcpAuth(req, res, next) {
+    // The endpoint used to be mounted unconditionally, so it answered from the
+    // moment the panel had an admin account — the "Enable MCP" button only wrote
+    // a file the status page read back. The switch displayed a state it did not
+    // control. It gates the surface now, which matters because these tools create
+    // and delete agents on a host where the panel is root-equivalent.
+    const mcpOn = db.prepare("SELECT value FROM settings WHERE key = 'mcp_enabled'").get();
+    if (!mcpOn || mcpOn.value !== 'true') {
+      return res.status(403).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: "MCP is disabled — enable it on the panel's System page" },
+        id: null
+      });
+    }
+
     const authHeader = req.headers.authorization;
     const queryToken = req.query.token;
     
