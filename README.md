@@ -44,8 +44,9 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
 
 ### Providers & Models
-- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** turns every configured provider into a selectable provider in its model picker, with its model list; Hermes and Odysseus are limited to one active provider at a time by the apps themselves (custom endpoints work via `OPENAI_BASE_URL` / `LLM_HOST` overrides)
+- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
 - **Provider testing** — list available models and test them per provider, right from the UI
+- **Private models** — point the whole fleet at your own hardware with one setting; the panel probes each provider's models, declines any too small for a runtime to run, and says so rather than falling back to a hosted API without telling you
 
 See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) for the full injection rules and per-runtime behavior.
 
@@ -69,18 +70,34 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 
 ## Quick Start
 
-On a fresh VPS (Ubuntu/Debian), as root:
+**Point DNS at the VPS first.** Caddy asks Let's Encrypt for a certificate the
+first time a domain is requested, and that fails if the name does not already
+resolve to this server. You need an A record for the panel (`panel.example.com`)
+and one per agent (`myagent.example.com`) — or a single wildcard `*.example.com`,
+which is simpler since every agent gets its own subdomain.
+
+Then, on a fresh VPS (Ubuntu/Debian), as root:
 
 ```bash
 git clone https://github.com/magnusfroste/agenthotel.git
 cd agenthotel
-./install.sh        # installs Docker, then:
-docker compose up -d
+./install.sh
 ```
 
-Open `http://your-server-ip`, create your admin account, set your panel domain — and deploy your first agent.
+That is the whole install. `install.sh` installs Docker, Git and lsof, creates a
+2 GB swapfile if the host has none, builds the images with the checked-out
+commit baked in, and starts everything — no separate `docker compose up`
+afterwards, and no parameters.
 
-Requirements: Docker + ports 80/443 free. The `install.sh` script handles Docker installation via the official apt repository.
+Open `http://your-server-ip`, create your admin account, set your panel domain —
+and deploy your first agent.
+
+Requirements: ports 80/443 free, and DNS as above. Docker is installed for you
+via the official apt repository.
+
+Next: add a provider under **Providers** so agents have a model to use. If that
+model runs on your own hardware, see the
+[Private models chapter](docs/MANUAL.md#private-models).
 
 ## Recommended Hardware
 
