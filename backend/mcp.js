@@ -262,8 +262,10 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
         } else {
           try {
             const container = docker.getContainer(`agenthotel-${args.agent_id}`);
-            try { await container.stop(); } catch (e) {}
-            try { await container.remove(); } catch (e) {}
+            // Same single forced removal as the REST delete. This path already
+            // worked, because its stop and remove had separate catches — but two
+            // paths doing teardown two ways is how they drift apart.
+            try { await container.remove({ force: true }); } catch (e) {}
           } catch (e) {}
         }
 

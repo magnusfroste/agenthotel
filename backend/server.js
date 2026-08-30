@@ -1439,10 +1439,23 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
       await plugin.remove(agent.id, config);
     } else {
       const container = docker.getContainer(`agenthotel-${req.params.id}`);
+      // force removes a running OR stopped container in one call. Stopping
+      // first and removing second looked equivalent but was not: stopping an
+      // already-stopped container returns 304, the catch swallowed it, and the
+      // remove never ran. The container then held its volumes, so every
+      // removeAgentVolumes call failed with 409 "volume is in use" — and since
+      // the orphan view excludes volumes attached to any container, running or
+      // not, the leak was invisible. Stopping an agent before deleting it, the
+      // obvious thing to do, leaked every time.
       try {
-        await container.stop();
-        await container.remove();
-      } catch (e) { /* container may not exist */ }
+        await container.remove({ force: true });
+      } catch (e) {
+        // 404 is fine — the container is already gone. Anything else means the
+        // volumes below will fail too, so say so rather than leaking quietly.
+        if (e.statusCode !== 404) {
+          console.error(`[Delete] Could not remove container for ${req.params.id}: ${e.message}`);
+        }
+      }
 
       await removeAgentVolumes(req.params.id);
     }
