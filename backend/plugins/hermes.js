@@ -102,22 +102,12 @@ module.exports = {
     }
     if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.4';
 
-    // The provider named in the model prefix owns the OPENAI_* slot for this
-    // agent. Hermes resolves a non-canonical provider through OPENAI_BASE_URL,
-    // and the OpenAI provider had already claimed that slot — so an agent
-    // pointed at a private endpoint got the private MODEL sent to
-    // api.openai.com, which is both broken and exactly the traffic the
-    // operator was trying to keep at home. Every provider also gets slug-based
-    // vars (unsloth -> UNSLOTH_BASE_URL / UNSLOTH_API_KEY), so prefer those
-    // when the model names a provider that is not one of the canonical ones.
-    const prefix = (autoConfig.HERMES_MODEL || '').split('/')[0].toLowerCase();
-    if (prefix && !PROVIDER_BASE_URL[prefix]) {
-      const slug = prefix.replace(/[^a-z0-9]/g, '').toUpperCase();
-      const baseUrl = autoConfig[`${slug}_BASE_URL`];
-      const apiKey = autoConfig[`${slug}_API_KEY`];
-      if (baseUrl) autoConfig.OPENAI_BASE_URL = baseUrl;
-      if (apiKey) autoConfig.OPENAI_API_KEY = apiKey;
-    }
+    // Deliberately NOT hijacking the OPENAI_* slot for a private provider any
+    // more. That worked, but made the private endpoint the ONLY one hermes
+    // could reach, since it overwrote the real OpenAI credentials. A private
+    // endpoint belongs in custom_providers instead, where it appears in the
+    // model picker under its own name and coexists with the hosted providers —
+    // which is what the operator expected, and what OpenClaw already does.
     return autoConfig;
   },
 
@@ -207,8 +197,29 @@ module.exports = {
     // The patch exists for the canonical hosted providers, where the image
     // bakes a wrong default. Returning null for anything else leaves hermes to
     // configure itself from the environment, which is what it does best.
-    if (!PROVIDER_REGISTRY_NAME[providerIn]) return null;
-    const provider = PROVIDER_REGISTRY_NAME[providerIn];
+    // A non-canonical provider is a custom endpoint. Hermes has a first-class
+    // slot for those — custom_providers in config.yaml — which is the entry the
+    // model picker shows as "Custom endpoint" when it is empty. Filling it in
+    // makes the endpoint appear under its own name, keyed to the env var the
+    // panel already injects, without displacing the hosted providers.
+    const canonical = PROVIDER_REGISTRY_NAME[providerIn];
+    if (!canonical) {
+      const slug = providerIn.replace(/[^a-z0-9]/g, '').toUpperCase();
+      const customBaseUrl = config[`${slug}_BASE_URL`];
+      // No base URL means nothing to point at; leave hermes to its own
+      // environment resolution rather than writing a broken entry.
+      if (!customBaseUrl) return null;
+      return `model:
+  provider: ${providerIn}
+  default: ${bareModel}
+custom_providers:
+- name: ${providerIn}
+  base_url: ${customBaseUrl}
+  key_env: ${slug}_API_KEY
+  model: ${bareModel}
+`;
+    }
+    const provider = canonical;
 
     return `model:
   provider: ${provider}

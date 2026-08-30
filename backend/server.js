@@ -1347,9 +1347,9 @@ mb = base64.b64decode('${b64}').decode()
 with open('/opt/data/config.yaml') as f: lines = f.readlines()
 out, i = [], 0
 while i < len(lines):
-    if lines[i].startswith('model:'):
+    if lines[i].startswith('model:') or lines[i].startswith('custom_providers:'):
         i += 1
-        while i < len(lines) and lines[i].startswith('  '): i += 1
+        while i < len(lines) and (lines[i].startswith('  ') or lines[i].startswith('- ')): i += 1
         continue
     out.append(lines[i]); i += 1
 open('/opt/data/config.yaml', 'w').write(mb + ''.join(out))
