@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { authFetch } from '../lib/auth';
+import { authFetch, authFetchOk } from '../lib/auth';
 import { useToast } from './Toast';
-import { Plus, Edit, Trash2, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, CheckCircle, XCircle, Code } from 'lucide-react';
 
 function Providers() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [rawOpen, setRawOpen] = useState(false)
+  const [rawText, setRawText] = useState('')
   const [liveModels, setLiveModels] = useState(null)
   const [runtimeFloor, setRuntimeFloor] = useState(0)
   const [formData, setFormData] = useState({
@@ -137,6 +139,60 @@ function Providers() {
     }
   }
 
+  // Raw view: the whole provider set as text, so moving it to another instance
+  // is a copy and a paste instead of retyping every row. Keys are included —
+  // they have to be, or the pasted set is useless on the other side — which is
+  // also why this is not open by default.
+  function openRaw() {
+    const clean = providers.map(p => ({
+      name: p.name,
+      type: p.type || 'openai',
+      baseUrl: p.baseUrl || '',
+      apiKey: p.apiKey || '',
+      models: Array.isArray(p.models) ? p.models : []
+    }))
+    setRawText(JSON.stringify(clean, null, 2))
+    setRawOpen(true)
+  }
+
+  function copyRaw() {
+    navigator.clipboard.writeText(rawText)
+      .then(() => toast.success('Providers copied — paste into the other instance'))
+      .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))
+  }
+
+  async function applyRaw() {
+    let parsed
+    try {
+      parsed = JSON.parse(rawText)
+    } catch (err) {
+      toast.error('Not valid JSON: ' + err.message)
+      return
+    }
+    if (!Array.isArray(parsed)) {
+      toast.error('Expected a JSON array of providers')
+      return
+    }
+    if (!confirm(
+      `Apply ${parsed.length} provider(s)?\n\n` +
+      'Providers are matched by name: an existing name is overwritten, a new one ' +
+      'is added. Nothing is deleted. Agents pick up changes on their next redeploy.'
+    )) return
+    try {
+      const res = await authFetchOk('/api/providers/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: rawText
+      })
+      const data = await res.json()
+      toast.success(`${data.created} added, ${data.updated} updated`)
+      setRawOpen(false)
+      fetchProviders()
+    } catch (err) {
+      toast.error('Import failed: ' + err.message)
+    }
+  }
+
   async function handleFetchModels(provider) {
     try {
       // ?live=1 asks the provider directly and returns the context window it
@@ -180,7 +236,30 @@ function Providers() {
           <Plus size={18} />
           Add Provider
         </button>
+        <button onClick={rawOpen ? () => setRawOpen(false) : openRaw} className="btn btn-secondary">
+          <Code size={18} />
+          {rawOpen ? "Close raw" : "Raw"}
+        </button>
       </div>
+
+      {rawOpen && (
+        <div className="settings-section">
+          <h2>All providers as text</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
+            Copy this into another instance to move every provider at once. Pasting
+            matches on name: an existing name is overwritten, a new one is added,
+            nothing is deleted. <strong>API keys are included</strong> — that is what
+            makes it work on the other side, so treat it like the keys themselves.
+          </p>
+          <textarea value={rawText} onChange={e => setRawText(e.target.value)}
+            spellCheck={false} rows={18}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.8rem" }} />
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+            <button onClick={copyRaw} className="btn btn-secondary">Copy</button>
+            <button onClick={applyRaw} className="btn btn-primary">Apply to this instance</button>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="settings-section">

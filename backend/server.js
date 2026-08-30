@@ -2062,6 +2062,49 @@ app.get('/api/providers', requireAuth, (req, res) => {
 // baseUrl like " https://host/v1" fails every request with an opaque error.
 const trimField = (v) => (typeof v === 'string' ? v.trim() : v);
 
+// Bulk upsert, so a whole provider set can be moved between instances by
+// copying text rather than retyping each one. Matched by NAME, not id: the
+// slug-based env vars agents receive are derived from the name, so a provider
+// carried over under a different name would inject different variables and
+// quietly stop matching the agents that referenced it.
+app.post('/api/providers/bulk', requireAuth, (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : req.body && req.body.providers;
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({ error: 'Expected a JSON array of providers' });
+    }
+    let created = 0, updated = 0;
+    const findByName = db.prepare('SELECT id FROM providers WHERE LOWER(name) = LOWER(?)');
+
+    for (const raw of incoming) {
+      const name = trimField(raw && raw.name);
+      if (!name) return res.status(400).json({ error: 'Every provider needs a name' });
+      const type = raw.type || 'openai';
+      const baseUrl = trimField(raw.baseUrl) || '';
+      const apiKey = trimField(raw.apiKey) || '';
+      // models may arrive as an array or as the JSON string the table stores.
+      let models = raw.models;
+      if (typeof models === 'string') { try { models = JSON.parse(models); } catch (_) { models = []; } }
+      if (!Array.isArray(models)) models = [];
+
+      const existing = findByName.get(name);
+      if (existing) {
+        db.prepare('UPDATE providers SET type = ?, baseUrl = ?, apiKey = ?, models = ? WHERE id = ?')
+          .run(type, baseUrl, apiKey, JSON.stringify(models), existing.id);
+        updated++;
+      } else {
+        db.prepare('INSERT INTO providers (id, name, type, baseUrl, apiKey, models) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(`provider-${name}-${Date.now()}`, name, type, baseUrl, apiKey, JSON.stringify(models));
+        created++;
+      }
+    }
+    logEvent('providers.bulk', null, `Providers imported: ${created} created, ${updated} updated`);
+    res.json({ created, updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/providers', requireAuth, (req, res) => {
   try {
     const name = trimField(req.body.name);
