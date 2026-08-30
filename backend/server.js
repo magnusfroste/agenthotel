@@ -157,7 +157,13 @@ function hostExecAvailable() {
 
 // nsenter arguments that drop a command into PID 1's namespaces, i.e. onto the
 // host. Everything after these is the command to run.
-const HOST_NS_ARGS = ['-t', '1', '-m', '-u', '-i', '-n', '-p', '--'];
+// -C matters as much as the rest: without the host's cgroup namespace, a
+// process lands in the host's mount namespace while still belonging to the
+// PANEL container's cgroup. It can then see /sys/fs/cgroup but not move out of
+// it, so `docker compose up -d` recreating the backend kills the very script
+// performing the upgrade — which is exactly how an upgrade died half-way,
+// leaving the old container stopped and the new one merely Created.
+const HOST_NS_ARGS = ['-t', '1', '-m', '-u', '-i', '-n', '-p', '-C', '--'];
 
 // Single-quote a value for safe interpolation into a /bin/sh command string.
 function shQuote(value) {
@@ -2687,6 +2693,17 @@ trap '' HUP INT TERM
 # when the container is recreated a few lines further down.
 echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true
 for tasks in /sys/fs/cgroup/*/tasks; do echo $$ > "$tasks" 2>/dev/null || true; done
+
+# Verify it, and refuse to continue if it did not work. Proceeding silently
+# means the compose recreate below kills this script part-way and leaves the
+# panel down, which is worse than not upgrading at all.
+if grep -q 'docker-' /proc/self/cgroup 2>/dev/null; then
+  echo "ABORTED: could not leave the panel container's cgroup."
+  echo "Upgrading from here would kill this script when the backend is recreated."
+  echo "Run it on the host instead: git pull, docker compose build, docker compose up -d"
+  exit 1
+fi
+echo "=== left the panel cgroup: $(cat /proc/self/cgroup)"
 
 set -e
 cd ${shQuote(dir)}
