@@ -288,7 +288,14 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
         if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
 
         const plugin = runtimes[agent.runtime];
-        const config = JSON.parse(agent.config || '{}');
+        // Re-inject provider env, exactly as the REST redeploy does. Without
+        // this the two paths disagreed: redeploying from the panel picked up
+        // providers added since the agent was created, while redeploying over
+        // MCP silently kept the old set — so a provider swapped on the panel
+        // never reached an agent redeployed by an agent. Injection only fills
+        // missing keys, so manual env edits are still never clobbered.
+        const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
+        db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), args.agent_id);
 
         db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
 
