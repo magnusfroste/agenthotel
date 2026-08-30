@@ -91,6 +91,23 @@ module.exports = {
       }
     }
     if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.4';
+
+    // The provider named in the model prefix owns the OPENAI_* slot for this
+    // agent. Hermes resolves a non-canonical provider through OPENAI_BASE_URL,
+    // and the OpenAI provider had already claimed that slot — so an agent
+    // pointed at a private endpoint got the private MODEL sent to
+    // api.openai.com, which is both broken and exactly the traffic the
+    // operator was trying to keep at home. Every provider also gets slug-based
+    // vars (unsloth -> UNSLOTH_BASE_URL / UNSLOTH_API_KEY), so prefer those
+    // when the model names a provider that is not one of the canonical ones.
+    const prefix = (autoConfig.HERMES_MODEL || '').split('/')[0].toLowerCase();
+    if (prefix && !PROVIDER_BASE_URL[prefix]) {
+      const slug = prefix.replace(/[^a-z0-9]/g, '').toUpperCase();
+      const baseUrl = autoConfig[`${slug}_BASE_URL`];
+      const apiKey = autoConfig[`${slug}_API_KEY`];
+      if (baseUrl) autoConfig.OPENAI_BASE_URL = baseUrl;
+      if (apiKey) autoConfig.OPENAI_API_KEY = apiKey;
+    }
     return autoConfig;
   },
 
@@ -162,7 +179,26 @@ module.exports = {
       baseUrl = PROVIDER_BASE_URL[providerIn] || config.OPENAI_BASE_URL || PROVIDER_BASE_URL.openai;
     }
 
-    const provider = PROVIDER_REGISTRY_NAME[providerIn] || 'custom';
+    // 'custom' is not a usable provider here: it is absent from hermes's model
+    // picker and its auth registry, so a private endpoint configured that way
+    // answers every request with "401: Invalid token payload" no matter which
+    // key is injected. Every provider the panel supports is OpenAI-compatible
+    // — providerEnv routes unknown ones through the OPENAI_* slots — so an
+    // unrecognised name is an openai-api endpoint with a different base URL,
+    // which resolves auth from OPENAI_API_KEY and honours the override.
+    // A private, OpenAI-compatible endpoint must NOT be pinned here. hermes
+    // resolves those from OPENAI_BASE_URL + OPENAI_API_KEY + a bare
+    // HERMES_MODEL entirely on its own — that is how the earlier Easypanel
+    // deployment of this same image worked against this same endpoint, with no
+    // config.yaml block at all. Patching one in fights that resolution: it
+    // pinned `provider: custom`, which is absent from hermes's auth registry
+    // and answered every request with "401: Invalid token payload".
+    //
+    // The patch exists for the canonical hosted providers, where the image
+    // bakes a wrong default. Returning null for anything else leaves hermes to
+    // configure itself from the environment, which is what it does best.
+    if (!PROVIDER_REGISTRY_NAME[providerIn]) return null;
+    const provider = PROVIDER_REGISTRY_NAME[providerIn];
 
     return `model:
   provider: ${provider}

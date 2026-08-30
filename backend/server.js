@@ -1325,8 +1325,13 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // preserving other sections) then SIGHUP the gateway so it re-reads (s6
   // auto-respawns it; SIGHUP keeps Docker networks intact). This runs async —
   // deployAgent returns immediately once the container is up/routed.
-  if (runtime === 'hermes' && plugin.generateConfig) {
-    patchHermesConfig(container, plugin.generateConfig(config)).catch(err =>
+  // generateConfig returns null when hermes should be left to resolve the
+  // model from the environment on its own — see the plugin for why.
+  const hermesModelBlock = runtime === 'hermes' && plugin.generateConfig
+    ? plugin.generateConfig(config)
+    : null;
+  if (hermesModelBlock) {
+    patchHermesConfig(container, hermesModelBlock).catch(err =>
       console.error('[Hermes] config patch failed:', err.message)
     );
   }
