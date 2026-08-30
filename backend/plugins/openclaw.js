@@ -17,6 +17,10 @@ module.exports = {
   // every time, 2048 boots clean. deployAgent takes the larger of this and the
   // host default.
   defaultMemoryMB: 2048,
+  // --agent main targets the default session; without a target OpenClaw refuses
+  // with "No target session selected". Runs as terminalUser like any other exec
+  // here, so it does not leave root-owned files in node's state volumes.
+  dispatch: (message) => ['openclaw', 'agent', '--agent', 'main', '-m', message],
   // What "working" means for this runtime: the gateway answering on its port.
   // Evaluated against the container directly, so it holds for agents with no
   // domain and tells an app failure apart from a routing failure.

@@ -2987,6 +2987,12 @@ async function runHealthChecks() {
   const agents = db.prepare('SELECT id, name, runtime, port, status FROM agents').all();
 
   for (const agent of agents) {
+    // An agent mid-deploy has a row but no container yet, and a template image
+    // can take minutes to build. Judging it then reported "failed: container
+    // not found" for the whole build — alarming, and wrong: nothing had failed.
+    // Deploy owns the status until it hands over.
+    if (agent.status === 'creating' || agent.status === 'redeploying') continue;
+
     const plugin = runtimes[agent.runtime];
     let result;
     try {

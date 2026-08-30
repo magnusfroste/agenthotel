@@ -134,7 +134,21 @@ AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 }
 ```
 
-Tools: `list_agents`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `system_status`, `list_runtimes`, `list_templates`, `get_template`.
+**Fleet** — `list_agents`, `get_agent`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`
+
+**Put agents to work** — `ask_agent` hands a hosted agent a task and returns its
+reply, or dispatches it in the background so the agent keeps working after the
+call returns and you read the outcome from its logs. `exec_in_agent` runs a
+command inside an agent's container for inspection. Neither touches the VPS
+host; that is the panel's own Server Console.
+
+**Observability** — `health_check`, `get_host_metrics`, `get_agent_stats`, `get_uptime`, `get_docker_usage`, `get_events`, `system_status`, `run_cleanup`
+
+**Templates** — `list_runtimes`, `list_templates`, `get_template`, `create_template`
+
+The endpoint is off until you enable it under System → MCP Server, and the token
+is the panel's own — which is root-equivalent on that host, so treat it
+accordingly. Rotate it from the same page.
 
 ## Architecture
 

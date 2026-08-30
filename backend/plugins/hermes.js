@@ -104,6 +104,10 @@ module.exports = {
   // a number from an observed prompt size would repeat the mistake that made
   // hermes probe for a `reasoning` parameter it does not accept.
   minContextTokens: 64000,
+  // How to hand this runtime a task and get its answer back, as argv so no
+  // quoting of the message is required. -z is hermes's one-shot mode: it runs a
+  // single turn and exits rather than opening a session.
+  dispatch: (message) => ['hermes', '-z', message],
   fallbackModel: 'gpt-5.4',
   configFields: [
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },

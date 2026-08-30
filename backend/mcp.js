@@ -141,6 +141,31 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
       description: 'Prune stopped containers, dangling images, unused networks and unused build cache. Never touches volumes. Returns what was reclaimed',
       inputSchema: { type: 'object', properties: {} }
     },
+    ask_agent: {
+      description: "Give a hosted agent a task and get its reply. This is the point of the hotel: check a guest in with create_agent, then hand it work. Set background true for jobs that outlive a request — the agent keeps working after this returns, and you read the outcome later with get_agent_logs",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID' },
+          message: { type: 'string', description: 'The task, in plain language' },
+          background: { type: 'boolean', description: 'Return immediately and let the agent keep working (default false)' },
+          timeout_ms: { type: 'integer', description: 'How long to wait for a reply when not backgrounded (default 180000, max 600000)' }
+        },
+        required: ['agent_id', 'message']
+      }
+    },
+    exec_in_agent: {
+      description: "Run a shell command INSIDE an agent's container and return its output — for checking an agent's own state, config and logs from the outside. Non-interactive: it runs, returns, and exits. This never touches the VPS host; use the panel's Server Console for that",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID' },
+          command: { type: 'string', description: 'Command line, run through /bin/sh -c inside the container' },
+          timeout_ms: { type: 'integer', description: 'Give up after this long (default 60000, max 300000)' }
+        },
+        required: ['agent_id', 'command']
+      }
+    },
     list_templates: {
       description: 'List the template library — every deployable runtime with its category, tags and defaults',
       inputSchema: { type: 'object', properties: {} }
@@ -409,6 +434,139 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
           configFields: plugin.configFields
         }));
         return { content: [{ type: 'text', text: JSON.stringify(runtimeList, null, 2) }] };
+      }
+
+      case 'ask_agent': {
+        const agent = db.prepare('SELECT id, name, runtime FROM agents WHERE id = ?').get(args.agent_id);
+        if (!agent) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
+        }
+        const plugin = runtimes[agent.runtime];
+        // The runtime declares how it is spoken to; a runtime that declares
+        // nothing is not addressable this way, and says so rather than having
+        // the caller guess at a CLI.
+        if (!plugin || typeof plugin.dispatch !== 'function') {
+          return { content: [{ type: 'text', text: JSON.stringify({
+            error: `The ${agent.runtime} runtime has no dispatch interface — talk to it through its own UI, or use exec_in_agent`
+          }) }], isError: true };
+        }
+        const message = String(args.message || '').trim();
+        if (!message) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'message is required' }) }], isError: true };
+        }
+
+        try {
+          const container = docker.getContainer(`agenthotel-${agent.id}`);
+          const info = await container.inspect().catch(() => null);
+          if (!info || !info.State.Running) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent is not running' }) }], isError: true };
+          }
+
+          // argv, not a shell string: the message is arbitrary text and must
+          // never be parsed as shell.
+          const cmd = plugin.dispatch(message);
+          const runAs = plugin.terminalUser;
+          const exec = await container.exec({
+            Cmd: cmd,
+            AttachStdout: !args.background, AttachStderr: !args.background,
+            Tty: false,
+            ...(runAs ? { User: runAs } : {})
+          });
+
+          db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+            .run('agent.task', agent.id, `Task sent over MCP: ${message.slice(0, 120)}`);
+
+          if (args.background) {
+            // Detached: the agent keeps working after this returns. Its output
+            // goes to the container log, which get_agent_logs reads.
+            const stream = await exec.start({ Detach: true });
+            try { stream.destroy(); } catch (_) {}
+            return { content: [{ type: 'text', text: JSON.stringify({
+              dispatched: true, agent: agent.name,
+              note: 'Running in the background — read the outcome with get_agent_logs'
+            }, null, 2) }] };
+          }
+
+          const timeoutMs = Math.min(parseInt(args.timeout_ms) || 180000, 600000);
+          const stream = await exec.start({ Tty: false });
+          const chunks = [];
+          let size = 0;
+          const CAP = 256 * 1024;
+          const how = await new Promise((resolve) => {
+            const timer = setTimeout(() => { try { stream.destroy(); } catch (_) {} resolve('timeout'); }, timeoutMs);
+            stream.on('data', (c) => { if (size < CAP) { chunks.push(c); size += c.length; } });
+            stream.on('end', () => { clearTimeout(timer); resolve('end'); });
+            stream.on('error', () => { clearTimeout(timer); resolve('error'); });
+          });
+          const details = await exec.inspect().catch(() => ({}));
+          return { content: [{ type: 'text', text: JSON.stringify({
+            agent: agent.name,
+            exitCode: details.ExitCode ?? null,
+            timedOut: how === 'timeout',
+            truncated: size >= CAP,
+            reply: demuxDockerBuffer(Buffer.concat(chunks)).toString('utf8').trim()
+          }, null, 2) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+        }
+      }
+
+      case 'exec_in_agent': {
+        const agent = db.prepare('SELECT id, runtime FROM agents WHERE id = ?').get(args.agent_id);
+        if (!agent) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
+        }
+        const command = String(args.command || '').trim();
+        if (!command) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'command is required' }) }], isError: true };
+        }
+        const timeoutMs = Math.min(parseInt(args.timeout_ms) || 60000, 300000);
+
+        try {
+          const container = docker.getContainer(`agenthotel-${agent.id}`);
+          const info = await container.inspect().catch(() => null);
+          if (!info || !info.State.Running) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent is not running' }) }], isError: true };
+          }
+
+          // Run as the runtime's own user where it declares one. OpenClaw's
+          // state volumes belong to `node`; a root shell there leaves
+          // root-owned files it can no longer write.
+          const runAs = runtimes[agent.runtime]?.terminalUser;
+          const exec = await container.exec({
+            Cmd: ['/bin/sh', '-c', command],
+            AttachStdout: true, AttachStderr: true, Tty: false,
+            ...(runAs ? { User: runAs } : {})
+          });
+          const stream = await exec.start({ Tty: false });
+
+          const chunks = [];
+          let size = 0;
+          const OUTPUT_CAP = 256 * 1024; // a runaway command must not flood the caller
+          const output = await new Promise((resolve) => {
+            const done = (reason) => resolve(reason);
+            const timer = setTimeout(() => { try { stream.destroy(); } catch (_) {} done('timeout'); }, timeoutMs);
+            stream.on('data', (c) => {
+              if (size < OUTPUT_CAP) { chunks.push(c); size += c.length; }
+            });
+            stream.on('end', () => { clearTimeout(timer); done('end'); });
+            stream.on('error', () => { clearTimeout(timer); done('error'); });
+          });
+
+          const details = await exec.inspect().catch(() => ({}));
+          const text = demuxDockerBuffer(Buffer.concat(chunks)).toString('utf8');
+          db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+            .run('agent.exec', agent.id, `Ran over MCP: ${command.slice(0, 120)}`);
+
+          return { content: [{ type: 'text', text: JSON.stringify({
+            exitCode: details.ExitCode ?? null,
+            timedOut: output === 'timeout',
+            truncated: size >= OUTPUT_CAP,
+            output: text
+          }, null, 2) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+        }
       }
 
       case 'list_templates': {
