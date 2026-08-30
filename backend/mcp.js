@@ -4,7 +4,7 @@ const { demuxDockerBuffer } = require('./lib/demux');
 const {
   collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
 } = require('./lib/observability');
-const { listTemplates, getTemplate } = require('./lib/templates');
+const { listTemplates, getTemplate, saveTemplate } = require('./lib/templates');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
 // is readable by every connected agent, so keys must never travel over it —
@@ -144,6 +144,54 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
     list_templates: {
       description: 'List the template library — every deployable runtime with its category, tags and defaults',
       inputSchema: { type: 'object', properties: {} }
+    },
+    create_template: {
+      description: 'Add a template to the library so it can be deployed later. Pure data: an image or a compose file plus env fields and presentation, deployed through an existing runtime. Use this when you find an agent or app worth trying — the operator reviews it in the library before anything runs',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Slug: lowercase letters, digits and hyphens, 3-40 chars' },
+          name: { type: 'string', description: 'Display name' },
+          description: { type: 'string', description: 'What it is and why someone would run it' },
+          instructions: { type: 'string', description: 'What the operator must do after deploying' },
+          category: { type: 'string', description: 'Grouping in the library, e.g. "AI Agent"' },
+          icon: { type: 'string', description: 'zap | paw | bot | container | layers | boxes | server | database' },
+          color: { type: 'string', description: 'Hex colour for the tile, e.g. "#8b5cf6"' },
+          tags: { type: 'array', items: { type: 'string' } },
+          links: {
+            type: 'array',
+            description: 'Upstream docs and homepage',
+            items: { type: 'object', properties: { label: { type: 'string' }, url: { type: 'string' } } }
+          },
+          deploy: {
+            type: 'object',
+            description: 'How to run it. runtime "docker-app" needs image (and port); runtime "compose" needs compose',
+            properties: {
+              runtime: { type: 'string', description: '"docker-app" or "compose"' },
+              image: { type: 'string', description: 'Full image reference, docker-app only' },
+              port: { type: 'integer', description: 'Port the container listens on, docker-app only' },
+              compose: { type: 'string', description: 'A complete docker-compose.yml, compose only' },
+              env: {
+                type: 'array',
+                description: 'Fields the deploy form asks for',
+                items: {
+                  type: 'object',
+                  properties: {
+                    key: { type: 'string' },
+                    label: { type: 'string' },
+                    type: { type: 'string', description: 'text | password | number | textarea' },
+                    required: { type: 'boolean' },
+                    default: { type: 'string' },
+                    description: { type: 'string' }
+                  }
+                }
+              }
+            },
+            required: ['runtime']
+          }
+        },
+        required: ['id', 'name', 'deploy']
+      }
     },
     get_template: {
       description: 'Full detail for one template: description, post-deploy instructions, benefits, features, links and the config fields the deploy form expects. Use the template id as the runtime for create_agent',
@@ -356,6 +404,19 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
       case 'list_templates': {
         return { content: [{ type: 'text', text: JSON.stringify(listTemplates(runtimes), null, 2) }] };
+      }
+
+      case 'create_template': {
+        try {
+          // Marked source: 'mcp' so the library can show who wrote it. The data
+          // is equally inert whoever did, but an operator deserves to know.
+          const id = saveTemplate(args, runtimes, 'mcp');
+          db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+            .run('template.create', null, `Created template ${id} (mcp)`);
+          return { content: [{ type: 'text', text: JSON.stringify(getTemplate(id, runtimes), null, 2) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+        }
       }
 
       case 'get_template': {

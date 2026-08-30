@@ -16,7 +16,7 @@ const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
-const { listTemplates, getTemplate } = require('./lib/templates');
+const { listTemplates, getTemplate, saveTemplate, deleteTemplate } = require('./lib/templates');
 const { evaluateHealth } = require('./lib/agentHealth');
 const { execFile, execFileSync, spawn } = require('child_process');
 
@@ -1831,6 +1831,34 @@ app.get('/api/runtimes', requireAuth, (req, res) => {
 // the presentation metadata in templates/<id>/meta.yaml.
 app.get('/api/templates', requireAuth, (req, res) => {
   res.json(listTemplates(runtimes));
+});
+
+// Admin-authored templates. Pure data deployed through an existing runtime, so
+// this grants nothing create_agent does not already allow — it just saves the
+// recipe. Plugins remain code, remain files, and are never writable here.
+app.post('/api/templates', requireAuth, (req, res) => {
+  try {
+    const id = saveTemplate(req.body, runtimes, 'admin');
+    logEvent('template.create', null, `Created template ${id} (admin)`);
+    res.status(201).json(getTemplate(id, runtimes));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/templates/:id', requireAuth, (req, res) => {
+  try {
+    if (runtimes[req.params.id]) {
+      return res.status(400).json({ error: 'Built-in runtimes cannot be deleted' });
+    }
+    if (!deleteTemplate(req.params.id)) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    logEvent('template.delete', null, `Deleted template ${req.params.id}`);
+    res.json({ deleted: req.params.id });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/templates/:id', requireAuth, (req, res) => {
