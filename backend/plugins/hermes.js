@@ -107,6 +107,13 @@ module.exports = {
   fallbackModel: 'gpt-5.4',
   configFields: [
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },
+    // hermes warns on every start when TERMINAL_CWD is in the environment and
+    // terminal.cwd is left at the non-explicit default ("." / "auto" / ""), so
+    // an explicit path silences it — see hermes_cli/config.py. /opt/data is
+    // also the better default in its own right: it is the agent's persistent
+    // volume, where its work actually lives, rather than /opt/hermes where the
+    // application happens to be installed.
+    { key: 'HERMES_TERMINAL_CWD', label: 'Terminal working directory', type: 'text', default: '/opt/data', placeholder: 'Where the agent shell and terminal tools start' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },

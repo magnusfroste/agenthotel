@@ -1336,15 +1336,22 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const hermesModelBlock = runtime === 'hermes' && plugin.generateConfig
     ? plugin.generateConfig(config)
     : null;
-  if (hermesModelBlock) {
-    patchHermesConfig(container, hermesModelBlock).catch(err =>
+  // Patched separately from the model block: terminal.cwd lives inside an
+  // existing terminal: section that also carries backend and timeout, so it is
+  // edited in place rather than rewritten and losing its siblings.
+  const hermesTerminalCwd = runtime === 'hermes'
+    ? String(config.HERMES_TERMINAL_CWD || '').trim()
+    : '';
+  if (hermesModelBlock || hermesTerminalCwd) {
+    patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd).catch(err =>
       console.error('[Hermes] config patch failed:', err.message)
     );
   }
 }
 
-async function patchHermesConfig(container, modelBlock) {
-  const b64 = Buffer.from(modelBlock).toString('base64');
+async function patchHermesConfig(container, modelBlock, terminalCwd) {
+  const b64 = Buffer.from(modelBlock || '').toString('base64');
+  const cwdB64 = Buffer.from(terminalCwd || '').toString('base64');
   // Wait for the s6 init scripts to finish writing the baked config.
   await new Promise(r => setTimeout(r, 5000));
   const patchScript = `
@@ -1358,7 +1365,33 @@ while i < len(lines):
         while i < len(lines) and (lines[i].startswith('  ') or lines[i].startswith('- ')): i += 1
         continue
     out.append(lines[i]); i += 1
-open('/opt/data/config.yaml', 'w').write(mb + ''.join(out))
+out = mb.splitlines(True) + out if mb else out
+
+# terminal.cwd is edited in place: replace the cwd line inside the existing
+# terminal: block, or add one if the block has none. Rewriting the whole block
+# would drop backend and timeout, which are set there too.
+cwd = base64.b64decode('${cwdB64}').decode()
+if cwd:
+    res, i, done = [], 0, False
+    while i < len(out):
+        res.append(out[i])
+        if out[i].startswith('terminal:') and not done:
+            i += 1
+            wrote = False
+            while i < len(out) and out[i].startswith('  '):
+                if out[i].lstrip().startswith('cwd:'):
+                    res.append('  cwd: %s\\n' % cwd); wrote = True
+                else:
+                    res.append(out[i])
+                i += 1
+            if not wrote:
+                res.append('  cwd: %s\\n' % cwd)
+            done = True
+            continue
+        i += 1
+    out = res
+
+open('/opt/data/config.yaml', 'w').write(''.join(out))
 `;
   const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
   const stream = await exec.start();
