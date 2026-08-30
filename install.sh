@@ -85,6 +85,38 @@ else
 fi
 
 echo ""
+echo "Checking swap..."
+# Agent memory limits are ceilings, not reservations, so a busy fleet can be
+# overcommitted by design. With swap that means "slow for a moment"; without it
+# the kernel kills an agent outright. A small VPS almost never ships with swap,
+# so create some — but never touch a host that already has it, and never fail
+# the install over it.
+if [ "$(swapon --show --noheadings 2>/dev/null | wc -l)" -gt 0 ]; then
+  echo "✓ Swap already configured — leaving it alone"
+elif [ -e /swapfile ]; then
+  echo "✓ /swapfile already exists — leaving it alone"
+elif [ "${AGENTHOTEL_SKIP_SWAP:-}" = "1" ]; then
+  echo "• Skipped (AGENTHOTEL_SKIP_SWAP=1)"
+else
+  SWAP_MB=2048
+  echo "  Creating a ${SWAP_MB}MB swapfile (set AGENTHOTEL_SKIP_SWAP=1 to skip)"
+  if (fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null || \
+      dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none) &&
+     chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; then
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    # Swap as an emergency buffer, not routine paging.
+    sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+    grep -q '^vm.swappiness' /etc/sysctl.conf 2>/dev/null || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+    echo "✓ Swap enabled and persisted"
+  else
+    rm -f /swapfile
+    echo "⚠ Could not create swap — continuing without it."
+    echo "  Some hosts (containers, certain VPS images) disallow it. The panel"
+    echo "  will show a warning on the System page while swap is missing."
+  fi
+fi
+
+echo ""
 echo "Setting up AgentHotel..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

@@ -620,6 +620,9 @@ app.get('/api/system/capacity', requireAuth, (req, res) => {
     const kb = (key) => parseInt(meminfo.match(new RegExp(key + ':\\s+(\\d+)'))?.[1] || 0) * 1024;
     const memTotal = kb('MemTotal');
     const memAvailable = kb('MemAvailable');
+    // Without swap, overcommitted limits stop meaning "slow under pressure" and
+    // start meaning "the kernel kills an agent". The UI has to be able to say so.
+    const swapTotal = kb('SwapTotal');
     const cores = (fs.readFileSync('/proc/cpuinfo', 'utf8').match(/^processor\s*:/gm) || []).length || 1;
 
     const defaultMemMB = parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
@@ -631,7 +634,13 @@ app.get('/api/system/capacity', requireAuth, (req, res) => {
     for (const a of agents) {
       let cfg = {};
       try { cfg = JSON.parse(a.config || '{}'); } catch (_) {}
-      allocatedMemMB += parseInt(cfg.MEMORY_LIMIT_MB) || defaultMemMB;
+      // Mirror deployAgent exactly: a runtime can declare a memory floor it
+      // needs just to boot, and the larger of that and the host default wins.
+      // Reading only MEMORY_LIMIT_MB made this under-report by the floor —
+      // openclaw counted as 1024 while actually getting 2048, so the
+      // overbooking guard reported room that did not exist.
+      const runtimeFloorMB = parseInt(runtimes[a.runtime]?.defaultMemoryMB) || 0;
+      allocatedMemMB += parseInt(cfg.MEMORY_LIMIT_MB) || Math.max(runtimeFloorMB, defaultMemMB);
       allocatedCpus += parseFloat(cfg.CPU_LIMIT) || defaultCpu;
     }
 
@@ -640,7 +649,9 @@ app.get('/api/system/capacity', requireAuth, (req, res) => {
         totalMB: Math.round(memTotal / 1024 / 1024),
         availableMB: Math.round(memAvailable / 1024 / 1024),
         allocatedToAgentsMB: allocatedMemMB,
-        defaultAgentMB: defaultMemMB
+        defaultAgentMB: defaultMemMB,
+        swapTotalMB: Math.round(swapTotal / 1024 / 1024),
+        overcommitted: allocatedMemMB > Math.round(memTotal / 1024 / 1024)
       },
       cpu: { cores, allocatedToAgents: allocatedCpus, defaultAgentCpus: defaultCpu },
       agentCount: agents.length

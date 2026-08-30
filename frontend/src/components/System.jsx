@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { useToast } from './Toast'
-import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive } from 'lucide-react'
+import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers } from 'lucide-react'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
   const [systemStats, setSystemStats] = useState(null)
+  const [capacity, setCapacity] = useState(null)
   const [mcpStatus, setMcpStatus] = useState(null)
   const [cleanupHistory, setCleanupHistory] = useState([])
   const [orphanedVolumes, setOrphanedVolumes] = useState(null)
@@ -34,6 +35,7 @@ function System() {
   useEffect(() => {
     fetchSystemInfo()
     fetchSystemStats()
+    fetchCapacity()
     fetchMcpStatus()
     fetchCleanupHistory()
     fetchOrphanedVolumes()
@@ -52,6 +54,13 @@ function System() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function fetchCapacity() {
+    try {
+      const res = await authFetch('/api/system/capacity')
+      setCapacity(await res.json())
+    } catch (err) { console.error('Failed to fetch capacity:', err) }
   }
 
   async function fetchSystemStats() {
@@ -266,6 +275,68 @@ function System() {
               </div>
             </div>
           </div>
+        </section>
+      )}
+
+      {capacity && capacity.memory && (
+        <section className="settings-section">
+          <div className="section-header">
+            <h2><Layers size={20} /> Memory Headroom</h2>
+          </div>
+          <div className="stats-grid">
+            <div className="stat-item">
+              <div className="stat-label">Host RAM</div>
+              <div className="stat-value">{(capacity.memory.totalMB / 1024).toFixed(1)} GB</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-label">Promised to agents</div>
+              <div className="stat-value" style={{ color: capacity.memory.overcommitted ? '#f59e0b' : undefined }}>
+                {(capacity.memory.allocatedToAgentsMB / 1024).toFixed(1)} GB
+              </div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-label">Free right now</div>
+              <div className="stat-value">{(capacity.memory.availableMB / 1024).toFixed(1)} GB</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-label">Swap</div>
+              <div className="stat-value" style={{ color: capacity.memory.swapTotalMB ? undefined : '#ef4444' }}>
+                {capacity.memory.swapTotalMB ? (capacity.memory.swapTotalMB / 1024).toFixed(1) + ' GB' : 'none'}
+              </div>
+            </div>
+          </div>
+
+          {/* Limits are ceilings, not reservations, so promising more than the
+              host has is normal and usually harmless. What decides the
+              consequence is swap: with it, pressure means slowness; without it,
+              the kernel kills an agent. Only say something when that is true. */}
+          {capacity.memory.overcommitted && !capacity.memory.swapTotalMB && (
+            <div style={{
+              marginTop: '1rem', padding: '1rem', borderRadius: '0.6rem',
+              border: '1px solid #ef4444', background: 'rgba(239,68,68,0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <AlertTriangle size={16} color="#ef4444" />
+                <strong>Agents are promised more RAM than this host has, and there is no swap</strong>
+              </div>
+              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                Memory limits are ceilings rather than reservations, so this is fine until several
+                agents get busy at once. When they do, there is nothing to fall back on and the
+                kernel kills whichever agent it picks. Adding swap turns that into a slow moment
+                instead. Run this on the host:
+              </p>
+              <pre style={{
+                margin: 0, padding: '0.75rem', borderRadius: '0.4rem', overflowX: 'auto',
+                background: 'var(--bg-tertiary)', fontSize: '0.8rem', lineHeight: 1.5
+              }}>{`fallocate -l 2G /swapfile && chmod 600 /swapfile
+mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+sysctl -w vm.swappiness=10`}</pre>
+              <p style={{ margin: '0.6rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                Fresh installs get this automatically; this host predates that, or swap could not be created here.
+              </p>
+            </div>
+          )}
         </section>
       )}
 
