@@ -68,6 +68,16 @@ module.exports = {
   // at this layer; which model reasons well is a choice, not a capability the
   // panel can detect from here.
   modelRequirements: {},
+  // Hermes refuses to start on a model whose window is under this, and says so
+  // itself: "has a context window of 8,192 tokens, which is below the minimum
+  // 64,000 required by Hermes Agent". Its own prompt is ~23k, so the floor is
+  // the agent's rule, not a consequence of prompt size. Declared here so the
+  // panel can decline such a model instead of selecting one that cannot run.
+  //
+  // OpenClaw deliberately declares no floor: it never states one, and inventing
+  // a number from an observed prompt size would repeat the mistake that made
+  // hermes probe for a `reasoning` parameter it does not accept.
+  minContextTokens: 64000,
   fallbackModel: 'gpt-5.4',
   configFields: [
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },

@@ -8,6 +8,8 @@ function Providers() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [liveModels, setLiveModels] = useState(null)
+  const [runtimeFloor, setRuntimeFloor] = useState(0)
   const [formData, setFormData] = useState({
     name: '',
     type: 'openai',
@@ -137,11 +139,20 @@ function Providers() {
 
   async function handleFetchModels(provider) {
     try {
-      const res = await authFetch(`/api/providers/${provider.id}/models`);
+      // ?live=1 asks the provider directly and returns the context window it
+      // reports per model. A name alone cannot tell you a model is too small
+      // for the runtime you are about to deploy.
+      const res = await authFetch(`/api/providers/${provider.id}/models?live=1`);
       const data = await res.json();
       if (Array.isArray(data)) {
         const modelNames = data.map(m => m.id || m.name || m).join(', ');
         setFormData({ ...formData, models: modelNames });
+        setLiveModels(data);
+        // The floor belongs to the runtimes, so read it rather than hardcode it.
+        try {
+          const rt = await (await authFetch('/api/runtimes')).json()
+          setRuntimeFloor(Math.max(0, ...(Array.isArray(rt) ? rt : []).map(r => r.minContextTokens || 0)))
+        } catch (_) { /* flagging is a nicety; the list is the point */ }
         toast.success(`Fetched ${data.length} models`);
       }
     } catch (err) {
@@ -233,6 +244,39 @@ function Providers() {
                 onChange={(e) => setFormData({ ...formData, models: e.target.value })}
                 placeholder="gpt-4, gpt-3.5-turbo"
               />
+              {/* What the provider actually reports. A model that fits every
+                  runtime looks the same as one that cannot run any of them
+                  until you see the window — which is the whole point. */}
+              {liveModels && liveModels.length > 0 && (
+                <div style={{
+                  marginTop: '0.6rem', padding: '0.6rem 0.75rem', borderRadius: '0.5rem',
+                  background: 'var(--bg-tertiary)', fontSize: '0.8rem'
+                }}>
+                  {liveModels.map(m => {
+                    const tooSmall = runtimeFloor > 0 && Number.isFinite(m.contextLength) && m.contextLength !== null && m.contextLength < runtimeFloor
+                    return (
+                      <div key={m.id} style={{
+                        display: 'flex', justifyContent: 'space-between', gap: '1rem',
+                        padding: '0.15rem 0', color: tooSmall ? '#ef4444' : 'var(--text-secondary)'
+                      }}>
+                        <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.id}</span>
+                        <span style={{ whiteSpace: 'nowrap' }}>
+                          {m.contextLength === null
+                            ? 'context not reported'
+                            : `${m.contextLength.toLocaleString()} ctx${tooSmall ? ` — under ${runtimeFloor.toLocaleString()}` : ''}`}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {runtimeFloor > 0 && (
+                    <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                      A runtime here needs at least {runtimeFloor.toLocaleString()} tokens of context.
+                      Models reporting less are skipped when a model is picked automatically;
+                      ones that report nothing are still tried.
+                    </div>
+                  )}
+                </div>
+              )}
               {editingProvider && (
                 <button
                   type="button"

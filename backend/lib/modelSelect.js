@@ -84,11 +84,29 @@ async function probeModel(provider, model, requirements) {
   return { ok: false, detail: `HTTP ${res.status}: ${text}` };
 }
 
+// The id an operator configures is often not the id the server reports. This
+// endpoint lists "unsloth/Qwen3.8-Flash-Next-GGUF" while the configured model
+// carries a quantisation tag: "...-GGUF:UD-Q2_K_XL". An exact-match lookup
+// silently found nothing, read that as "context unknown", and let a model
+// through that the gate existed to stop — a check that never fires is worse
+// than no check, because it looks like protection.
+function lookupContext(byModel, model) {
+  if (byModel.has(model)) return byModel.get(model);
+  const withoutTag = model.includes(':') ? model.slice(0, model.lastIndexOf(':')) : null;
+  if (withoutTag && byModel.has(withoutTag)) return byModel.get(withoutTag);
+  // Last resort: a reported id the configured one extends, longest first so
+  // "foo-GGUF" is preferred over a shorter "foo".
+  const prefixes = [...byModel.keys()]
+    .filter(id => model.startsWith(id))
+    .sort((a, b) => b.length - a.length);
+  return prefixes.length ? byModel.get(prefixes[0]) : undefined;
+}
+
 /**
  * Return the first model from the provider's configured list that accepts the
  * runtime's declared request parameters, or null when none does.
  */
-async function selectModel(db, provider, runtime, requirements) {
+async function selectModel(db, provider, runtime, requirements, minContextTokens) {
   ensureSchema(db);
 
   let candidates = [];
@@ -98,7 +116,34 @@ async function selectModel(db, provider, runtime, requirements) {
   } catch (_) { /* unparseable list — nothing to choose from */ }
   if (!candidates.length || !provider.apiKey) return null;
 
+  // A runtime may need a minimum context window. hermes states its own floor
+  // in its refusal ("below the minimum 64,000 required"), and providers report
+  // what they have — so a model too small to run is knowable before an agent
+  // is ever pointed at it, instead of both failing later in different ways.
+  //
+  // Absent is not small: a model that reports no window passes. A local server
+  // reports nothing at all while loading, and excluding on ignorance would
+  // lock out an endpoint for being mid-restart.
+  let contextByModel = new Map();
+  if (minContextTokens) {
+    try {
+      const listed = await fetchProviderModels(provider);
+      contextByModel = new Map(listed.map(m => [m.id, m.contextLength]));
+    } catch (err) {
+      console.warn(`[ModelSelect] Could not read ${provider.name} model list: ${err.message}`);
+    }
+  }
+
   for (const model of candidates) {
+    if (minContextTokens) {
+      const ctx = lookupContext(contextByModel, model);
+      if (Number.isFinite(ctx) && ctx < minContextTokens) {
+        const detail = `context ${ctx} < ${minContextTokens} required`;
+        console.log(`[ModelSelect] ${runtime}: ${provider.name}/${model} skipped — ${detail}`);
+        recordVerdict(db, provider.name, model, runtime, false, detail);
+        continue;
+      }
+    }
     const cached = cachedVerdict(db, provider.name, model, runtime);
     if (cached) {
       if (cached.ok) return model;
@@ -125,4 +170,31 @@ async function selectModel(db, provider, runtime, requirements) {
   return null;
 }
 
-module.exports = { selectModel, probeModel, ensureSchema };
+// What a provider offers, with the context window it reports per model.
+// One source of truth for both the deploy-time gate below and the provider
+// screen, so the number an operator reads is the number selection acts on.
+//
+// Servers report this under different keys, and a llama.cpp-style box reports
+// NOTHING at all while a model is loading — which is why an absent value must
+// never be treated as a small one.
+async function fetchProviderModels(provider) {
+  const base = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const headers = {};
+  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+  const res = await fetch(`${base}/models`, { headers, timeout: 25000 });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const items = data.data || data.models || [];
+  return (Array.isArray(items) ? items : []).map(m => {
+    const id = typeof m === 'string' ? m : (m.id || m.name || '');
+    const ctx = typeof m === 'object'
+      ? (m.context_length ?? m.max_context_length ?? m.n_ctx ?? (m.meta && m.meta.n_ctx))
+      : undefined;
+    return {
+      id,
+      contextLength: Number.isFinite(parseInt(ctx)) ? parseInt(ctx) : null
+    };
+  }).filter(m => m.id);
+}
+
+module.exports = { selectModel, probeModel, ensureSchema, fetchProviderModels };

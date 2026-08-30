@@ -1828,7 +1828,10 @@ app.get('/api/runtimes', requireAuth, (req, res) => {
     description: plugin.description,
     defaultImage: plugin.defaultImage,
     defaultPort: plugin.defaultPort,
-    configFields: plugin.configFields
+    configFields: plugin.configFields,
+    // Surfaced so the provider screen can flag a model that is too small for a
+    // runtime, without the frontend hardcoding a number the plugin owns.
+    minContextTokens: plugin.minContextTokens || null
   })));
 });
 
@@ -2032,6 +2035,16 @@ app.get('/api/providers/:id/models', requireAuth, async (req, res) => {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
     if (!provider) return res.status(404).json({ error: 'Provider not found' });
     
+    // ?live=1 always asks the provider, and reports the context window it
+    // states per model. The stored list is just names, and a name does not tell
+    // an operator that a model is too small for the runtime they are about to
+    // deploy — which is exactly the trap that cost an afternoon here.
+    if (req.query.live === '1') {
+      const { fetchProviderModels } = require('./lib/modelSelect');
+      const listed = await fetchProviderModels(provider);
+      return res.json(listed);
+    }
+
     if (provider.models && provider.models !== '[]') {
       return res.json(JSON.parse(provider.models));
     }
