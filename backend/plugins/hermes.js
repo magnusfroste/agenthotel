@@ -45,6 +45,32 @@ const PROVIDER_REGISTRY_NAME = {
   xai: 'xai'
 };
 
+// Split "provider/model" — except a model id may itself contain slashes, and
+// may even repeat the provider's name: this endpoint serves
+// "unsloth/Qwen3.8-Flash-Next-GGUF" from a provider named "unsloth". Splitting
+// on the first slash then cannot tell a prefix from part of the id, and got it
+// wrong in exactly that case, writing a model the server had never heard of.
+//
+// The operator's own model list for that provider settles it: prefer whichever
+// candidate actually appears in <SLUG>_MODELS. With no list to consult, fall
+// back to stripping one segment, which is right for canonical providers.
+function splitModel(value, config) {
+  const raw = (value || '').trim();
+  if (!raw.includes('/')) return { providerIn: 'openai', model: raw };
+
+  const providerIn = raw.slice(0, raw.indexOf('/'));
+  const stripped = raw.slice(raw.indexOf('/') + 1);
+  const slug = providerIn.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const listed = String((config && config[`${slug}_MODELS`]) || '')
+    .split(',').map(m => m.trim()).filter(Boolean);
+
+  if (listed.length) {
+    if (listed.includes(raw)) return { providerIn, model: raw };
+    if (listed.includes(stripped)) return { providerIn, model: stripped };
+  }
+  return { providerIn, model: stripped };
+}
+
 module.exports = {
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
@@ -130,10 +156,7 @@ module.exports = {
     // config.yaml; a prefixed value like "openai/gpt-5.4" triggers "Unknown
     // provider 'openai'" because hermes looks up "openai" as a provider name).
     if (config.HERMES_MODEL) {
-      const bare = config.HERMES_MODEL.includes('/')
-        ? config.HERMES_MODEL.split('/').slice(1).join('/')
-        : config.HERMES_MODEL;
-      env.push(`HERMES_MODEL=${bare}`);
+      env.push(`HERMES_MODEL=${splitModel(config.HERMES_MODEL, config).model}`);
     }
 
     const keys = [
@@ -165,9 +188,9 @@ module.exports = {
     let providerIn = 'openai';
     let bareModel = 'gpt-5.4';
     if (config.HERMES_MODEL) {
-      const parts = config.HERMES_MODEL.split('/');
-      if (parts.length >= 2) { providerIn = parts[0]; bareModel = parts.slice(1).join('/'); }
-      else bareModel = config.HERMES_MODEL;
+      const parsed = splitModel(config.HERMES_MODEL, config);
+      providerIn = parsed.providerIn;
+      bareModel = parsed.model;
     }
 
     // Resolve the base URL. Honour a user-provided OPENAI_BASE_URL for custom
