@@ -511,19 +511,27 @@ async function runScheduledCleanup() {
 setInterval(runScheduledCleanup, 24 * 60 * 60 * 1000);
 console.log('[Cleanup] Scheduled daily Docker cleanup enabled');
 
-// One-time migration: MCP enablement used to be a file at /app/mcp/config.json,
-// which lives in the image rather than a volume — so it silently reset on every
-// rebuild, and kept a copy of the token for no reason. It is a setting now, on
-// the data volume, and it is what actually gates the endpoint. Installs that had
-// already enabled MCP keep it on; everyone else starts off, which is the safer
-// default for a surface that can create and delete agents.
+// One-time migration for the mcp_enabled setting.
+//
+// The first version of this looked for /app/mcp/config.json to decide whether
+// MCP had been enabled. That file lives in the image, not a volume, so it is
+// destroyed by the very rebuild that runs this migration — the check could
+// never succeed, and upgrading silently switched MCP off for people who were
+// using it.
+//
+// The honest rule: before this change the endpoint was always on, so an install
+// that already has an admin account keeps it on. Only a fresh install starts
+// off, where opting in is the safer default for a surface that creates and
+// deletes agents.
 try {
   const existing = db.prepare("SELECT value FROM settings WHERE key = 'mcp_enabled'").get();
   if (!existing) {
-    let legacy = false;
-    try { legacy = fs.existsSync('/app/mcp/config.json'); } catch (_) {}
-    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('mcp_enabled', legacy ? 'true' : 'false');
-    console.log(`[MCP] Endpoint ${legacy ? 'enabled (migrated from config.json)' : 'disabled — enable it on the System page'}`);
+    const configured = db.prepare("SELECT value FROM settings WHERE key = 'admin_password_hash'").get();
+    const on = Boolean(configured);
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('mcp_enabled', on ? 'true' : 'false');
+    console.log(on
+      ? '[MCP] Endpoint enabled (existing install — it was always on before this version)'
+      : '[MCP] Endpoint disabled — enable it on the System page');
   }
 } catch (err) {
   console.error('[MCP] Could not initialise mcp_enabled:', err.message);
