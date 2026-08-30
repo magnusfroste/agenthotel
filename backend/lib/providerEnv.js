@@ -83,28 +83,73 @@ async function injectProviderEnv(db, config, plugin) {
   const modelKey = plugin && plugin.modelConfigKey;
   if (modelKey && !finalConfig[modelKey]) {
     const { selectModel } = require('./modelSelect');
-    const candidates = [
-      { envKey: 'OPENAI_API_KEY', name: 'OpenAI', prefix: 'openai' },
-      { envKey: 'OPENROUTER_API_KEY', name: 'OpenRouter', prefix: 'openrouter' }
-    ];
-    for (const { envKey, name, prefix } of candidates) {
-      if (!finalConfig[envKey]) continue;
-      const row = providers.find(p => (p.name || '').toLowerCase() === name.toLowerCase());
-      if (!row) continue;
+
+    // Every configured provider is a candidate, not just the two hosted ones
+    // that used to be hardcoded here. Pointing a whole fleet at a private,
+    // self-hosted endpoint is the point of the product, and an operator whose
+    // only provider was a private OpenAI-compatible box got no model selected
+    // at all — the runtime then fell back to a literal like gpt-5.4 that such
+    // an endpoint has never heard of.
+    //
+    // Order is deliberate and backward compatible: an explicitly chosen
+    // default_provider wins, then the canonical hosted ones so existing
+    // installs behave exactly as before, then anything else configured. Set
+    // default_provider to a private endpoint to make it the fleet default.
+    const preferred = (() => {
+      try {
+        const row = db.prepare("SELECT value FROM settings WHERE key = 'default_provider'").get();
+        return (row && row.value || '').toLowerCase();
+      } catch (_) { return ''; }
+    })();
+
+    const rank = (name) => {
+      const n = (name || '').toLowerCase();
+      if (preferred && n === preferred) return 0;
+      if (n === 'openai') return 1;
+      if (n === 'openrouter') return 2;
+      return 3;
+    };
+
+    const candidates = providers
+      .filter(p => p.apiKey && (p.models || '').trim() && (p.models || '').trim() !== '[]')
+      .sort((a, b) => rank(a.name) - rank(b.name) || (a.name || '').localeCompare(b.name || ''));
+
+    for (const row of candidates) {
+      // The prefix is the provider's own name, which is also how the runtimes
+      // resolve it. Model ids that themselves contain a slash are fine: the
+      // runtimes split on the FIRST one, so "unsloth/unsloth/Qwen3.8-GGUF"
+      // resolves to provider "unsloth", model "unsloth/Qwen3.8-GGUF".
+      const prefix = slugify(row.name) || (row.name || '').toLowerCase();
       let chosen = null;
       try {
         chosen = await selectModel(db, row, plugin.name || modelKey, plugin.modelRequirements);
       } catch (err) {
-        console.warn(`[ProviderEnv] Model selection failed for ${name}: ${err.message}`);
+        console.warn(`[ProviderEnv] Model selection failed for ${row.name}: ${err.message}`);
       }
-      // Nothing passed (or probing was not possible): fall back to the
-      // runtime's literal so a deploy still produces a usable config rather
-      // than an agent with no model at all.
-      finalConfig[modelKey] = `${prefix}/${chosen || plugin.fallbackModel}`;
-      if (!chosen) {
-        console.warn(`[ProviderEnv] No configured ${name} model satisfied ${plugin.name || modelKey}; using ${plugin.fallbackModel}`);
+      if (chosen) {
+        finalConfig[modelKey] = `${prefix}/${chosen}`;
+        // Falling through from a named default_provider to a different one is
+        // never a detail. Someone who points the fleet at private hardware does
+        // it so the traffic stays there; quietly routing it to a hosted API
+        // instead is the one failure they must not discover later. Say it.
+        if (preferred && (row.name || '').toLowerCase() !== preferred) {
+          const msg = `Default provider "${preferred}" could not serve a model — using ${row.name} instead`;
+          console.warn(`[ProviderEnv] ${msg}`);
+          try {
+            db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+              .run('provider.fallback', null, msg);
+          } catch (_) { /* event log is best-effort */ }
+        }
+        break;
       }
-      break;
+      console.warn(`[ProviderEnv] No ${row.name} model satisfied ${plugin.name || modelKey}`);
+    }
+
+    // Nothing configured passed: keep the runtime's literal so a deploy still
+    // produces a usable config rather than an agent with no model at all.
+    if (!finalConfig[modelKey] && plugin.fallbackModel) {
+      const host = candidates.length ? slugify(candidates[0].name) : 'openai';
+      finalConfig[modelKey] = `${host}/${plugin.fallbackModel}`;
     }
   }
 

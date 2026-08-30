@@ -57,7 +57,17 @@ module.exports = {
   // The dashboard answers 302 (login redirect) when healthy — anything under
   // 500 means the app is up and talking.
   healthCheck: { type: 'http', path: '/', expectBelow: 500 },
-  modelRequirements: { reasoning: { effort: 'low' } },
+  // Deliberately NO extra probe parameters. An earlier version required
+  // `reasoning: { effort: 'low' }`, inferred from a comment about what hermes
+  // sends internally — but /chat/completions rejects that key at the top level
+  // ("Unknown parameter: 'reasoning'"), so the probe failed EVERY OpenAI model
+  // including gpt-5.6-luna, which hermes runs happily in production. It then
+  // steered hermes to whichever provider merely tolerated the extra key, and
+  // would have excluded a private endpoint for a reason that had nothing to do
+  // with the model. Probing that a model exists and answers is the honest test
+  // at this layer; which model reasons well is a choice, not a capability the
+  // panel can detect from here.
+  modelRequirements: {},
   fallbackModel: 'gpt-5.4',
   configFields: [
     { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },
