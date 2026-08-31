@@ -258,6 +258,11 @@ and gets nothing back.
 - **Keep the records proxied.** A tunnel is reachable only through Cloudflare.
   Switching a hostname to DNS-only makes it resolve to an unroutable address and
   the guest disappears entirely — not just slower, gone.
+- **Give the switch time.** Moving a hostname from an A record to the tunnel
+  works immediately from a fresh resolver, but a browser that has already
+  visited it can hold the old answer for a while and report the site as down.
+  Check with `curl` before believing the browser: if curl gets a 200 and the
+  browser does not, the change is fine and the client is behind.
 - **Pick one path per hostname.** An A record pointing straight at the host and a
   tunnel CNAME both work, and running both makes it impossible to tell which
   route a broken request took. Once a hostname is on the tunnel, 80 and 443 can
