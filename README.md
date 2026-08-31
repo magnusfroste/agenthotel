@@ -42,6 +42,7 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Automatic HTTPS** — Caddy issues and renews Let's Encrypt certificates for every agent subdomain
 - **Live domains view** — real container status, orphaned-route detection and cleanup
 - **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
+- **Cloudflare Tunnel (optional)** — no open ports, no DNS record pointing here and no local certificate; works behind NAT. One origin for every hostname, since Caddy still routes on the Host header ([manual](docs/MANUAL.md#cloudflare-tunnel))
 
 ### Providers & Models
 - **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI

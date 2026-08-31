@@ -219,6 +219,56 @@ is:
   protection. Use the public name for MCP; the origin URL is for eyeballing the
   app in a browser.
 
+## Cloudflare Tunnel
+
+The normal way in needs three things to be true: ports 80 and 443 free and
+reachable, a DNS record pointing at this host, and Let's Encrypt able to
+validate. A tunnel removes all three — `cloudflared` dials out, so nothing is
+exposed inbound and no certificate is issued locally. It also works behind NAT,
+which puts AgentHotel on hardware with no public address at all.
+
+Enable it under **System → Cloudflare Tunnel**: paste the tunnel token from
+Cloudflare and press Start. The panel runs `cloudflared` as a container it
+manages itself — nothing to install on the host. The token is stored like any
+other secret, shown only as its last four characters, and kept when the tunnel
+is stopped so switching it back on does not mean pasting it again.
+
+### One origin for everything
+
+Caddy is not replaced. The tunnel points at it, and Caddy routes on the `Host`
+header exactly as it does for a direct request. So every public hostname you add
+in Cloudflare gets the **same** service URL:
+
+| Public hostname | Service |
+| --- | --- |
+| `panel.example.com` | `http://agenthotel-caddy:80` |
+| `hermes.example.com` | `http://agenthotel-caddy:80` |
+| `reel-studio.example.com` | `http://agenthotel-caddy:80` |
+
+There is no port mapping and no container name to keep track of. Add one public
+hostname per guest, point them all at that one string, and the hostnames match
+themselves.
+
+The prerequisite is that the guest has a domain set in the panel — that is what
+creates its Caddy route. A public hostname with no matching route reaches Caddy
+and gets nothing back.
+
+### Things that bite
+
+- **Keep the records proxied.** A tunnel is reachable only through Cloudflare.
+  Switching a hostname to DNS-only makes it resolve to an unroutable address and
+  the guest disappears entirely — not just slower, gone.
+- **Pick one path per hostname.** An A record pointing straight at the host and a
+  tunnel CNAME both work, and running both makes it impossible to tell which
+  route a broken request took. Once a hostname is on the tunnel, 80 and 443 can
+  be closed in the firewall — that is the point.
+- **Cloudflare's bot protection can reject an agent's HTTP client**, with a 403
+  `Error 1010` that looks like an auth failure and is not. See
+  [Handing an agent an external MCP tool](#handing-an-agent-an-external-mcp-tool).
+- **An MCP server may answer `421 Invalid Host header`** if it validates the
+  hostname, so the tunnel must pass the public name through rather than an
+  internal one.
+
 ## Resource Guardrails
 
 Agents can never starve the panel or freeze the host:
