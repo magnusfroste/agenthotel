@@ -50,7 +50,8 @@ module.exports = {
     { key: 'GIT_REF', label: 'Branch, tag or commit', type: 'text', default: 'main' },
     { key: 'GIT_SUBDIR', label: 'Build context subdirectory', type: 'text', required: false },
     { key: 'PORT', label: 'Container Port', type: 'number', default: 8000 },
-    { key: 'CUSTOM_ENV', label: 'Extra Env (KEY=VALUE per line)', type: 'textarea', required: false }
+    { key: 'CUSTOM_ENV', label: 'Extra Env (KEY=VALUE per line)', type: 'textarea', required: false },
+    { key: 'HEALTHCHECK_PATH', label: 'Health check path (e.g. /)', type: 'text', required: false }
   ],
 
   buildConfig({ config }) {

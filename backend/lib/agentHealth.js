@@ -79,7 +79,19 @@ async function evaluateHealth(docker, fetch, agent, plugin) {
     return { state: 'restarting', healthy: false, reason: `restarted ${info.RestartCount} times` };
   }
 
-  const spec = plugin && plugin.healthCheck;
+  // A runtime that hosts arbitrary apps cannot declare one criterion for all
+  // of them: Git App and Docker App guests may serve HTTP, speak some other
+  // protocol, or listen on nothing at all. So the guest itself can name a path
+  // to probe, and only then is it held to it — a criterion that fires wrongly
+  // on a worker container would be worse than none.
+  let spec = plugin && plugin.healthCheck;
+  if (!spec) {
+    let cfg = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch (e) {}
+    if (cfg.HEALTHCHECK_PATH) {
+      spec = { type: 'http', path: cfg.HEALTHCHECK_PATH, expectBelow: 500 };
+    }
+  }
 
   if (!spec) {
     const dockerHealth = info.State.Health && info.State.Health.Status;
