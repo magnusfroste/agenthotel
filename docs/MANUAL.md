@@ -100,6 +100,84 @@ Some servers unload an idle model and answer later requests with
 `No model loaded`. Enable the server's model auto-switch, or keep the model
 pinned, or the panel will pass over that provider through no fault of its own.
 
+## Putting agents to work
+
+Creating an agent is checking a guest in. The point is handing it a job — from
+the UI, or over MCP with `ask_agent` so an external AI can dispatch work without
+touching the panel by hand.
+
+### Give it its secrets first, in the config
+
+Anything the agent needs to authenticate with — an API token for a tool, a
+service password — belongs on the agent's **Environment** tab (or `PUT
+/api/agents/<id>`), not in the task message.
+
+Env vars are re-injected on every redeploy and survive restarts. A token handed
+over in a chat message lives only as long as that conversation: the agent will
+use it happily, then lose it the next time it restarts and fail with an
+authentication error that looks like a broken tool. Two agents given the same
+job differed in exactly this way — the one with the token in its config kept
+working, the one told the token in a message did not.
+
+### Dispatching
+
+`ask_agent` runs synchronously by default and returns the agent's reply. For
+work that outlives a request, set `background: true`: the call returns
+immediately and the agent keeps going on its own.
+
+A background agent is not fire-and-forget. You can look in while it works:
+
+| Want to see | Use |
+| --- | --- |
+| What the container printed | `get_agent_logs` |
+| Files it has written, exit codes, its own state | `exec_in_agent` |
+| Whether it is healthy, and what the host thinks | `health_check`, `get_agent_stats`, `get_events` |
+
+Because the same MCP endpoint exposes both the agent and the observability
+tools, a supervising agent can cross-check the two: correlate what an agent
+claims it did against what the host actually recorded — restarts, memory
+pressure, events — and draw its own conclusion about whether the work is really
+progressing or the room is on fire.
+
+### Correcting an agent mid-run
+
+Send another `ask_agent`. It arrives as a new message in the same conversation,
+so the agent keeps its context and applies the correction. This is the normal
+way to unblock one that has gone down a wrong path — diagnose with
+`exec_in_agent`, then tell it what you found.
+
+### Handing an agent an external MCP tool
+
+Agents given a remote MCP endpoint will often write their own client for it from
+the tool list. That works, but a handful of transport details are invisible from
+the tool list and cost an agent a long detour if it has to discover them by
+trial. Put them in the task message up front:
+
+- **The exact URL, including the trailing slash or its absence.** Servers
+  commonly answer `/mcp` and redirect `/mcp/` with an empty 307 — which reads as
+  a hang, not an error.
+- **The auth header**, naming the env var you set above.
+- **`Accept: application/json, text/event-stream`.** Responses are usually SSE
+  (`event: message` / `data: {json}`), so the agent must parse the `data:` line
+  rather than the body as a whole.
+- **The session handshake.** `initialize` returns an `Mcp-Session-Id` *response*
+  header that must be echoed as a *request* header on every later call.
+
+Two further failure modes worth recognising, because neither looks like what it
+is:
+
+- **A Cloudflare-fronted endpoint may reject the agent's HTTP client** — Python's
+  default `urllib` User-Agent can draw a `403 Error 1010 (Access denied)`. That
+  is bot protection, not authentication; a bad token fails differently. Fix it on
+  the Cloudflare side, or send a normal browser User-Agent. Do not "solve" it by
+  turning the proxy off: if the hostname fronts a Cloudflare Tunnel, the origin
+  is reachable *only* through the proxy, and disabling it takes the whole service
+  offline.
+- **Hitting the origin directly may return `421 Invalid Host header`.** MCP
+  servers commonly allow only their canonical hostname as DNS-rebinding
+  protection. Use the public name for MCP; the origin URL is for eyeballing the
+  app in a browser.
+
 ## Resource Guardrails
 
 Agents can never starve the panel or freeze the host:

@@ -144,6 +144,12 @@ host; that is the panel's own Server Console.
 
 **Observability** — `health_check`, `get_host_metrics`, `get_agent_stats`, `get_uptime`, `get_docker_usage`, `get_events`, `system_status`, `run_cleanup`
 
+Because both surfaces share one endpoint, a supervising agent can cross-check
+what a working agent claims against what the host recorded. See
+[Putting agents to work](docs/MANUAL.md#putting-agents-to-work) for dispatching,
+watching and correcting a background agent — and for the transport details to
+hand an agent along with an external MCP tool.
+
 **Templates** — `list_runtimes`, `list_templates`, `get_template`, `create_template`
 
 The endpoint is off until you enable it under System → MCP Server, and the token
