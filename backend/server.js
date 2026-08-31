@@ -3302,6 +3302,14 @@ app.listen(PORT, '0.0.0.0', async () => {
   }, 60 * 1000);
   setInterval(() => {
     runHealthChecks().catch(err => console.error('[Health] Error:', err.message));
+    // Caddy holds its routes only in memory, so anything that restarts it —
+    // an upgrade, an OOM, a rebooted host — silently drops every guest. The
+    // failure is invisible to a status check: with no matching route Caddy
+    // answers an empty 200, so every hostname looks healthy while serving
+    // nothing. Checking each minute costs one request and closes that window.
+    reconcileAgentRoutes({ onlyMissing: true })
+      .then(n => { if (n) console.log(`[Caddy] Restored ${n} route(s) that had gone missing`); })
+      .catch(err => console.error('[Caddy] Reconcile failed:', err.message));
   }, 60 * 1000);
   runHealthChecks().catch(() => {}); // reconcile immediately, don't wait a minute
   console.log('[Health] Runtime health criteria enabled (60s interval)');
@@ -3316,9 +3324,46 @@ app.listen(PORT, '0.0.0.0', async () => {
 // offline until each was redeployed by hand, with nothing in the panel to say
 // why: the containers were healthy and the hostnames simply stopped resolving
 // to them. Rebuilding the routes at startup makes a restart survivable.
-async function reconcileAgentRoutes() {
+async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
   const agents = db.prepare("SELECT id, name, domain, port, runtime, config FROM agents WHERE domain IS NOT NULL AND domain != ''").all();
+
+  // On the periodic pass, ask Caddy what it already has and touch nothing
+  // else. Re-adding every route each minute would churn the config for no
+  // reason and briefly drop traffic each time.
+  // The panel's own route lives in Caddy's memory like any other, and losing
+  // it is worse than losing a guest's: without the panel there is nowhere to
+  // go and see what happened, or to press anything that would fix it.
+  let panelHosts = [];
+  try {
+    const panelDomain = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
+    if (panelDomain) panelHosts = [panelDomain];
+  } catch (e) { /* settings unavailable: skip, the next pass retries */ }
+
+  let present = null;
+  if (onlyMissing) {
+    try {
+      const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+      const fetch = require('node-fetch');
+      const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+      if (!res.ok) return;
+      const routes = await res.json();
+      present = new Set((routes || []).flatMap(r => (r.match || []).flatMap(m => m.host || [])));
+    } catch (err) {
+      return; // Caddy unreachable: nothing useful to do, and the next pass retries
+    }
+  }
+
   let restored = 0;
+  for (const host of panelHosts) {
+    if (present && present.has(host)) continue;
+    try {
+      await updatePanelCaddyRoute(null, host);
+      restored++;
+    } catch (err) {
+      console.error(`[Caddy] Could not restore the panel route for ${host}: ${err.message}`);
+    }
+  }
+
   for (const agent of agents) {
     let config = {};
     try { config = JSON.parse(agent.config || '{}'); } catch (e) {}
@@ -3329,6 +3374,7 @@ async function reconcileAgentRoutes() {
     if (agent.runtime === 'compose') continue;
     const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)];
     for (const host of hosts) {
+      if (present && present.has(host)) continue;
       try {
         await addCaddyRoute(host, `agenthotel-${agent.id}`, port);
         restored++;
@@ -3338,6 +3384,7 @@ async function reconcileAgentRoutes() {
     }
   }
   if (restored) console.log(`[Caddy] Reconciled ${restored} agent route(s)`);
+  return restored;
 }
 
 async function initPanelRoute() {
