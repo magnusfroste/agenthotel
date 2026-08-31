@@ -109,8 +109,8 @@ touching the panel by hand.
 ### Give it its secrets first, in the config
 
 Anything the agent needs to authenticate with — an API token for a tool, a
-service password — belongs on the agent's **Environment** tab (or `PUT
-/api/agents/<id>`), not in the task message.
+service password — belongs on the agent's **Environment** tab (or, over MCP,
+`set_agent_env`), not in the task message.
 
 Env vars are re-injected on every redeploy and survive restarts. A token handed
 over in a chat message lives only as long as that conversation: the agent will
@@ -118,6 +118,13 @@ use it happily, then lose it the next time it restarts and fail with an
 authentication error that looks like a broken tool. Two agents given the same
 job differed in exactly this way — the one with the token in its config kept
 working, the one told the token in a message did not.
+
+`set_agent_env` applies the values by redeploying the agent, which replaces its
+container — volume data persists, but anything running inside it stops. Set the
+variables before dispatching work, not during it. Pass `apply: false` to store
+them for the next redeploy without disturbing a running agent, and `null` as a
+value to remove one. It reports variable names only, never their values, so a
+secret never lands in the calling agent's transcript.
 
 ### Dispatching
 

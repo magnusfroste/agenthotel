@@ -82,6 +82,18 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
         required: ['agent_id']
       }
     },
+    set_agent_env: {
+      description: "Set environment variables on an existing agent — the way to hand a guest already in its room a credential for a tool. create_agent takes config only at check-in; this updates it afterwards. Values are stored in the agent's config, so they are re-injected on every later redeploy and survive restarts, unlike a secret mentioned in an ask_agent message. Applied by redeploying the agent, which replaces its container: volume data persists but anything running in it stops, so set the variables before dispatching work, not during it. Pass null as a value to remove a variable. Returns variable names only, never their values",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID' },
+          env: { type: 'object', description: 'Variables to set, e.g. {"SOME_API_TOKEN": "abc123"}. A null value removes that variable' },
+          apply: { type: 'boolean', description: 'Redeploy so the container picks the values up (default true). False stores them for the next redeploy without disturbing a running agent' }
+        },
+        required: ['agent_id', 'env']
+      }
+    },
     get_agent_logs: {
       description: 'Get logs from an agent container',
       inputSchema: {
@@ -308,6 +320,67 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
 
         db.prepare('DELETE FROM agents WHERE id = ?').run(args.agent_id);
         return { content: [{ type: 'text', text: JSON.stringify({ success: true, deleted: args.agent_id }) }] };
+      }
+
+      case 'set_agent_env': {
+        const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
+        if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
+
+        const env = args.env;
+        if (!env || typeof env !== 'object' || Array.isArray(env)) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'env must be an object of variable names to values' }) }], isError: true };
+        }
+
+        // Config keys are the container's environment, so a variable name has
+        // to be one the shell can actually carry.
+        const names = Object.keys(env);
+        if (!names.length) return { content: [{ type: 'text', text: JSON.stringify({ error: 'env is empty' }) }], isError: true };
+        const bad = names.filter(n => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+        if (bad.length) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: `Invalid variable names: ${bad.join(', ')}` }) }], isError: true };
+        }
+
+        const config = JSON.parse(agent.config || '{}');
+        const set = [], removed = [];
+        for (const [name, value] of Object.entries(env)) {
+          if (value === null) { delete config[name]; removed.push(name); continue; }
+          if (typeof value === 'object') {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: `Value for ${name} must be a string, number or boolean` }) }], isError: true };
+          }
+          config[name] = String(value);
+          set.push(name);
+        }
+
+        // Names only. Echoing a secret back would write it into the calling
+        // agent's transcript, which is the leak this tool exists to avoid.
+        db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+          .run('agent.env', args.agent_id, `Environment updated: ${[...set, ...removed.map(n => '-' + n)].join(', ')}`);
+        db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), args.agent_id);
+
+        if (args.apply === false) {
+          return { content: [{ type: 'text', text: JSON.stringify({ success: true, set, removed, applied: false, note: 'Stored — the container keeps its current environment until the next redeploy' }) }] };
+        }
+
+        const plugin = runtimes[agent.runtime];
+        const deployConfig = await injectProviderEnv(db, config, plugin);
+        db.prepare("UPDATE agents SET config = ?, status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(deployConfig), args.agent_id);
+
+        try {
+          if (agent.runtime === 'compose') {
+            try { await plugin.stop(agent.id, deployConfig); } catch (e) {}
+            await plugin.deploy(agent.id, agent.name, deployConfig, plugin);
+          } else {
+            const container = docker.getContainer(`agenthotel-${args.agent_id}`);
+            try { await container.stop(); } catch (e) {}
+            try { await container.remove({ force: true }); } catch (e) {}
+            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, deployConfig, plugin);
+          }
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+          return { content: [{ type: 'text', text: JSON.stringify({ success: true, set, removed, applied: true, status: 'running' }) }] };
+        } catch (err) {
+          db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message, set, removed, applied: false }) }], isError: true };
+        }
       }
 
       case 'redeploy_agent': {

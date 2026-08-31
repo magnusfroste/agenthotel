@@ -138,9 +138,12 @@ AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 
 **Put agents to work** — `ask_agent` hands a hosted agent a task and returns its
 reply, or dispatches it in the background so the agent keeps working after the
-call returns and you read the outcome from its logs. `exec_in_agent` runs a
-command inside an agent's container for inspection. Neither touches the VPS
-host; that is the panel's own Server Console.
+call returns and you read the outcome from its logs. `set_agent_env` gives an
+agent already checked in the credentials its next job needs — stored in its
+config, so they survive restarts and redeploys, unlike a token mentioned in a
+task message. `exec_in_agent` runs a command inside an agent's container for
+inspection. None of them touches the VPS host; that is the panel's own Server
+Console.
 
 **Observability** — `health_check`, `get_host_metrics`, `get_agent_stats`, `get_uptime`, `get_docker_usage`, `get_events`, `system_status`, `run_cleanup`
 
