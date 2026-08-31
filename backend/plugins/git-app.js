@@ -64,6 +64,10 @@ module.exports = {
         env.push(line);
       }
     }
+    // The rest of the config is environment as well — injected provider
+    // credentials, and whatever set_agent_env hands the guest later.
+    require('../lib/envPassthrough')
+      .appendUnknownEnv(env, config, ['GIT_REPO', 'GIT_REF', 'GIT_SUBDIR', 'PORT']);
     return env;
   },
 

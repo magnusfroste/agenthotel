@@ -341,15 +341,35 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
         }
 
         const config = JSON.parse(agent.config || '{}');
+        // Compose guests don't take their environment from config keys — the
+        // panel writes COMPOSE_ENV to a .env file beside the stack, and the
+        // compose file interpolates from there. Setting a top-level key would
+        // store the value where nothing ever reads it.
+        const isCompose = agent.runtime === 'compose';
+        const composeEnv = isCompose
+          ? (config.COMPOSE_ENV || '').split('\n').filter(l => l.trim() !== '')
+          : null;
+        const composeSet = (name, value) => {
+          const line = value === null ? null : `${name}=${value}`;
+          const at = composeEnv.findIndex(l => l.split('=')[0].trim() === name);
+          if (at === -1) { if (line) composeEnv.push(line); return; }
+          if (line) composeEnv[at] = line; else composeEnv.splice(at, 1);
+        };
+
         const set = [], removed = [];
         for (const [name, value] of Object.entries(env)) {
-          if (value === null) { delete config[name]; removed.push(name); continue; }
+          if (value === null) {
+            if (isCompose) composeSet(name, null); else delete config[name];
+            removed.push(name);
+            continue;
+          }
           if (typeof value === 'object') {
             return { content: [{ type: 'text', text: JSON.stringify({ error: `Value for ${name} must be a string, number or boolean` }) }], isError: true };
           }
-          config[name] = String(value);
+          if (isCompose) composeSet(name, String(value)); else config[name] = String(value);
           set.push(name);
         }
+        if (isCompose) config.COMPOSE_ENV = composeEnv.join('\n');
 
         // Names only. Echoing a secret back would write it into the calling
         // agent's transcript, which is the leak this tool exists to avoid.

@@ -28,6 +28,11 @@ module.exports = {
       const lines = config.CUSTOM_ENV.split('\n').map(l => l.trim()).filter(Boolean);
       for (const line of lines) env.push(line);
     }
+    // Everything else in the config is environment too — provider credentials
+    // injected by the panel, and anything set later with set_agent_env. Without
+    // this they were stored and silently dropped at container creation, so a
+    // Docker App guest never saw the OPENAI_API_KEY the manual promised it.
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, ['IMAGE', 'PORT', 'VOLUMES']);
     return env;
   }
 };
