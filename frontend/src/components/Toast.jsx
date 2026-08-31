@@ -43,9 +43,12 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={toast}>
       {children}
+      {/* Bottom right: the top right corner carries the page's own actions on
+          most screens, so a toast there lands on top of the buttons the user
+          just aimed at. The bottom right is reliably empty. */}
       <div style={{
         position: 'fixed',
-        top: '1rem',
+        bottom: '1rem',
         right: '1rem',
         zIndex: 9999,
         display: 'flex',
