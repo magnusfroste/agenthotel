@@ -6,9 +6,20 @@
     "http": {
       "servers": {
         "srv0": {
-          "listen": [":80", ":443"],
+          "listen": [
+            ":80",
+            ":443"
+          ],
           "routes": [],
-          "automatic_https": {}
+          "automatic_https": {},
+          "trusted_proxies": {
+            "source": "static",
+            "ranges": [
+              "10.0.0.0/8",
+              "172.16.0.0/12",
+              "192.168.0.0/16"
+            ]
+          }
         }
       }
     },

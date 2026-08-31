@@ -270,6 +270,15 @@ and gets nothing back.
 - **Cloudflare's bot protection can reject an agent's HTTP client**, with a 403
   `Error 1010` that looks like an auth failure and is not. See
   [Handing an agent an external MCP tool](#handing-an-agent-an-external-mcp-tool).
+- **A guest behind the tunnel sees plain HTTP.** TLS terminates at the
+  Cloudflare edge and `cloudflared` speaks HTTP to Caddy, so an app that builds
+  absolute URLs — canonical tags, sitemaps, OAuth redirects, password-reset
+  links — would advertise `http://`. Caddy is configured to trust the
+  forwarded headers from the container network, so guests receive
+  `X-Forwarded-Proto: https` and get this right without knowing about the
+  tunnel. Worth knowing because the symptom hides: Cloudflare rewrites `href`
+  attributes to https and leaves `meta content` alone, so a canonical link can
+  look correct while an `og:url` beside it is wrong.
 - **An MCP server may answer `421 Invalid Host header`** if it validates the
   hostname, so the tunnel must pass the public name through rather than an
   internal one.

@@ -3294,6 +3294,9 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`AgentHotel backend running on port ${PORT}`);
   hostExecAvailable(); // probe + log host exec availability at startup
   await initPanelRoute();
+  // After the panel's own route, so a half-configured Caddy never leaves the
+  // panel unreachable — that is the one route you need to fix the rest.
+  await reconcileAgentRoutes().catch(err => console.error('[Caddy] Route reconcile failed:', err.message));
   setInterval(() => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
   }, 60 * 1000);
@@ -3307,6 +3310,35 @@ app.listen(PORT, '0.0.0.0', async () => {
     runResourceChecks().catch(err => console.error('[Resources] Error:', err.message));
   }, 5 * 60 * 1000);
 });
+
+// Agent routes live only in Caddy's running config — they are added at deploy
+// time and never written to caddy.json. So a Caddy restart took every guest
+// offline until each was redeployed by hand, with nothing in the panel to say
+// why: the containers were healthy and the hostnames simply stopped resolving
+// to them. Rebuilding the routes at startup makes a restart survivable.
+async function reconcileAgentRoutes() {
+  const agents = db.prepare("SELECT id, name, domain, port, runtime, config FROM agents WHERE domain IS NOT NULL AND domain != ''").all();
+  let restored = 0;
+  for (const agent of agents) {
+    let config = {};
+    try { config = JSON.parse(agent.config || '{}'); } catch (e) {}
+    const plugin = runtimes[agent.runtime];
+    const port = agent.port || plugin?.defaultPort;
+    if (!port) continue;
+    // Compose guests publish their own ports and are not proxied here.
+    if (agent.runtime === 'compose') continue;
+    const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)];
+    for (const host of hosts) {
+      try {
+        await addCaddyRoute(host, `agenthotel-${agent.id}`, port);
+        restored++;
+      } catch (err) {
+        console.error(`[Caddy] Could not restore route for ${host}: ${err.message}`);
+      }
+    }
+  }
+  if (restored) console.log(`[Caddy] Reconciled ${restored} agent route(s)`);
+}
 
 async function initPanelRoute() {
   try {
