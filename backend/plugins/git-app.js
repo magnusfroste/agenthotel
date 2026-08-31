@@ -103,7 +103,9 @@ module.exports = {
     const commit = git(['rev-parse', '--short', 'HEAD'], repoDir).toString().trim();
     return {
       contextDir,
-      imageTag: `agenthotel-git-${id}:latest`,
+      // The id already carries the runtime, so `agenthotel-${id}` reads as
+      // agenthotel-git-app-<name>-<stamp> without repeating "git".
+      imageTag: `agenthotel-${id}:latest`,
       // Always rebuild: a redeploy exists to pick up the repository's new
       // commits. Docker's layer cache makes this cheap when nothing changed.
       rebuild: true,
