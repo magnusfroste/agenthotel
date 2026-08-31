@@ -25,7 +25,7 @@ If no model is configured, agents default to `openai/gpt-5.3` (OpenClaw) / `open
 | **OpenClaw** | Every configured provider becomes a **selectable provider in the model picker**, with its model list from the panel. Set the primary model via `OPENCLAW_MODEL_PRIMARY` (`provider/model`, e.g. `hertzner/Kimi-K2.7-Code`) and optional `OPENCLAW_MODEL_FALLBACKS`. |
 | **Hermes** | All canonical provider keys are injected, and Hermes reads them at runtime — switch between them with `/model` in the console. A private endpoint is written into `custom_providers` in config.yaml and appears there under its own name too, alongside the hosted ones, so it does not displace them. See [Private models](#private-models). |
 | **Odysseus** | One provider at a time (an Odysseus limitation): `OPENAI_API_KEY` + `LLM_HOST`. |
-| **Docker App / Compose** | Env vars are injected but usage is up to the image — most OpenAI-compatible apps read `OPENAI_API_KEY` / `OPENAI_BASE_URL`, which you can point at any provider. |
+| **Docker App / Git App / Compose** | Provider credentials are **not** injected by default: these runtimes host arbitrary images, and a tool checked in from a repository has no business holding your whole provider wallet. Set `INJECT_PROVIDER_ENV=true` on the guest to opt in — then most OpenAI-compatible apps read `OPENAI_API_KEY` / `OPENAI_BASE_URL`, which you can point at any provider. |
 
 ### Using a custom provider (example: Hetzner)
 

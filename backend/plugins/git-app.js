@@ -44,6 +44,9 @@ module.exports = {
   name: 'Git App',
   description: 'Build and run any Dockerised app straight from a Git repository',
   defaultImage: '',
+  // Hosts arbitrary images, so it is not handed provider credentials
+  // unless the guest opts in with INJECT_PROVIDER_ENV.
+  providerCredentials: 'optional',
   defaultPort: 8000,
   configFields: [
     { key: 'GIT_REPO', label: 'Repository URL', type: 'text', required: true },
@@ -51,7 +54,8 @@ module.exports = {
     { key: 'GIT_SUBDIR', label: 'Build context subdirectory', type: 'text', required: false },
     { key: 'PORT', label: 'Container Port', type: 'number', default: 8000 },
     { key: 'CUSTOM_ENV', label: 'Extra Env (KEY=VALUE per line)', type: 'textarea', required: false },
-    { key: 'HEALTHCHECK_PATH', label: 'Health check path (e.g. /)', type: 'text', required: false }
+    { key: 'HEALTHCHECK_PATH', label: 'Health check path (e.g. /)', type: 'text', required: false },
+    { key: 'INJECT_PROVIDER_ENV', label: 'Inject provider API keys (true/false)', type: 'text', required: false }
   ],
 
   buildConfig({ config }) {

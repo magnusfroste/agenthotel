@@ -23,6 +23,17 @@ const slugify = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 async function injectProviderEnv(db, config, plugin) {
   const finalConfig = { ...(config || {}) };
 
+  // Agent runtimes need the provider credentials — that is what they are for.
+  // Runtimes that host arbitrary images do not: a video renderer or an MCP
+  // tool checked in from someone else's repository has no business holding
+  // the operator's whole provider wallet. Those declare 'optional' and get
+  // nothing unless the guest asks, which keeps the documented case of pointing
+  // a generic OpenAI-compatible app at a provider working.
+  if (plugin && plugin.providerCredentials === 'optional') {
+    const wanted = String(finalConfig.INJECT_PROVIDER_ENV || '').toLowerCase();
+    if (wanted !== 'true' && wanted !== '1' && wanted !== 'yes') return finalConfig;
+  }
+
   const providers = db.prepare('SELECT name, type, apiKey, baseUrl, models FROM providers').all();
   // Canonical providers must be handled before custom OpenAI-compatible ones.
   // Both compete for the OPENAI_* slots on a first-writer-wins basis, so with

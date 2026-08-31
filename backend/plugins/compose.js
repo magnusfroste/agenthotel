@@ -16,11 +16,15 @@ module.exports = {
   name: 'Docker Compose',
   description: 'Deploy from docker-compose.yml file',
   defaultImage: 'compose',
+  // Hosts arbitrary images, so it is not handed provider credentials
+  // unless the guest opts in with INJECT_PROVIDER_ENV.
+  providerCredentials: 'optional',
   defaultPort: 80,
   configFields: [
     { key: 'COMPOSE_FILE', label: 'Docker Compose YAML', type: 'textarea', required: true },
     { key: 'COMPOSE_ENV', label: 'Environment Variables', type: 'textarea', required: false },
-    { key: 'COMPOSE_PROJECT', label: 'Project Name', type: 'text', required: true }
+    { key: 'COMPOSE_PROJECT', label: 'Project Name', type: 'text', required: true },
+    { key: 'INJECT_PROVIDER_ENV', label: 'Inject provider API keys (true/false)', type: 'text', required: false }
   ],
 
   buildConfig({ name, domain, image, port, config }) {
