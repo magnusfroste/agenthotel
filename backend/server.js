@@ -2459,6 +2459,60 @@ app.post('/api/console/execute', requireAuth, (req, res) => {
   }
 });
 
+// Cloudflare Tunnel: an optional front door that needs no open ports, no DNS
+// record pointing at this host and no local certificate. The token is stored
+// like any other secret and never returned in full.
+const tunnel = require('./lib/cloudflareTunnel');
+
+app.get('/api/system/tunnel', requireAuth, async (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'cloudflare_tunnel_token'").get();
+    const state = await tunnel.status(docker);
+    res.json({
+      ...state,
+      configured: !!row?.value,
+      token: row?.value ? '***' + row.value.slice(-4) : null,
+      origin: tunnel.ORIGIN,
+      logs: state.installed ? await tunnel.logs(docker, 20) : ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/tunnel', requireAuth, async (req, res) => {
+  try {
+    // Re-use the stored token when the form is submitted without one, so
+    // restarting the tunnel does not mean pasting the secret again.
+    const stored = db.prepare("SELECT value FROM settings WHERE key = 'cloudflare_tunnel_token'").get()?.value;
+    const token = (req.body?.token || '').trim() || stored;
+    if (!token) return res.status(400).json({ error: 'A Cloudflare tunnel token is required' });
+
+    const result = await tunnel.start(docker, token);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('cloudflare_tunnel_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(token);
+    logEvent('tunnel.started', null, `Cloudflare tunnel started on ${result.network}`);
+    res.json({ running: true, origin: result.origin, network: result.network });
+  } catch (err) {
+    logEvent('tunnel.error', null, `Cloudflare tunnel failed to start: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/system/tunnel', requireAuth, async (req, res) => {
+  try {
+    await tunnel.remove(docker);
+    // The token stays so the tunnel can be switched back on without pasting
+    // it again; ?forget=1 drops it as well.
+    if (req.query?.forget) {
+      db.prepare("DELETE FROM settings WHERE key = 'cloudflare_tunnel_token'").run();
+    }
+    logEvent('tunnel.stopped', null, 'Cloudflare tunnel stopped');
+    res.json({ running: false, forgotten: !!req.query?.forget });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/system/mcp-status', requireAuth, (req, res) => {
   try {
     const fs = require('fs');

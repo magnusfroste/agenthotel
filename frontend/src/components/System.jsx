@@ -9,6 +9,9 @@ function System() {
   const [systemStats, setSystemStats] = useState(null)
   const [capacity, setCapacity] = useState(null)
   const [mcpStatus, setMcpStatus] = useState(null)
+  const [tunnelStatus, setTunnelStatus] = useState(null)
+  const [tunnelToken, setTunnelToken] = useState('')
+  const [tunnelBusy, setTunnelBusy] = useState(false)
   const [cleanupHistory, setCleanupHistory] = useState([])
   const [orphanedVolumes, setOrphanedVolumes] = useState(null)
   const [pruningVolumes, setPruningVolumes] = useState(false)
@@ -37,6 +40,7 @@ function System() {
     fetchSystemStats()
     fetchCapacity()
     fetchMcpStatus()
+    fetchTunnelStatus()
     fetchCleanupHistory()
     fetchOrphanedVolumes()
     fetchEvents()
@@ -116,6 +120,48 @@ function System() {
       setSystemStats(await res.json())
     } catch (err) {
       console.error('Failed to fetch system stats:', err)
+    }
+  }
+
+  async function fetchTunnelStatus() {
+    try {
+      const res = await authFetch('/api/system/tunnel')
+      setTunnelStatus(await res.json())
+    } catch (err) {
+      console.error('Failed to fetch tunnel status:', err)
+    }
+  }
+
+  async function startTunnel() {
+    setTunnelBusy(true)
+    try {
+      const res = await authFetch('/api/system/tunnel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tunnelToken })
+      })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'Could not start the tunnel'); return }
+      setTunnelToken('')
+      toast.success('Tunnel started. Point your public hostnames at ' + data.origin)
+      fetchTunnelStatus()
+    } catch (err) {
+      toast.error('Could not start the tunnel')
+    } finally {
+      setTunnelBusy(false)
+    }
+  }
+
+  async function stopTunnel() {
+    setTunnelBusy(true)
+    try {
+      await authFetch('/api/system/tunnel', { method: 'DELETE' })
+      toast.success('Tunnel stopped')
+      fetchTunnelStatus()
+    } catch (err) {
+      toast.error('Could not stop the tunnel')
+    } finally {
+      setTunnelBusy(false)
     }
   }
 
@@ -432,6 +478,87 @@ sysctl -w vm.swappiness=10`}</pre>
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {tunnelStatus && (
+        <section className="settings-section">
+          <div className="section-header">
+            <h2><Globe size={20} /> Cloudflare Tunnel</h2>
+          </div>
+          <p className="section-hint">
+            An optional front door. Cloudflare dials out from this host, so the panel
+            needs no open ports, no DNS record pointing here and no local certificate —
+            useful behind NAT, or when 80/443 are taken. Caddy still routes every guest;
+            the tunnel just points at it.
+          </p>
+          <div className="sysinfo-grid">
+            <div className="sysinfo-item">
+              <div>
+                <div className="sysinfo-label">Status</div>
+                <div className="sysinfo-value" style={{
+                  color: tunnelStatus.running ? 'var(--accent-green)'
+                       : tunnelStatus.configured ? 'var(--accent-yellow)' : 'var(--accent-red)'
+                }}>
+                  {tunnelStatus.running ? '● Running'
+                   : tunnelStatus.configured ? '● Configured, not running' : '● Not configured'}
+                </div>
+              </div>
+            </div>
+            <div className="sysinfo-item">
+              <div>
+                <div className="sysinfo-label">Point hostnames at</div>
+                <div className="sysinfo-value text-mono">{tunnelStatus.origin}</div>
+              </div>
+            </div>
+            {tunnelStatus.token && (
+              <div className="sysinfo-item">
+                <div>
+                  <div className="sysinfo-label">Token</div>
+                  <div className="sysinfo-value text-mono">{tunnelStatus.token}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {!tunnelStatus.running && (
+            <div style={{ marginTop: '1rem' }}>
+              <input
+                type="password"
+                className="input"
+                placeholder={tunnelStatus.configured ? 'Stored token in use — paste a new one to replace it' : 'Cloudflare tunnel token (eyJhIjoi…)'}
+                value={tunnelToken}
+                onChange={e => setTunnelToken(e.target.value)}
+                style={{ width: '100%', maxWidth: '520px' }}
+              />
+            </div>
+          )}
+
+          <div className="section-actions" style={{ marginTop: '1rem' }}>
+            {tunnelStatus.running ? (
+              <button className="btn btn-secondary" onClick={stopTunnel} disabled={tunnelBusy}>
+                <Power size={15} /> {tunnelBusy ? 'Stopping…' : 'Stop tunnel'}
+              </button>
+            ) : (
+              <button className="btn btn-primary" onClick={startTunnel}
+                      disabled={tunnelBusy || (!tunnelToken && !tunnelStatus.configured)}>
+                <Globe size={15} /> {tunnelBusy ? 'Starting…' : 'Start tunnel'}
+              </button>
+            )}
+          </div>
+
+          {tunnelStatus.logs && (
+            <pre className="log-tail" style={{ marginTop: '1rem', maxHeight: '180px', overflow: 'auto' }}>
+              {tunnelStatus.logs}
+            </pre>
+          )}
+
+          <p className="section-hint" style={{ marginTop: '0.75rem' }}>
+            In Cloudflare, add a public hostname to the tunnel for each guest and point it
+            at <span className="text-mono">{tunnelStatus.origin}</span>. Keep those records
+            proxied — a tunnel is reachable only through Cloudflare, so switching a hostname
+            to DNS-only takes the guest offline entirely.
+          </p>
         </section>
       )}
 
