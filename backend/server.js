@@ -837,7 +837,7 @@ const runtimes = {
 };
 
 const { createMcpServer } = require('./mcp');
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, { pruneDocker, removeAgentVolumes });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1361,6 +1361,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     if (domain) {
       await addCaddyRoute(domain, containerName, port);
     }
+    for (const alias of parseDomainAliases(config, domain)) {
+      await addCaddyRoute(alias, containerName, port);
+    }
   } catch (err) {
     // Roll back a partially deployed container so a retry doesn't collide
     // with the leftover container name.
@@ -1443,6 +1446,27 @@ open('/opt/data/config.yaml', 'w').write(''.join(out))
   const rs = await killExec.start({ Detach: true });
   rs.destroy();
   console.log('[Hermes] config.yaml patched, gateway reloading');
+}
+
+// A guest may answer to more than one hostname. A web hotel is the clearest
+// case: one process serving many domains, where every extra customer is
+// another name pointing at the same container, not another container.
+// Kept as config rather than a second column so an alias list can be edited
+// and reapplied like any other setting.
+function parseDomainAliases(config, primary) {
+  const raw = (config && config.DOMAIN_ALIASES) || '';
+  const seen = new Set([primary]);
+  const out = [];
+  for (const part of String(raw).split(/[,\s]+/)) {
+    const host = part.trim().toLowerCase().replace(/\.$/, '');
+    if (!host || seen.has(host)) continue;
+    // These become Caddy route matchers and route ids, so anything that is not
+    // plainly a hostname is dropped rather than passed on.
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) continue;
+    seen.add(host);
+    out.push(host);
+  }
+  return out;
 }
 
 async function addCaddyRoute(domain, containerName, port) {
@@ -1541,9 +1565,7 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
       await removeAgentVolumes(req.params.id);
     }
 
-    if (agent.domain) {
-      await removeCaddyRoute(agent.domain);
-    }
+    await removeAgentRoutes(agent);
 
     db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
     logEvent('agent.delete', req.params.id, `Deleted agent ${agent.name}`);
@@ -1585,6 +1607,19 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
   }
 });
 
+// Clearing a guest's routes means all of them. Removing only the primary left
+// an alias pointing at a container that no longer exists, which Caddy answers
+// with a 502 rather than a 404 — a deleted site that looks broken instead of
+// gone.
+async function removeAgentRoutes(agent) {
+  let config = {};
+  try { config = JSON.parse(agent.config || '{}'); } catch (e) {}
+  const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)].filter(Boolean);
+  for (const host of hosts) {
+    try { await removeCaddyRoute(host); } catch (e) {}
+  }
+}
+
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
@@ -1614,9 +1649,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       const container = docker.getContainer(`agenthotel-${req.params.id}`);
       try { await container.stop(); await container.remove(); } catch (e) {}
 
-      if (agent.domain) {
-        await removeCaddyRoute(agent.domain);
-      }
+      await removeAgentRoutes(agent);
 
       await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin);
     }
@@ -1701,9 +1734,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
         const container = docker.getContainer(`agenthotel-${req.params.id}`);
         try { await container.stop(); await container.remove(); } catch (e) {}
 
-        if (agent.domain) {
-          await removeCaddyRoute(agent.domain);
-        }
+        await removeAgentRoutes(agent);
 
         await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage });
       }

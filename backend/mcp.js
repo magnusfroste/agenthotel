@@ -23,7 +23,7 @@ function redactConfig(raw) {
   return JSON.stringify(safe);
 }
 
-function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, extras = {}) {
+function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, extras = {}) {
   const MCP_VERSION = '2024-11-05';
   // pruneDocker is the same routine the REST endpoint and the daily job use,
   // so a cleanup triggered over MCP is logged and bounded identically.
@@ -307,7 +307,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeCaddyRoute, ex
         }
 
         if (agent.domain) {
-          try { await removeCaddyRoute(agent.domain); } catch (e) {}
+          // Every hostname the guest answers to, not just the primary.
+          try { await removeAgentRoutes(agent); } catch (e) {}
         }
 
         // Same teardown as the REST delete: the agent's named volumes go with

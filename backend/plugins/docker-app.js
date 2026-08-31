@@ -12,6 +12,7 @@ module.exports = {
     { key: 'VOLUMES', label: 'Volumes (host:container per line)', type: 'textarea', required: false },
     { key: 'CUSTOM_ENV', label: 'Extra Env (KEY=VALUE per line)', type: 'textarea', required: false },
     { key: 'HEALTHCHECK_PATH', label: 'Health check path (e.g. /)', type: 'text', required: false },
+    { key: 'DOMAIN_ALIASES', label: 'Extra domains (comma separated)', type: 'text', required: false },
     { key: 'INJECT_PROVIDER_ENV', label: 'Inject provider API keys (true/false)', type: 'text', required: false }
   ],
 
