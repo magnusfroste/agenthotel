@@ -52,6 +52,7 @@ module.exports = {
     { key: 'GIT_REPO', label: 'Repository URL', type: 'text', required: true },
     { key: 'GIT_REF', label: 'Branch, tag or commit', type: 'text', default: 'main' },
     { key: 'GIT_SUBDIR', label: 'Build context subdirectory', type: 'text', required: false },
+    { key: 'GIT_DOCKERFILE', label: 'Dockerfile name', type: 'text', required: false },
     { key: 'PORT', label: 'Container Port', type: 'number', default: 8000 },
     { key: 'CUSTOM_ENV', label: 'Extra Env (KEY=VALUE per line)', type: 'textarea', required: false },
     { key: 'HEALTHCHECK_PATH', label: 'Health check path (e.g. /)', type: 'text', required: false },
@@ -75,6 +76,32 @@ module.exports = {
     require('../lib/envPassthrough')
       .appendUnknownEnv(env, config, ['GIT_REPO', 'GIT_REF', 'GIT_SUBDIR', 'PORT']);
     return env;
+  },
+
+  // What this guest was actually built from. Read from the checkout rather
+  // than remembered at deploy time, so it cannot drift from reality: the
+  // panel showed a repository URL and a branch name, which told the operator
+  // what was asked for and never what is running.
+  describeSource(id, config) {
+    const repoDir = path.join(BUILD_ROOT, id);
+    const source = {
+      repo: config.GIT_REPO || null,
+      ref: config.GIT_REF || 'main',
+      subdir: config.GIT_SUBDIR || null,
+      dockerfile: (config.GIT_DOCKERFILE || 'Dockerfile').trim(),
+      image: `agenthotel-${id}:latest`,
+      commit: null,
+      subject: null,
+      committedAt: null,
+      checkedOut: fs.existsSync(path.join(repoDir, '.git'))
+    };
+    if (!source.checkedOut) return source;
+    try {
+      const out = execFileSync('git', ['log', '-1', '--format=%h%x00%s%x00%cI'], { cwd: repoDir, timeout: 10000 })
+        .toString().trim().split('\0');
+      [source.commit, source.subject, source.committedAt] = out;
+    } catch (e) { /* a checkout mid-clone has no HEAD yet */ }
+    return source;
   },
 
   // Called by deployAgent before the image build. Returns the directory to
@@ -102,8 +129,14 @@ module.exports = {
     }
 
     const contextDir = resolveContext(repoDir, config.GIT_SUBDIR);
-    if (!fs.existsSync(path.join(contextDir, 'Dockerfile'))) {
-      throw new Error(`No Dockerfile in ${config.GIT_SUBDIR ? `${config.GIT_SUBDIR} of ` : ''}${repo} at ${ref}`);
+    // A repository may keep several, e.g. Dockerfile.prod. The name is
+    // relative to the build context and may not climb out of it.
+    const dockerfile = (config.GIT_DOCKERFILE || 'Dockerfile').trim();
+    if (dockerfile.startsWith('/') || dockerfile.split('/').includes('..')) {
+      throw new Error('GIT_DOCKERFILE must be a path inside the build context');
+    }
+    if (!fs.existsSync(path.join(contextDir, dockerfile))) {
+      throw new Error(`No ${dockerfile} in ${config.GIT_SUBDIR ? `${config.GIT_SUBDIR} of ` : ''}${repo} at ${ref}`);
     }
 
     const commit = git(['rev-parse', '--short', 'HEAD'], repoDir).toString().trim();

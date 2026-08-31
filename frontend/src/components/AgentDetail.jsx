@@ -237,6 +237,7 @@ function AgentDetail() {
               <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
+          {agent.source && <AgentSource agent={agent} onSaved={fetchAgent} />}
           <AgentStats agentId={id} />
           <AgentResources agentId={id} config={agent.config} runtime={agent.runtime} onSaved={fetchAgent} />
           <AgentUptime agentId={id} />
@@ -365,6 +366,94 @@ function AgentDetail() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Where a Git App guest comes from. The fields are editable because a branch
+// or a Dockerfile name is something you change, and reading them out of the
+// Environment tab as raw variables asks the operator to know which keys mean
+// "source". The commit underneath is read from the checkout, so it reports
+// what is running rather than what was requested.
+function AgentSource({ agent, onSaved }) {
+  const src = agent.source || {}
+  const c = agent.config || {}
+  const [form, setForm] = useState({
+    GIT_REPO: c.GIT_REPO || '',
+    GIT_REF: c.GIT_REF || 'main',
+    GIT_SUBDIR: c.GIT_SUBDIR || '',
+    GIT_DOCKERFILE: c.GIT_DOCKERFILE || 'Dockerfile'
+  })
+  const [saving, setSaving] = useState(false)
+  const toast = useToast()
+
+  const dirty = ['GIT_REPO', 'GIT_REF', 'GIT_SUBDIR', 'GIT_DOCKERFILE']
+    .some(k => (form[k] || '') !== (c[k] || (k === 'GIT_REF' ? 'main' : k === 'GIT_DOCKERFILE' ? 'Dockerfile' : '')))
+
+  async function save() {
+    setSaving(true)
+    try {
+      const res = await authFetch(`/api/agents/${agent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: form })
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        toast.error(d.error || 'Could not rebuild from that source')
+        return
+      }
+      toast.success('Rebuilt from source')
+      onSaved && onSaved()
+    } catch (e) {
+      toast.error('Could not rebuild from that source')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const field = (key, label, hint, placeholder) => (
+    <div key={key}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>{label}</div>
+      <input
+        value={form[key]}
+        placeholder={placeholder}
+        onChange={e => setForm({ ...form, [key]: e.target.value })}
+        style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.85rem' }}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{hint}</div>
+    </div>
+  )
+
+  return (
+    <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <GitBranch size={14} /> Source
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+        {field('GIT_REPO', 'Repository', 'An http(s) or git@ URL', 'https://github.com/owner/repo')}
+        {field('GIT_REF', 'Branch, tag or commit', 'Must exist in the repository', 'main')}
+        {field('GIT_SUBDIR', 'Build path', 'For a monorepo. Empty means the root', '/')}
+        {field('GIT_DOCKERFILE', 'Dockerfile', 'Name and path, relative to the build path', 'Dockerfile')}
+      </div>
+
+      <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+          {src.error ? <span style={{ color: 'var(--accent-red)' }}>{src.error}</span>
+            : src.commit
+              ? <>Running <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{src.commit}</span>
+                  {src.committedAt ? ` from ${new Date(src.committedAt).toLocaleDateString()}` : ''}
+                  {src.subject ? ` — ${src.subject}` : ''}</>
+              : src.checkedOut ? 'Checked out, no commit read yet' : 'Not checked out yet'}
+        </div>
+        <button className="btn btn-primary" onClick={save} disabled={saving || !dirty}>
+          {saving ? 'Rebuilding…' : 'Save and rebuild'}
+        </button>
+      </div>
+      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.6rem' }}>
+        Redeploying fetches the ref again and rebuilds, which is how new commits reach the guest.
+      </div>
     </div>
   )
 }

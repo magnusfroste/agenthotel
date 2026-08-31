@@ -852,7 +852,17 @@ app.get('/api/agents', requireAuth, (req, res) => {
 app.get('/api/agents/:id', requireAuth, (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
-  res.json({ ...agent, config: JSON.parse(agent.config || '{}') });
+  const config = JSON.parse(agent.config || '{}');
+  // A runtime that builds from source can say what it built. Without this the
+  // panel showed a Git App guest as a bare container: no repository, no
+  // commit, nothing to tell you which version is serving traffic.
+  let source = null;
+  const plugin = runtimes[agent.runtime];
+  if (plugin && typeof plugin.describeSource === 'function') {
+    try { source = plugin.describeSource(agent.id, config); }
+    catch (err) { source = { error: err.message }; }
+  }
+  res.json({ ...agent, config, source });
 });
 
 // Per-service export (Easypanel-style): the agent's full configuration as a
@@ -1203,17 +1213,19 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // their template's.
   let buildContext = path.join('/templates', runtime);
   let buildTag = baseImage;
+  let buildDockerfile = 'Dockerfile';
   let forceRebuild = rebuildImage;
   if (typeof plugin.prepareBuild === 'function') {
     const prepared = await plugin.prepareBuild(id, config);
     buildContext = prepared.contextDir;
     buildTag = prepared.imageTag;
+    if (prepared.dockerfile) buildDockerfile = prepared.dockerfile;
     if (prepared.rebuild) forceRebuild = true;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
   }
 
   if (runtime !== 'docker-app') {
-    const dockerfilePath = path.join(buildContext, 'Dockerfile');
+    const dockerfilePath = path.join(buildContext, buildDockerfile);
     if (fs.existsSync(dockerfilePath)) {
       // The template image is normally built once and reused, so editing a
       // template has no effect until someone asks for a rebuild. Rebuilding
@@ -1233,7 +1245,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       if (needsBuild) {
         console.log(`${forceRebuild ? 'Rebuilding' : 'Building'} image: ${buildTag}`);
         const tarStream = tar.pack(buildContext);
-        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true });
+        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile });
         const buildOutput = await new Promise((resolve, reject) => {
           docker.modem.followProgress(stream, (err, output) => err ? reject(err) : resolve(output));
         });
@@ -1470,8 +1482,12 @@ function parseDomainAliases(config, primary) {
     const host = part.trim().toLowerCase().replace(/\.$/, '');
     if (!host || seen.has(host)) continue;
     // These become Caddy route matchers and route ids, so anything that is not
-    // plainly a hostname is dropped rather than passed on.
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) continue;
+    // plainly a hostname is dropped rather than passed on. A leading "*." is
+    // allowed and means exactly what it does in Caddy: every subdomain that no
+    // other guest has claimed. That is what turns a web-hotel guest into one
+    // that needs no configuration per site.
+    const bare = host.startsWith('*.') ? host.slice(2) : host;
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(bare)) continue;
     seen.add(host);
     out.push(host);
   }
@@ -1499,8 +1515,19 @@ async function addCaddyRoute(domain, containerName, port) {
   // means there was nothing to replace.
   await fetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' }).catch(() => {});
 
-  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
-    method: 'POST',
+  // Caddy takes the first route that matches, so a wildcard must never sit
+  // ahead of a specific host or it swallows every guest added after it. New
+  // routes are therefore inserted at the front and wildcards appended at the
+  // back, which keeps the ordering correct no matter what order guests are
+  // deployed in. Hosts are unique, so the order among specific routes is
+  // irrelevant.
+  const isWildcard = domain.startsWith('*.');
+  const endpoint = isWildcard
+    ? `${caddyApiUrl}/config/apps/http/servers/srv0/routes`
+    : `${caddyApiUrl}/config/apps/http/servers/srv0/routes/0`;
+
+  const res = await fetch(endpoint, {
+    method: isWildcard ? 'POST' : 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(route)
   });
