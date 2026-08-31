@@ -2487,6 +2487,9 @@ app.post('/api/system/tunnel', requireAuth, async (req, res) => {
     const stored = db.prepare("SELECT value FROM settings WHERE key = 'cloudflare_tunnel_token'").get()?.value;
     const token = (req.body?.token || '').trim() || stored;
     if (!token) return res.status(400).json({ error: 'A Cloudflare tunnel token is required' });
+    // A malformed token is the operator's typo, not a server fault — say so
+    // with a 400 rather than letting start() throw into the 500 handler.
+    if (token.length < 20) return res.status(400).json({ error: 'That does not look like a Cloudflare tunnel token' });
 
     const result = await tunnel.start(docker, token);
     db.prepare("INSERT INTO settings (key, value) VALUES ('cloudflare_tunnel_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(token);
