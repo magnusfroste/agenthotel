@@ -3000,7 +3000,9 @@ const healthState = new Map();
 
 async function runHealthChecks() {
   const fetch = require('node-fetch');
-  const agents = db.prepare('SELECT id, name, runtime, port, status FROM agents').all();
+  // config comes along because a generic guest declares its own criterion
+  // there (HEALTHCHECK_PATH) — without it the health check silently saw none.
+  const agents = db.prepare('SELECT id, name, runtime, port, status, config FROM agents').all();
 
   for (const agent of agents) {
     // An agent mid-deploy has a row but no container yet, and a template image
