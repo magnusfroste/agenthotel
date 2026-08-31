@@ -608,6 +608,19 @@ function getCredentials(agent) {
       creds.push({ label: 'Admin Password', value: 'Generated on first boot — see the Logs tab' })
     }
   }
+  // Generic guests have no runtime rule, so anything shaped like a credential
+  // is shown. Before this, a Git App guest with an admin password had it sat
+  // in its config with nowhere to read it — the operator had to know it was
+  // there and go digging through the Environment tab.
+  const KNOWN = new Set(creds.map(x => x.label))
+  for (const [key, value] of Object.entries(c)) {
+    if (!/(PASSWORD|_TOKEN|_SECRET|ADMIN_USER)$/.test(key)) continue
+    if (typeof value !== 'string' || !value) continue
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase())
+    if (KNOWN.has(label)) continue
+    KNOWN.add(label)
+    creds.push({ label, value })
+  }
   if (c.OPENAI_API_KEY) creds.push({ label: 'OpenAI API Key', value: c.OPENAI_API_KEY })
   if (c.OPENROUTER_API_KEY) creds.push({ label: 'OpenRouter API Key', value: c.OPENROUTER_API_KEY })
   if (c.ANTHROPIC_API_KEY) creds.push({ label: 'Anthropic API Key', value: c.ANTHROPIC_API_KEY })

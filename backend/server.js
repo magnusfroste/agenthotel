@@ -1170,6 +1170,15 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // from host-wide env vars; per-agent overrides live in the agent config
   // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
   const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
+  // Tell the guest which hostnames it answers to. A container cannot discover
+  // this — it sees a Host header per request and never learns the set — so a
+  // guest that serves several sites cannot tell a domain routed here with
+  // nothing behind it from one that was never configured. Both look fine from
+  // the outside, which is what makes that failure hard to catch.
+  {
+    const hosts = [domain, ...parseDomainAliases(config, domain)].filter(Boolean);
+    if (hosts.length) envConfig.AGENTHOTEL_DOMAINS = hosts.join(',');
+  }
   // A runtime may need more than the host default just to finish booting.
   // OpenClaw npm-installs its codex plugin on first start; at 1024 MB that
   // install is OOM-killed (~700 MB RSS on top of the gateway), startup
