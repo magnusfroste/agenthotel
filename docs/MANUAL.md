@@ -153,6 +153,40 @@ so the agent keeps its context and applies the correction. This is the normal
 way to unblock one that has gone down a wrong path — diagnose with
 `exec_in_agent`, then tell it what you found.
 
+### Hosting the tools yourself
+
+An agent with no tools cannot do much, and the tools it calls are usually
+ordinary web services. The **Git App** runtime checks one in from its
+repository: AgentHotel clones the repo, builds the Dockerfile and runs the
+result as a guest with a domain, TLS, resource caps and persistent volumes —
+the same room any agent gets.
+
+This exists because a great many useful apps ship a Dockerfile and no
+published image. Docker App can only run an image that already exists; Git App
+builds one.
+
+| Field | Meaning |
+| --- | --- |
+| `GIT_REPO` | Repository URL (`https://…` or `git@…`) |
+| `GIT_REF` | Branch, tag or commit sha — defaults to `main` |
+| `GIT_SUBDIR` | Build context, when the Dockerfile is not at the repository root |
+| `PORT` | The port the container listens on |
+
+Redeploying is how you pick up new commits: each redeploy fetches the ref again
+and rebuilds, with Docker's layer cache making it cheap when nothing changed.
+`VOLUME` lines in the Dockerfile become named volumes automatically, so data
+survives the rebuild. The image is tagged per agent, so two Git App guests
+built from different repositories never collide.
+
+Once the tool is running, `set_agent_env` is what connects the two: give the
+agents its URL and token, and the hotel is not just housing them but equipping
+them.
+
+Building an arbitrary repository means running its build on the host. That is
+worth stating plainly, though it does not lower the existing bar — the panel
+already holds the Docker socket and is root-equivalent, so panel access is the
+security boundary either way.
+
 ### Handing an agent an external MCP tool
 
 Agents given a remote MCP endpoint will often write their own client for it from

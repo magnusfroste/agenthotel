@@ -117,6 +117,7 @@ The built-in observability (per-agent stats, uptime checks, activity log) is int
 | **OpenClaw** | OpenClaw persistent agent |
 | **Odysseus** | Self-hosted AI workspace with browser tooling |
 | **Docker App** | Any Docker image, with env vars and volumes |
+| **Git App** | Build straight from a Git repository — for apps that ship a Dockerfile but no image, including the MCP tools your agents call |
 | **Compose** | Full `docker-compose.yml` deployments |
 
 ## MCP Integration

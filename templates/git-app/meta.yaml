@@ -1,0 +1,47 @@
+name: Git App
+category: Docker App
+icon: git-branch
+color: "#8b5cf6"
+description: |
+  Check in anything that ships a Dockerfile, straight from its repository.
+  AgentHotel clones the repo, builds the image and runs it as a guest — with
+  a domain, TLS, resource caps and persistent volumes like any other room.
+  This is how the hotel gets its facilities: the MCP tools and services your
+  agents need in order to actually get work done.
+
+instructions: |
+  Give the repository URL and the port the container listens on. The branch
+  defaults to `main`; a tag or commit sha works too. If the Dockerfile is not
+  at the repository root, name its directory as the build context.
+
+  Every redeploy fetches the ref again and rebuilds, so redeploying is how you
+  pick up new commits. Add configuration one `KEY=VALUE` per line — or hand it
+  to the guest later over MCP with `set_agent_env`.
+
+links:
+  - label: Dockerfile reference
+    url: https://docs.docker.com/reference/dockerfile/
+
+benefits:
+  - title: No Registry Needed
+    description: Builds from source, so an app that publishes no image still deploys
+  - title: Redeploy Is Deploy
+    description: Each redeploy fetches the ref and rebuilds, picking up new commits
+  - title: Equip Your Agents
+    description: Host the MCP tools your agents call, on the same box, under one panel
+
+features:
+  - title: Any Ref
+    description: Track a branch, pin a tag, or freeze an exact commit sha
+  - title: Subdirectory Builds
+    description: Point at a subdirectory when the Dockerfile is not at the root
+  - title: Automatic Volumes
+    description: VOLUME lines in the Dockerfile become named, persistent volumes
+  - title: Same Guardrails
+    description: CPU and RAM caps, domain, HTTPS and routing exactly as for agents
+
+tags:
+  - Docker
+  - Git
+  - MCP Tools
+  - Self-Hosted

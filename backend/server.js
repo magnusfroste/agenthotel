@@ -832,6 +832,7 @@ const runtimes = {
   openclaw: require('./plugins/openclaw'),
   odysseus: require('./plugins/odysseus'),
   'docker-app': require('./plugins/docker-app'),
+  'git-app': require('./plugins/git-app'),
   compose: require('./plugins/compose')
 };
 
@@ -1185,30 +1186,45 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
 
   let imageToRun = image;
   let volumes = [];
-  
+
+  // A runtime may supply its own build context instead of using the shared
+  // template directory — Git App clones a repository and builds that. Such an
+  // image is tagged per agent, because two Git App guests are two different
+  // repositories and cannot share one image the way agents of a runtime share
+  // their template's.
+  let buildContext = path.join('/templates', runtime);
+  let buildTag = baseImage;
+  let forceRebuild = rebuildImage;
+  if (typeof plugin.prepareBuild === 'function') {
+    const prepared = await plugin.prepareBuild(id, config);
+    buildContext = prepared.contextDir;
+    buildTag = prepared.imageTag;
+    if (prepared.rebuild) forceRebuild = true;
+    if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
+  }
+
   if (runtime !== 'docker-app') {
-    const dockerfilePath = path.join('/templates', runtime, 'Dockerfile');
+    const dockerfilePath = path.join(buildContext, 'Dockerfile');
     if (fs.existsSync(dockerfilePath)) {
       // The template image is normally built once and reused, so editing a
       // template has no effect until someone asks for a rebuild. Rebuilding
       // re-tags baseImage; containers already running keep their old image id
       // (it just becomes dangling), so this is safe with a live fleet.
       let needsBuild = true;
-      if (!rebuildImage) {
+      if (!forceRebuild) {
         try {
-          await docker.getImage(baseImage).inspect();
-          console.log(`Using existing image: ${baseImage}`);
-          imageToRun = baseImage;
+          await docker.getImage(buildTag).inspect();
+          console.log(`Using existing image: ${buildTag}`);
+          imageToRun = buildTag;
           needsBuild = false;
         } catch (e) {
           // Image doesn't exist — fall through and build it.
         }
       }
       if (needsBuild) {
-        console.log(`${rebuildImage ? 'Rebuilding' : 'Building'} image: ${baseImage}`);
-        const buildContext = path.join('/templates', runtime);
+        console.log(`${forceRebuild ? 'Rebuilding' : 'Building'} image: ${buildTag}`);
         const tarStream = tar.pack(buildContext);
-        const stream = await docker.buildImage(tarStream, { t: baseImage, pull: true });
+        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true });
         const buildOutput = await new Promise((resolve, reject) => {
           docker.modem.followProgress(stream, (err, output) => err ? reject(err) : resolve(output));
         });
@@ -1217,14 +1233,14 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
         // dies with a confusing "No such image"). Verify the image exists
         // and surface the tail of the build log if it doesn't.
         try {
-          await docker.getImage(baseImage).inspect();
+          await docker.getImage(buildTag).inspect();
         } catch (e) {
           const tail = (buildOutput || [])
             .map(o => o.stream || o.error || o.status || '')
             .join('').trim().split('\n').slice(-15).join('\n');
-          throw new Error(`Image build did not produce ${baseImage}. Build log tail:\n${tail}`);
+          throw new Error(`Image build did not produce ${buildTag}. Build log tail:\n${tail}`);
         }
-        imageToRun = baseImage;
+        imageToRun = buildTag;
       }
     }
     
