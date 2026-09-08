@@ -35,6 +35,17 @@ EXPOSE 18789
 # uses the classic builder — no BuildKit. Heredocs and COPY --chmod are
 # BuildKit-only, so the entrypoint lives in its own file and is chmod'd in a
 # RUN step. Keep it that way or the image silently stops building.
+# OpenClaw installs globally as root, but the container runs as node. Newer
+# releases finish their package lifecycle on first run and write a lock
+# directory inside their own module folder to do it — which a non-root process
+# cannot create. The agent then failed to start and restart-looped forever with
+# "package lifecycle is incomplete ... EACCES", which reads as a packaging
+# problem rather than a permission one.
+#
+# Kept last on purpose: it is a thin layer, so fixing it never rebuilds the
+# playwright install above.
+RUN chown -R node:node /usr/local/lib/node_modules/openclaw
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 
