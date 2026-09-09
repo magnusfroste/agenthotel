@@ -36,7 +36,24 @@ const essentials = {
         ? e.OPENCLAW_ALLOWED_ORIGINS.split(',').map(s => s.trim())
         : [],
       dangerouslyAllowHostHeaderOriginFallback: true,
-      dangerouslyDisableDeviceAuth: e.OPENCLAW_DISABLE_DEVICE_AUTH === '1'
+      // Device pairing is off by default, and that is a deliberate trade.
+      //
+      // Reaching this gateway at all requires the 64-character token the panel
+      // generates, which cannot be guessed. Pairing is a second gate against a
+      // token that has been *copied* — and clearing it needs a command run
+      // inside the container, which an operator has no obvious way to reach
+      // from the panel. That cost is paid on every first login; the benefit
+      // only ever appears if the token leaks.
+      //
+      // So the default favours getting in, and an operator who treats the
+      // token as leakable sets OPENCLAW_REQUIRE_DEVICE_PAIRING=1. The older
+      // OPENCLAW_DISABLE_DEVICE_AUTH still wins when set explicitly, so
+      // existing agents keep whatever they were given.
+      dangerouslyDisableDeviceAuth:
+        e.OPENCLAW_REQUIRE_DEVICE_PAIRING === '1' ? false
+        : e.OPENCLAW_DISABLE_DEVICE_AUTH != null && e.OPENCLAW_DISABLE_DEVICE_AUTH !== ''
+          ? e.OPENCLAW_DISABLE_DEVICE_AUTH === '1'
+          : true
     }
   },
   browser: { noSandbox: true }
