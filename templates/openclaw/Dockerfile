@@ -13,8 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --break-system-packages uv \
     || (curl -LsSf https://astral.sh/uv/install.sh | sh)
 
-# Always install latest OpenClaw on image build
-RUN rm -f /usr/local/bin/openclaw && npm install -g openclaw@latest
+# Pinned on purpose. Two hosts building weeks apart used to get different
+# software: an image built in August ran 2026.7.1-2 happily while a fresh
+# build of the same Dockerfile pulled a release that could not start at all,
+# and the failure surfaced on the new machine rather than here. A build is
+# also expensive now — the image is ~9 GB and needs roughly 10 GB of free
+# space while the old and new layers coexist — so it is not something an
+# operator should trigger unknowingly by creating their first agent.
+#
+# To upgrade: raise OPENCLAW_VERSION, rebuild, and check the agent reaches
+# "[gateway] ready" without restarting.
+ARG OPENCLAW_VERSION=2026.9.3
+RUN rm -f /usr/local/bin/openclaw && npm install -g openclaw@${OPENCLAW_VERSION}
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN node /app/node_modules/playwright-core/cli.js install --with-deps chromium \

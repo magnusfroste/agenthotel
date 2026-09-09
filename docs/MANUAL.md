@@ -304,5 +304,18 @@ Agents can never starve the panel or freeze the host:
   a minute. Worth knowing because the failure is invisible to a status check:
   with no matching route Caddy answers an **empty 200**, so every hostname
   looks healthy while serving nothing. Measure the response size, not the code.
+- **Template images are built on first use, and one of them is large.** The
+  first OpenClaw agent on a host builds a ~9 GB image and needs roughly 10 GB
+  free while old and new layers coexist. It takes 15–20 minutes, during which
+  the create request will exceed any proxy's timeout — the build continues on
+  the server regardless, and the agent appears once it finishes. Check free
+  space before creating one on a host that is more than half full.
+- **Runtime versions are pinned.** `templates/openclaw/Dockerfile` installs an
+  exact `OPENCLAW_VERSION` rather than `latest`, so two hosts built weeks apart
+  run the same software. That was not always true: an image built in August ran
+  happily while a fresh build of the same file pulled a release that could not
+  start at all, and the failure appeared on the new machine rather than the one
+  it was written on. Raise the version deliberately, rebuild, and check the
+  agent reaches `[gateway] ready` without restarting.
 - **Cleanup** — daily automatic Docker prune (agent volumes are never touched); history on the System page.
 - **Alerts** — webhook (Slack/Discord) or Telegram notifications for agent down/recovered and host disk/memory thresholds.
