@@ -78,9 +78,24 @@ function CreateAgent() {
       const res = await authFetch('/api/agents', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       })
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create agent') }
+      if (!res.ok) {
+        // A first OpenClaw build takes 15-20 minutes and every proxy in between
+        // gives up first, answering with an HTML error page. The agent row
+        // already exists with status "creating" and the build carries on, so
+        // an unparseable error body means "go watch the card", not "failed".
+        let err = null
+        try { err = await res.json() } catch (e) { err = null }
+        if (err && err.error) throw new Error(err.error)
+        navigate('/')
+        return
+      }
       navigate('/')
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      // Same story when the connection itself drops: the request outlived the
+      // proxy, not the build.
+      if (/Unexpected token|Failed to fetch|NetworkError|JSON/i.test(err.message)) { navigate('/'); return }
+      setError(err.message)
+    }
     finally { setLoading(false) }
   }
 

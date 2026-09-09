@@ -52,9 +52,15 @@ EXPOSE 18789
 # "package lifecycle is incomplete ... EACCES", which reads as a packaging
 # problem rather than a permission one.
 #
+# Not recursive. Creating a directory needs write permission on its parent,
+# not on the parent's contents — and a recursive chown rewrites every file's
+# metadata, which Docker records as a full copy of the tree: 553 MB for what
+# is a permission bit on one directory. Verified by resetting the tree to root,
+# chowning only the folder, and watching the gateway reach ready.
+#
 # Kept last on purpose: it is a thin layer, so fixing it never rebuilds the
 # playwright install above.
-RUN chown -R node:node /usr/local/lib/node_modules/openclaw
+RUN chown node:node /usr/local/lib/node_modules/openclaw
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh

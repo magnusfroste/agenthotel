@@ -849,6 +849,22 @@ app.get('/api/agents', requireAuth, (req, res) => {
   res.json(agents);
 });
 
+app.get('/api/agents/:id/build-log', requireAuth, (req, res) => {
+  const p = buildProgress.get(req.params.id);
+  if (!p) return res.json({ active: false });
+  res.json({
+    active: !p.done,
+    startedAt: p.startedAt,
+    elapsedSeconds: Math.round((Date.now() - p.startedAt) / 1000),
+    image: p.image,
+    step: p.step, total: p.total,
+    line: p.line,
+    pullPercent: p.pullPercent,
+    done: p.done, error: p.error,
+    lines: p.lines.slice(-40)
+  });
+});
+
 app.get('/api/agents/:id', requireAuth, (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
@@ -1166,6 +1182,40 @@ function enqueueDeploy(work) {
   return run;
 }
 
+// Build progress, per agent, while an image is being built. Docker streams
+// every step and every pulled layer; the panel used to keep that only to show
+// a tail on failure, so a 20-minute build read as a card saying "creating"
+// and a create request that a proxy cut off with an HTML error page. The
+// entry lives in memory (like the upgrade log) and is read by
+// GET /api/agents/:id/build-log while the card is in creating/redeploying.
+const buildProgress = new Map();
+
+function noteBuildEvent(id, o) {
+  const p = buildProgress.get(id);
+  if (!p) return;
+  if (o.stream) {
+    const line = String(o.stream).trim();
+    if (!line) return;
+    const m = /^Step (\d+)\/(\d+)\s*:\s*(.*)$/.exec(line);
+    if (m) { p.step = parseInt(m[1]); p.total = parseInt(m[2]); p.line = m[3].trim(); }
+    else p.line = line.slice(0, 160);
+    p.lines.push(line.slice(0, 200));
+    if (p.lines.length > 60) p.lines.shift();
+    return;
+  }
+  // Pull events arrive per layer with current/total bytes. Aggregating them
+  // is what turns "Downloading" into a number the operator can watch move.
+  if (o.status && o.id && o.progressDetail && o.progressDetail.total) {
+    p.pulls[o.id] = { current: o.progressDetail.current || 0, total: o.progressDetail.total };
+    const cur = Object.values(p.pulls).reduce((a, x) => a + x.current, 0);
+    const tot = Object.values(p.pulls).reduce((a, x) => a + x.total, 0);
+    p.pullPercent = tot ? Math.min(100, Math.round((cur / tot) * 100)) : null;
+    p.line = `${o.status} base image ${p.pullPercent}%`;
+  } else if (o.status && !o.id) {
+    p.line = String(o.status).slice(0, 160);
+  }
+}
+
 async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
   const containerName = `agenthotel-${id}`;
   const baseImage = `${runtime}-agenthotel:latest`;
@@ -1244,11 +1294,19 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       }
       if (needsBuild) {
         console.log(`${forceRebuild ? 'Rebuilding' : 'Building'} image: ${buildTag}`);
+        buildProgress.set(id, { startedAt: Date.now(), image: buildTag, step: 0, total: 0, line: 'Preparing build context', lines: [], pulls: {}, pullPercent: null, done: false, error: null });
         const tarStream = tar.pack(buildContext);
         const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile });
-        const buildOutput = await new Promise((resolve, reject) => {
-          docker.modem.followProgress(stream, (err, output) => err ? reject(err) : resolve(output));
-        });
+        let buildOutput;
+        try {
+          buildOutput = await new Promise((resolve, reject) => {
+            docker.modem.followProgress(stream, (err, output) => err ? reject(err) : resolve(output), o => noteBuildEvent(id, o));
+          });
+        } catch (err) {
+          const p = buildProgress.get(id);
+          if (p) { p.done = true; p.error = err.message; p.line = `Build failed: ${err.message}`.slice(0, 200); }
+          throw err;
+        }
         // Build failures can slip through followProgress without an error
         // (seen with buildkit: stream ends, no image tagged, deploy later
         // dies with a confusing "No such image"). Verify the image exists
@@ -1259,8 +1317,11 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
           const tail = (buildOutput || [])
             .map(o => o.stream || o.error || o.status || '')
             .join('').trim().split('\n').slice(-15).join('\n');
+          const p = buildProgress.get(id);
+          if (p) { p.done = true; p.error = 'Image build did not produce an image'; p.line = p.error; }
           throw new Error(`Image build did not produce ${buildTag}. Build log tail:\n${tail}`);
         }
+        { const p = buildProgress.get(id); if (p) { p.done = true; p.line = 'Image built — starting container'; } }
         imageToRun = buildTag;
       }
     }

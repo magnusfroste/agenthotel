@@ -2,8 +2,50 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
+
+// What a card says while its image is being built. The backend records every
+// build step and pulled layer; without this the card read "creating" for
+// twenty minutes with nothing to distinguish a build from a hang.
+function BuildProgress({ agentId }) {
+  const [p, setP] = useState(null)
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try {
+        const res = await authFetch(`/api/agents/${agentId}/build-log`)
+        if (alive && res.ok) setP(await res.json())
+      } catch (e) { /* next tick */ }
+    }
+    tick()
+    const t = setInterval(tick, 3000)
+    return () => { alive = false; clearInterval(t) }
+  }, [agentId])
+
+  if (!p || !p.active) {
+    return (
+      <div className="agent-card-meta-item" style={{ color: 'var(--text-secondary)' }}>
+        <Loader size={14} color="currentColor" />
+        <span>{p && p.done && !p.error ? 'Image built — starting container' : 'Starting…'}</span>
+      </div>
+    )
+  }
+  const mins = Math.floor(p.elapsedSeconds / 60), secs = p.elapsedSeconds % 60
+  const stepText = p.total ? `Step ${p.step}/${p.total}` : (p.pullPercent != null ? `Pulling ${p.pullPercent}%` : 'Building')
+  return (
+    <div className="agent-card-meta-item" style={{ color: 'var(--accent-blue, #60a5fa)', alignItems: 'flex-start' }} title={p.line}>
+      <Loader size={14} color="currentColor" />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ fontWeight: 600 }}>{stepText}</span>
+        <span style={{ color: 'var(--text-secondary)' }}> · {mins}:{String(secs).padStart(2,'0')}</span>
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px' }}>
+          {p.line}
+        </div>
+      </span>
+    </div>
+  )
+}
 
 function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -317,6 +359,9 @@ function Dashboard() {
                       <Package size={14} color="currentColor" />
                       <span>{agent.image?.split('/').pop()}</span>
                     </div>
+                    {(agent.status === 'creating' || agent.status === 'redeploying') && (
+                      <BuildProgress agentId={agent.id} />
+                    )}
                     {agent.health && (
                       <div className="agent-card-meta-item" style={{ color: healthColor(agent.health) }}>
                         <Activity size={14} color="currentColor" />
