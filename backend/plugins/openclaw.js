@@ -39,7 +39,6 @@ module.exports = {
   // with root-owned files that OpenClaw can no longer write.
   terminalUser: 'node',
   configFields: [
-    { key: 'OPENCLAW_REQUIRE_DEVICE_PAIRING', label: 'Require device pairing (1 = on)', type: 'text', required: false },
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
     { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },

@@ -36,24 +36,25 @@ const essentials = {
         ? e.OPENCLAW_ALLOWED_ORIGINS.split(',').map(s => s.trim())
         : [],
       dangerouslyAllowHostHeaderOriginFallback: true,
-      // Device pairing is off by default, and that is a deliberate trade.
+      // Device pairing cannot be switched off on OpenClaw 2026.9.3.
       //
-      // Reaching this gateway at all requires the 64-character token the panel
-      // generates, which cannot be guessed. Pairing is a second gate against a
-      // token that has been *copied* — and clearing it needs a command run
-      // inside the container, which an operator has no obvious way to reach
-      // from the panel. That cost is paid on every first login; the benefit
-      // only ever appears if the token leaks.
+      // The panel sets OPENCLAW_DISABLE_DEVICE_AUTH=1 for every guest, and the
+      // key below is still in the config schema and still accepted by
+      // `openclaw config set` — but the gateway's startup migration deletes it
+      // on every boot. Verified by writing it three ways (here, config set,
+      // both) and reading the file only after a "ready" line newer than the
+      // container's StartedAt: gone every time. Reading it earlier shows it
+      // present, which is what made this look intermittent for an evening.
       //
-      // So the default favours getting in, and an operator who treats the
-      // token as leakable sets OPENCLAW_REQUIRE_DEVICE_PAIRING=1. The older
-      // OPENCLAW_DISABLE_DEVICE_AUTH still wins when set explicitly, so
-      // existing agents keep whatever they were given.
-      dangerouslyDisableDeviceAuth:
-        e.OPENCLAW_REQUIRE_DEVICE_PAIRING === '1' ? false
-        : e.OPENCLAW_DISABLE_DEVICE_AUTH != null && e.OPENCLAW_DISABLE_DEVICE_AUTH !== ''
-          ? e.OPENCLAW_DISABLE_DEVICE_AUTH === '1'
-          : true
+      // Its replacement, gateway.auth.trustedProxy.deviceAutoApprove, refuses
+      // to validate without a userHeader: it is meant for a proxy that asserts
+      // who the user is, which Caddy does not do here. Wiring that up makes
+      // Caddy part of the auth story — a deliberate decision, not a default.
+      //
+      // So this is left as it was: honest about intent, inert on this version.
+      // First login needs `openclaw devices approve --latest` inside the
+      // container until the panel offers a button for it.
+      dangerouslyDisableDeviceAuth: e.OPENCLAW_DISABLE_DEVICE_AUTH === '1'
     }
   },
   browser: { noSandbox: true }
