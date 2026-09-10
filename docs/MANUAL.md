@@ -338,6 +338,11 @@ Agents can never starve the panel or freeze the host:
   a minute. Worth knowing because the failure is invisible to a status check:
   with no matching route Caddy answers an **empty 200**, so every hostname
   looks healthy while serving nothing. Measure the response size, not the code.
+- **A redeploy builds before it swaps.** The image is made while the old
+  container keeps serving, and only then is the container replaced — so a
+  rebuild costs about a second of downtime instead of the length of the build.
+  It used to tear down first, which took an OpenClaw guest offline for the full
+  twenty minutes and a Git App guest offline for its build on *every* redeploy.
 - **Template images are built on first use, and one of them is large.** The
   first OpenClaw agent on a host builds a ~9 GB image and needs roughly 10 GB
   free while old and new layers coexist. It takes 15–20 minutes, during which

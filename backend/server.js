@@ -838,7 +838,7 @@ const runtimes = {
 };
 
 const { createMcpServer } = require('./mcp');
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1283,7 +1283,7 @@ function noteBuildEvent(id, o) {
 // OpenClaw rebuild took the guest down for the full twenty minutes, and a Git
 // App guest — which rebuilds on every redeploy — went down for its build every
 // time. The old container can keep serving until the new image exists.
-async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false } = {}) {
+async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false, alreadyBuilt = false } = {}) {
   const baseImage = `${runtime}-agenthotel:latest`;
   let imageToRun = image;
 
@@ -1301,7 +1301,11 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     buildContext = prepared.contextDir;
     buildTag = prepared.imageTag;
     if (prepared.dockerfile) buildDockerfile = prepared.dockerfile;
-    if (prepared.rebuild) forceRebuild = true;
+    // A runtime that always rebuilds (Git App fetches its ref every deploy)
+    // says so here. It must not override a caller that has just built the
+    // image itself, or the work happens twice — once before the container is
+    // torn down and once after.
+    if (prepared.rebuild && !alreadyBuilt) forceRebuild = true;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
   }
 
@@ -1314,6 +1318,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
       // re-tags baseImage; containers already running keep their old image id
       // (it just becomes dangling), so this is safe with a live fleet.
       let needsBuild = true;
+      if (alreadyBuilt) forceRebuild = false;
       if (!forceRebuild) {
         try {
           await docker.getImage(buildTag).inspect();
@@ -1361,7 +1366,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
   return { imageToRun, dockerfilePath };
 }
 
-async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
+async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false, alreadyBuilt = false } = {}) {
   const containerName = `agenthotel-${id}`;
 
   // Optional memory cap (MB) — guards the host against a single agent
@@ -1401,7 +1406,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // wants the old container to keep serving meanwhile, and here otherwise. A
   // caller that pre-built passes rebuildImage false, so this finds the fresh
   // image and starts it.
-  const built = await ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage });
+  const built = await ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage, alreadyBuilt });
   let imageToRun = built.imageToRun;
   const dockerfilePath = built.dockerfilePath;
   let volumes = [];
@@ -1824,12 +1829,21 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
       await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
     } else {
+      // Build before tearing anything down, so the guest keeps serving while
+      // its new image is made. A Git App guest rebuilds on every redeploy, so
+      // this is not only the rebuild-flag case.
+      try {
+        await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, updatedConfig, plugin, {});
+      } catch (err) {
+        db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+        return res.status(500).json({ error: `Build failed, the agent was left running: ${err.message}` });
+      }
       const container = docker.getContainer(`agenthotel-${req.params.id}`);
       try { await container.stop(); await container.remove(); } catch (e) {}
 
       await removeAgentRoutes(agent);
 
-      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin);
+      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin, { alreadyBuilt: true });
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
@@ -1909,12 +1923,19 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
         await plugin.stop(agent.id, config);
         await plugin.deploy(agent.id, agent.name, config, plugin);
       } else {
+        try {
+          await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, { rebuildImage });
+        } catch (err) {
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+          throw new Error(`Build failed, the agent was left running: ${err.message}`);
+        }
         const container = docker.getContainer(`agenthotel-${req.params.id}`);
         try { await container.stop(); await container.remove(); } catch (e) {}
 
         await removeAgentRoutes(agent);
 
-        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage });
+        // The image is already built; deployAgent must not build it twice.
+        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: false, alreadyBuilt: true });
       }
     });
 

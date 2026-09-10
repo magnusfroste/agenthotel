@@ -30,7 +30,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // so a cleanup triggered over MCP is logged and bounded identically.
   // removeAgentVolumes likewise mirrors DELETE /api/agents/:id — without it an
   // MCP delete left every named volume behind as an orphan.
-  const { pruneDocker, removeAgentVolumes } = extras;
+  const { pruneDocker, removeAgentVolumes, ensureAgentImage } = extras;
 
   const tools = {
     list_agents: {
@@ -392,10 +392,19 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
             try { await plugin.stop(agent.id, deployConfig); } catch (e) {}
             await plugin.deploy(agent.id, agent.name, deployConfig, plugin);
           } else {
+          // Build before tearing down, so the guest keeps serving meanwhile.
+          if (ensureAgentImage) {
+            try {
+              await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, deployConfig, plugin, { rebuildImage: false });
+            } catch (err) {
+              db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+              return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${err.message}` }) }], isError: true };
+            }
+          }
             const container = docker.getContainer(`agenthotel-${args.agent_id}`);
             try { await container.stop(); } catch (e) {}
             try { await container.remove({ force: true }); } catch (e) {}
-            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, deployConfig, plugin);
+            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, deployConfig, plugin, { alreadyBuilt: true });
           }
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, set, removed, applied: true, status: 'running' }) }] };
@@ -427,11 +436,20 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
             try { await plugin.stop(agent.id, config); } catch (e) {}
             await plugin.deploy(agent.id, agent.name, config, plugin);
           } else {
+          // Build before tearing down, so the guest keeps serving meanwhile.
+          if (ensureAgentImage) {
+            try {
+              await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, { rebuildImage: args.rebuild === true });
+            } catch (err) {
+              db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+              return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${err.message}` }) }], isError: true };
+            }
+          }
             const container = docker.getContainer(`agenthotel-${args.agent_id}`);
             try { await container.stop(); } catch (e) {}
             try { await container.remove(); } catch (e) {}
 
-            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: args.rebuild === true });
+            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: false, alreadyBuilt: true });
           }
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
