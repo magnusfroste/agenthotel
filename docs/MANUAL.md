@@ -219,6 +219,40 @@ is:
   protection. Use the public name for MCP; the origin URL is for eyeballing the
   app in a browser.
 
+## Template actions
+
+A runtime can declare things an operator needs to do to a running guest, and
+the panel renders them as buttons on the agent's Overview. The panel knows
+nothing about what they do — it runs what the template says and shows what came
+back.
+
+```js
+// backend/plugins/<runtime>.js
+actions: [{
+  id: 'approve-device',
+  label: 'Approve waiting browser',
+  hint: 'Shown under the button',
+  status: "…prints {\"count\":N,\"detail\":\"…\"}…",   // optional, read-only
+  run: "…the command to run…"
+}]
+```
+
+Both commands run inside the container through the same path as
+`exec_in_agent`, as the runtime's `terminalUser`. A `status` command is
+optional and must print one JSON object: when `count` is above zero the button
+is highlighted and labelled *N waiting*, so an operator can see there is
+something to decide without clicking to find out.
+
+Actions are deliberately operator-triggered rather than part of deployment.
+Approving a paired browser grants operator scope to whoever is waiting — that
+is a decision, not a provisioning step.
+
+**OpenClaw — Approve waiting browser.** OpenClaw pairs each browser once, and
+clearing that used to mean opening a shell and running a command an operator
+had no way to know existed. Open the agent, then press the button. On
+2026.9.3 pairing cannot be switched off at all — see the note in
+`templates/openclaw/entrypoint.sh`.
+
 ## Cloudflare Tunnel
 
 The normal way in needs three things to be true: ports 80 and 443 free and

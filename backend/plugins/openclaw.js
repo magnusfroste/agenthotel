@@ -37,6 +37,40 @@ module.exports = {
   // The entrypoint starts as root but sudo's down to node for the gateway, so the
   // state volumes are owned by node. Exec'ing a terminal as root would litter them
   // with root-owned files that OpenClaw can no longer write.
+  // Things an operator needs to do to a running guest, declared by the runtime
+  // and surfaced by the panel as buttons. The alternative was telling people to
+  // open a shell and type a command they had no way to know about.
+  //
+  // Deliberately operator-triggered rather than automatic: approving a device
+  // grants operator scope to whoever is waiting, which is a decision, not a
+  // deployment step. `status` is read-only and lets the panel say whether there
+  // is anything to decide.
+  actions: [
+    {
+      id: 'approve-device',
+      label: 'Approve waiting browser',
+      hint: 'OpenClaw pairs each browser once. Open the agent, then approve here.',
+      // --latest only *shows* the pending request; approving needs its id.
+      status: `openclaw devices approve --latest --json 2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    s = d.get('selected') or {}
+except Exception:
+    s = {}
+print(json.dumps({'count': 1 if s.get('requestId') else 0,
+                  'detail': (s.get('platform') or '') + (' · ' + s['clientId'] if s.get('clientId') else '')}))
+" 2>/dev/null || echo '{"count":0}'`,
+      run: `REQ=$(openclaw devices approve --latest --json 2>/dev/null | python3 -c "
+import sys, json
+try:
+    print((json.load(sys.stdin).get('selected') or {}).get('requestId',''))
+except Exception:
+    print('')
+" 2>/dev/null); if [ -n "$REQ" ]; then openclaw devices approve "$REQ" --json; else echo 'No browser is waiting to be approved.'; fi`
+    }
+  ],
+
   terminalUser: 'node',
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },

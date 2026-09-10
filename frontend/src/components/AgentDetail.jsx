@@ -4,7 +4,8 @@ import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
-  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer, Activity
+  Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer, Activity,
+  Zap, GitBranch
 } from 'lucide-react'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
@@ -237,6 +238,7 @@ function AgentDetail() {
               <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
+          <AgentActions agentId={id} status={agent.status} />
           {agent.source && <AgentSource agent={agent} onSaved={fetchAgent} />}
           <AgentStats agentId={id} />
           <AgentResources agentId={id} config={agent.config} runtime={agent.runtime} onSaved={fetchAgent} />
@@ -365,6 +367,87 @@ function AgentDetail() {
             )}
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+// Buttons a runtime declares for itself — approving a paired browser, and
+// whatever the next runtime needs. The panel knows nothing about what they do;
+// it renders what the template says and shows what came back.
+//
+// Each action may carry a read-only status command, so a button can say
+// whether there is anything to do rather than making the operator click to
+// find out.
+function AgentActions({ agentId, status }) {
+  const [actions, setActions] = useState([])
+  const [busy, setBusy] = useState(null)
+  const [output, setOutput] = useState(null)
+  const toast = useToast()
+
+  const load = async () => {
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/actions`)
+      if (res.ok) setActions((await res.json()).actions || [])
+    } catch (e) { /* an agent mid-boot simply has nothing to report */ }
+  }
+  useEffect(() => { load() }, [agentId, status])
+
+  async function run(a) {
+    setBusy(a.id); setOutput(null)
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/actions/${a.id}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'Action failed'); return }
+      setOutput({ id: a.id, text: (data.output || '').trim() || '(no output)', failed: data.exitCode !== 0 })
+      if (data.exitCode === 0) toast.success(`${a.label} — done`)
+      load()
+    } catch (e) {
+      toast.error('Action failed')
+    } finally { setBusy(null) }
+  }
+
+  if (!actions.length) return null
+  return (
+    <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <Zap size={14} /> Actions
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+        {actions.map(a => {
+          const waiting = a.status && a.status.count > 0
+          return (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {a.label}
+                  {waiting && (
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '0.1rem 0.45rem', borderRadius: '999px', background: 'var(--accent-yellow)', color: '#1a1a1a' }}>
+                      {a.status.count} waiting
+                    </span>
+                  )}
+                </div>
+                {a.hint && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>{a.hint}</div>}
+                {waiting && a.status.detail && (
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '0.15rem' }}>{a.status.detail}</div>
+                )}
+              </div>
+              <button
+                className={waiting ? 'btn btn-primary' : 'btn btn-secondary'}
+                onClick={() => run(a)}
+                disabled={!a.available || busy === a.id}
+                title={a.available ? '' : 'The agent is not running'}
+              >
+                {busy === a.id ? 'Running…' : a.label}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {output && (
+        <pre style={{ marginTop: '1rem', marginBottom: 0, padding: '0.75rem', borderRadius: '0.4rem', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: '220px', overflow: 'auto', color: output.failed ? 'var(--accent-red)' : 'var(--text-primary)' }}>
+          {output.text}
+        </pre>
       )}
     </div>
   )

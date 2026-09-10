@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
+const { execInAgent } = require('./lib/agentExec');
 const {
   collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
 } = require('./lib/observability');
@@ -610,54 +611,14 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         if (!agent) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
         }
-        const command = String(args.command || '').trim();
-        if (!command) {
-          return { content: [{ type: 'text', text: JSON.stringify({ error: 'command is required' }) }], isError: true };
-        }
-        const timeoutMs = Math.min(parseInt(args.timeout_ms) || 60000, 300000);
-
         try {
-          const container = docker.getContainer(`agenthotel-${agent.id}`);
-          const info = await container.inspect().catch(() => null);
-          if (!info || !info.State.Running) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent is not running' }) }], isError: true };
-          }
-
-          // Run as the runtime's own user where it declares one. OpenClaw's
-          // state volumes belong to `node`; a root shell there leaves
-          // root-owned files it can no longer write.
-          const runAs = runtimes[agent.runtime]?.terminalUser;
-          const exec = await container.exec({
-            Cmd: ['/bin/sh', '-c', command],
-            AttachStdout: true, AttachStderr: true, Tty: false,
-            ...(runAs ? { User: runAs } : {})
+          const result = await execInAgent(docker, agent.id, args.command, {
+            timeoutMs: parseInt(args.timeout_ms) || 60000,
+            user: runtimes[agent.runtime]?.terminalUser
           });
-          const stream = await exec.start({ Tty: false });
-
-          const chunks = [];
-          let size = 0;
-          const OUTPUT_CAP = 256 * 1024; // a runaway command must not flood the caller
-          const output = await new Promise((resolve) => {
-            const done = (reason) => resolve(reason);
-            const timer = setTimeout(() => { try { stream.destroy(); } catch (_) {} done('timeout'); }, timeoutMs);
-            stream.on('data', (c) => {
-              if (size < OUTPUT_CAP) { chunks.push(c); size += c.length; }
-            });
-            stream.on('end', () => { clearTimeout(timer); done('end'); });
-            stream.on('error', () => { clearTimeout(timer); done('error'); });
-          });
-
-          const details = await exec.inspect().catch(() => ({}));
-          const text = demuxDockerBuffer(Buffer.concat(chunks)).toString('utf8');
           db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
-            .run('agent.exec', agent.id, `Ran over MCP: ${command.slice(0, 120)}`);
-
-          return { content: [{ type: 'text', text: JSON.stringify({
-            exitCode: details.ExitCode ?? null,
-            timedOut: output === 'timeout',
-            truncated: size >= OUTPUT_CAP,
-            output: text
-          }, null, 2) }] };
+            .run('agent.exec', agent.id, `Ran over MCP: ${String(args.command).slice(0, 120)}`);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (err) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
         }

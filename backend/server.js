@@ -14,6 +14,7 @@ const archiver = require('archiver');
 const { PassThrough } = require('stream');
 const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
+const { execInAgent } = require('./lib/agentExec');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate } = require('./lib/templates');
@@ -849,6 +850,65 @@ app.get('/api/agents', requireAuth, (req, res) => {
   res.json(agents);
 });
 
+// Template-declared actions: things an operator does to a running guest that
+// the runtime knows about and the panel does not. Listing evaluates each
+// action's read-only status command so a button can say whether there is
+// anything to do; running one executes the declared command in the container.
+app.get('/api/agents/:id/actions', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT id, runtime, status FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const plugin = runtimes[agent.runtime];
+    const declared = (plugin && plugin.actions) || [];
+    if (!declared.length) return res.json({ actions: [] });
+
+    const running = agent.status === 'running';
+    const actions = [];
+    for (const a of declared) {
+      const entry = { id: a.id, label: a.label, hint: a.hint || null, available: running, status: null };
+      // A status command is a convenience, never a reason to fail the list —
+      // an agent mid-boot simply has nothing to report yet.
+      if (running && a.status) {
+        try {
+          const out = await execInAgent(docker, agent.id, a.status, {
+            timeoutMs: 15000, user: plugin.terminalUser
+          });
+          try { entry.status = JSON.parse((out.output || '').trim().split('\n').pop()); }
+          catch (e) { entry.status = null; }
+        } catch (e) { entry.status = null; }
+      }
+      actions.push(entry);
+    }
+    res.json({ actions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents/:id/actions/:actionId', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT id, name, runtime, status FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const plugin = runtimes[agent.runtime];
+    const action = ((plugin && plugin.actions) || []).find(a => a.id === req.params.actionId);
+    if (!action) return res.status(404).json({ error: 'Unknown action' });
+    if (agent.status !== 'running') return res.status(409).json({ error: 'Agent is not running' });
+
+    const result = await execInAgent(docker, agent.id, action.run, {
+      timeoutMs: action.timeoutMs || 60000, user: plugin.terminalUser
+    });
+    logEvent('agent.action', agent.id, `Ran action "${action.id}" on ${agent.name}`);
+    res.json({
+      id: action.id,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      output: (result.output || '').slice(-4000)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/agents/:id/build-log', requireAuth, (req, res) => {
   const p = buildProgress.get(req.params.id);
   if (!p) return res.json({ active: false });
@@ -1216,45 +1276,16 @@ function noteBuildEvent(id, o) {
   }
 }
 
-async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
-  const containerName = `agenthotel-${id}`;
+// Build (or confirm) the image an agent will run, touching no container.
+//
+// Split out of deployAgent so a redeploy can build first and swap second. It
+// used to build in place, after the old container was already gone: an
+// OpenClaw rebuild took the guest down for the full twenty minutes, and a Git
+// App guest — which rebuilds on every redeploy — went down for its build every
+// time. The old container can keep serving until the new image exists.
+async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false } = {}) {
   const baseImage = `${runtime}-agenthotel:latest`;
-
-  // Optional memory cap (MB) — guards the host against a single agent
-  // OOMing the whole fleet. Stripped from config so it doesn't leak into
-  // the container's environment.
-  // Resource guardrails: every agent gets a CPU/memory ceiling and lower
-  // scheduling priority than the panel, so a runaway agent can never starve
-  // the panel or freeze the host (panel containers run with high cpu-shares
-  // and a negative oom_score_adj — see docker-compose.yml). Defaults come
-  // from host-wide env vars; per-agent overrides live in the agent config
-  // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
-  const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
-  // Tell the guest which hostnames it answers to. A container cannot discover
-  // this — it sees a Host header per request and never learns the set — so a
-  // guest that serves several sites cannot tell a domain routed here with
-  // nothing behind it from one that was never configured. Both look fine from
-  // the outside, which is what makes that failure hard to catch.
-  {
-    const hosts = [domain, ...parseDomainAliases(config, domain)].filter(Boolean);
-    if (hosts.length) envConfig.AGENTHOTEL_DOMAINS = hosts.join(',');
-  }
-  // A runtime may need more than the host default just to finish booting.
-  // OpenClaw npm-installs its codex plugin on first start; at 1024 MB that
-  // install is OOM-killed (~700 MB RSS on top of the gateway), startup
-  // migrations never complete, the gateway refuses to report ready, and the
-  // agent 502s forever. It failed 100% of the time out of the box. So a plugin
-  // can declare a floor, and we take the larger of that and the host default —
-  // a generous DEFAULT_AGENT_MEM_MB still wins, a frugal one cannot drop a
-  // runtime below what it needs to start. An explicit per-agent
-  // MEMORY_LIMIT_MB always overrides both.
-  const runtimeFloorMB = parseInt(plugin.defaultMemoryMB) || 0;
-  const hostDefaultMB = parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
-  const memLimitMB = parseInt(MEMORY_LIMIT_MB) || Math.max(runtimeFloorMB, hostDefaultMB);
-  const cpuLimit = parseFloat(CPU_LIMIT) || parseFloat(process.env.DEFAULT_AGENT_CPU) || 1;
-
   let imageToRun = image;
-  let volumes = [];
 
   // A runtime may supply its own build context instead of using the shared
   // template directory — Git App clones a repository and builds that. Such an
@@ -1274,8 +1305,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
   }
 
+  let dockerfilePath = null;
   if (runtime !== 'docker-app') {
-    const dockerfilePath = path.join(buildContext, buildDockerfile);
+    dockerfilePath = path.join(buildContext, buildDockerfile);
     if (fs.existsSync(dockerfilePath)) {
       // The template image is normally built once and reused, so editing a
       // template has no effect until someone asks for a rebuild. Rebuilding
@@ -1325,7 +1357,56 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
         imageToRun = buildTag;
       }
     }
-    
+  }
+  return { imageToRun, dockerfilePath };
+}
+
+async function deployAgent(id, name, runtime, domain, image, port, config, plugin, { rebuildImage = false } = {}) {
+  const containerName = `agenthotel-${id}`;
+
+  // Optional memory cap (MB) — guards the host against a single agent
+  // OOMing the whole fleet. Stripped from config so it doesn't leak into
+  // the container's environment.
+  // Resource guardrails: every agent gets a CPU/memory ceiling and lower
+  // scheduling priority than the panel, so a runaway agent can never starve
+  // the panel or freeze the host (panel containers run with high cpu-shares
+  // and a negative oom_score_adj — see docker-compose.yml). Defaults come
+  // from host-wide env vars; per-agent overrides live in the agent config
+  // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
+  const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
+  // Tell the guest which hostnames it answers to. A container cannot discover
+  // this — it sees a Host header per request and never learns the set — so a
+  // guest that serves several sites cannot tell a domain routed here with
+  // nothing behind it from one that was never configured. Both look fine from
+  // the outside, which is what makes that failure hard to catch.
+  {
+    const hosts = [domain, ...parseDomainAliases(config, domain)].filter(Boolean);
+    if (hosts.length) envConfig.AGENTHOTEL_DOMAINS = hosts.join(',');
+  }
+  // A runtime may need more than the host default just to finish booting.
+  // OpenClaw npm-installs its codex plugin on first start; at 1024 MB that
+  // install is OOM-killed (~700 MB RSS on top of the gateway), startup
+  // migrations never complete, the gateway refuses to report ready, and the
+  // agent 502s forever. It failed 100% of the time out of the box. So a plugin
+  // can declare a floor, and we take the larger of that and the host default —
+  // a generous DEFAULT_AGENT_MEM_MB still wins, a frugal one cannot drop a
+  // runtime below what it needs to start. An explicit per-agent
+  // MEMORY_LIMIT_MB always overrides both.
+  const runtimeFloorMB = parseInt(plugin.defaultMemoryMB) || 0;
+  const hostDefaultMB = parseInt(process.env.DEFAULT_AGENT_MEM_MB) || 1024;
+  const memLimitMB = parseInt(MEMORY_LIMIT_MB) || Math.max(runtimeFloorMB, hostDefaultMB);
+  const cpuLimit = parseFloat(CPU_LIMIT) || parseFloat(process.env.DEFAULT_AGENT_CPU) || 1;
+
+  // The image is built before anything is torn down — by the caller when it
+  // wants the old container to keep serving meanwhile, and here otherwise. A
+  // caller that pre-built passes rebuildImage false, so this finds the fresh
+  // image and starts it.
+  const built = await ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage });
+  let imageToRun = built.imageToRun;
+  const dockerfilePath = built.dockerfilePath;
+  let volumes = [];
+
+  if (runtime !== 'docker-app' && dockerfilePath) {
     if (fs.existsSync(dockerfilePath)) {
       const dockerfileContent = fs.readFileSync(dockerfilePath, 'utf8');
       const volumeMatches = dockerfileContent.match(/^VOLUME\s+(.+)$/gm);
