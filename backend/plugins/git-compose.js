@@ -1,7 +1,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { checkout } = require('../lib/gitCheckout');
+const { checkout, SHARED_ROOT } = require('../lib/gitCheckout');
 
 // A compose stack that lives in a repository.
 //
@@ -102,8 +102,7 @@ module.exports = {
 
   // What this guest is running, read from the checkout rather than remembered.
   describeSource(id, config) {
-    const { CHECKOUT_ROOT } = require('../lib/gitCheckout');
-    const repoDir = path.join(CHECKOUT_ROOT, id);
+    const repoDir = path.join(SHARED_ROOT, id);
     const source = {
       repo: config.GIT_REPO || null,
       ref: config.GIT_REF || 'main',
@@ -131,8 +130,7 @@ module.exports = {
     const service = (config.ROUTE_SERVICE || '').trim();
     if (!service) return null;
     if (!/^[A-Za-z0-9_-]+$/.test(service)) throw new Error(`Invalid ROUTE_SERVICE "${service}"`);
-    const { CHECKOUT_ROOT } = require('../lib/gitCheckout');
-    const dir = path.join(CHECKOUT_ROOT, id);
+    const dir = path.join(SHARED_ROOT, id);
     const file = composeFile(dir, config);
     const out = execFileSync('docker',
       ['compose', '-p', projectName(id, config), '-f', file, 'ps', '-q', service],
@@ -144,7 +142,9 @@ module.exports = {
   },
 
   async deploy(id, name, config) {
-    const co = checkout(id, config);
+    // The daemon reads this checkout's bind mounts, so it must live where the
+    // host and this container agree on the path.
+    const co = checkout(id, config, { root: SHARED_ROOT });
     const file = composeFile(co.dir, config);
     const project = projectName(id, config);
 
@@ -165,8 +165,7 @@ module.exports = {
 
   async stop(id, config) {
     try {
-      const { CHECKOUT_ROOT } = require('../lib/gitCheckout');
-      const dir = path.join(CHECKOUT_ROOT, id);
+      const dir = path.join(SHARED_ROOT, id);
       const file = composeFile(dir, config);
       compose(['-p', projectName(id, config), '-f', file, 'stop'], dir,
         fs.existsSync(path.join(dir, '.env')) ? path.join(dir, '.env') : null);
@@ -177,8 +176,7 @@ module.exports = {
   },
 
   async remove(id, config) {
-    const { CHECKOUT_ROOT } = require('../lib/gitCheckout');
-    const dir = path.join(CHECKOUT_ROOT, id);
+    const dir = path.join(SHARED_ROOT, id);
     try {
       const file = composeFile(dir, config);
       compose(['-p', projectName(id, config), '-f', file, 'down', '--volumes', '--remove-orphans'], dir,

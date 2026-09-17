@@ -33,6 +33,19 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - agenthotel-data:/data
       - ./templates:/templates
+      # Checkouts for compose guests, mounted at the SAME path inside and out.
+      #
+      # A compose file that bind-mounts its own files — SkillHub mounts a dozen
+      # SQL and config files — is resolved by the Docker daemon on the host, not
+      # inside this container. A checkout living only in the /data volume is
+      # invisible there, and Docker silently creates an empty directory where
+      # the file should be: Postgres then met a directory named roles.sql,
+      # stopped its init half way, and every service failed to authenticate
+      # against a database whose passwords had never been set.
+      #
+      # Identical paths on both sides make every relative mount resolve the
+      # same way for whoever reads it.
+      - /var/lib/agenthotel/checkouts:/var/lib/agenthotel/checkouts
     depends_on:
       - caddy
     networks:

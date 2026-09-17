@@ -13,6 +13,14 @@ const path = require('path');
 // AGENTHOTEL_BUILD_ROOT is the older name and still honoured; tests set it.
 const CHECKOUT_ROOT = process.env.AGENTHOTEL_CHECKOUT_ROOT || process.env.AGENTHOTEL_BUILD_ROOT || '/data/builds';
 
+// Where a checkout must live when the Docker daemon will read it too.
+//
+// A build context is streamed to the daemon as a tar, so /data is fine for Git
+// App. A compose file's bind mounts are not: the daemon resolves those paths on
+// the host. This directory is mounted into the panel at the same path it has
+// outside, so both see the same files.
+const SHARED_ROOT = process.env.AGENTHOTEL_COMPOSE_ROOT || '/var/lib/agenthotel/checkouts';
+
 // The repo URL and ref reach git as arguments, never a shell string, but a
 // value starting with "-" would still be read as a flag (`--upload-pack=...`
 // is a remote-code-execution classic). Reject those, and keep refs to the
@@ -49,15 +57,15 @@ function resolveContext(repoDir, subdir) {
 
 // Clone if absent, otherwise fetch the ref and reset to it. Returns where the
 // checkout lives and which commit it now holds.
-function checkout(id, config) {
+function checkout(id, config, { root = CHECKOUT_ROOT } = {}) {
   const repo = assertSafeRepo(config.GIT_REPO);
   const ref = assertSafeRef(config.GIT_REF);
-  const repoDir = path.join(CHECKOUT_ROOT, id);
+  const repoDir = path.join(root, id);
   const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'pipe', timeout: 300000 });
 
   if (!fs.existsSync(path.join(repoDir, '.git'))) {
     fs.rmSync(repoDir, { recursive: true, force: true });
-    fs.mkdirSync(CHECKOUT_ROOT, { recursive: true });
+    fs.mkdirSync(root, { recursive: true });
     git(['clone', '--depth', '1', '--branch', ref, '--', repo, repoDir]);
   } else {
     // Redeploy picks up new commits. Fetching the ref explicitly (rather than
@@ -78,4 +86,4 @@ function checkout(id, config) {
   return { repoDir, dir: resolveContext(repoDir, config.GIT_SUBDIR), ref, repo, commit, subject, committedAt };
 }
 
-module.exports = { checkout, assertSafeRepo, assertSafeRef, resolveContext, CHECKOUT_ROOT };
+module.exports = { checkout, assertSafeRepo, assertSafeRef, resolveContext, CHECKOUT_ROOT, SHARED_ROOT };

@@ -3331,9 +3331,25 @@ async function runHealthChecks() {
     if (agent.status === 'creating' || agent.status === 'redeploying') continue;
 
     const plugin = runtimes[agent.runtime];
+    // A compose guest has no container of the panel's making, so looking for
+    // agenthotel-<id> found nothing and called a running stack "failed". Judge
+    // it by the container its domain points at instead — the service that
+    // actually has to answer. A stack with no route declared has nothing
+    // meaningful to check, so it is left alone.
+    let healthContainer = null;
+    if (composeManaged(agent.runtime)) {
+      if (typeof plugin?.routeTarget !== 'function') continue;
+      try {
+        let cfg = {};
+        try { cfg = JSON.parse(agent.config || '{}'); } catch (e) {}
+        const target = plugin.routeTarget(agent.id, cfg);
+        if (!target) continue;
+        healthContainer = target.container;
+      } catch (err) { continue; }
+    }
     let result;
     try {
-      result = await evaluateHealth(docker, fetch, agent, plugin);
+      result = await evaluateHealth(docker, fetch, agent, plugin, healthContainer);
     } catch (err) {
       console.error(`[Health] ${agent.name}: ${err.message}`);
       continue;

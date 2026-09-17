@@ -60,10 +60,14 @@ async function probeExec(docker, info, spec) {
  * Returns { state, healthy, reason } where state is one of:
  * missing | stopped | restarting | unhealthy | healthy | running
  */
-async function evaluateHealth(docker, fetch, agent, plugin) {
+// containerName lets a compose-managed guest be judged by the container its
+// domain actually points at: the panel never creates a container for such a
+// guest, so looking for agenthotel-<id> found nothing and called a running
+// stack "failed".
+async function evaluateHealth(docker, fetch, agent, plugin, containerName = null) {
   let info;
   try {
-    info = await docker.getContainer(`agenthotel-${agent.id}`).inspect();
+    info = await docker.getContainer(containerName || `agenthotel-${agent.id}`).inspect();
   } catch (_) {
     return { state: 'missing', healthy: false, reason: 'container not found' };
   }
