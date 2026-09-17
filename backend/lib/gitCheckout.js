@@ -6,6 +6,10 @@
 // read as a flag instead — `--upload-pack=...` is a remote-code-execution
 // classic.
 
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
 // AGENTHOTEL_BUILD_ROOT is the older name and still honoured; tests set it.
 const CHECKOUT_ROOT = process.env.AGENTHOTEL_CHECKOUT_ROOT || process.env.AGENTHOTEL_BUILD_ROOT || '/data/builds';
 
