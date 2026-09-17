@@ -1658,18 +1658,42 @@ function parseDomainAliases(config, primary) {
 // the target is joined to the panel's network first. Connecting an already
 // connected container is an error worth swallowing — a redeploy hits this every
 // time.
+function panelNetworkName() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_network');
+  return row?.value || 'agenthotel_agenthotel';
+}
+
+// Put a container on the panel's network, unless it is already there.
+//
+// Compose recreates its containers on every `up`, and a recreated container
+// comes back on the stack's own networks only — the join the panel made at
+// deploy time is gone. Caddy then cannot resolve the name at all and every
+// request to that hostname is a 502, with the route still sitting in Caddy's
+// config looking perfectly correct. So this has to be re-checked, not just
+// done once.
+async function joinPanelNetwork(containerName) {
+  const name = panelNetworkName();
+  try {
+    const info = await docker.getContainer(containerName).inspect();
+    if (info.NetworkSettings?.Networks?.[name]) return false;
+  } catch (err) {
+    return false; // container gone: nothing to join, and the sweep reports it
+  }
+  try {
+    await docker.getNetwork(name).connect({ Container: containerName });
+    return true;
+  } catch (err) {
+    if (/already exists|already connected/i.test(err.message || '')) return false;
+    throw err;
+  }
+}
+
 async function attachComposeRoute(agent, plugin, config, domain) {
   if (!domain || typeof plugin.routeTarget !== 'function') return;
   const target = plugin.routeTarget(agent.id, config);
   if (!target) return;
 
-  const networkRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_network');
-  const network = docker.getNetwork(networkRow?.value || 'agenthotel_agenthotel');
-  try {
-    await network.connect({ Container: target.container });
-  } catch (err) {
-    if (!/already exists|already connected/i.test(err.message || '')) throw err;
-  }
+  await joinPanelNetwork(target.container);
   await addCaddyRoute(domain, target.container, target.port);
   for (const alias of parseDomainAliases(config, domain)) {
     await addCaddyRoute(alias, target.container, target.port);
@@ -3587,14 +3611,36 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
     try { config = JSON.parse(agent.config || '{}'); } catch (e) {}
     const plugin = runtimes[agent.runtime];
     const port = agent.port || plugin?.defaultPort;
-    if (!port) continue;
-    // Compose guests publish their own ports and are not proxied here.
-    if (composeManaged(agent.runtime)) continue;
+
+    // A compose guest is proxied like any other, but to a container the stack
+    // named, not to agenthotel-<id> — and to one that may have been recreated
+    // since the route was written. Resolve it fresh, and make sure Caddy can
+    // still reach it: a present route over a lost network membership is a 502
+    // that no route check would catch.
+    let container = `agenthotel-${agent.id}`;
+    let targetPort = port;
+    if (composeManaged(agent.runtime)) {
+      if (typeof plugin?.routeTarget !== 'function') continue;
+      let target = null;
+      try { target = plugin.routeTarget(agent.id, config); } catch (err) { continue; }
+      if (!target) continue;
+      container = target.container;
+      targetPort = target.port;
+      try {
+        if (await joinPanelNetwork(container)) {
+          console.log(`[Caddy] Rejoined ${container} to the panel network`);
+        }
+      } catch (err) {
+        console.error(`[Caddy] Could not rejoin ${container}: ${err.message}`);
+      }
+    }
+    if (!targetPort) continue;
+
     const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)];
     for (const host of hosts) {
       if (present && present.has(host)) continue;
       try {
-        await addCaddyRoute(host, `agenthotel-${agent.id}`, port);
+        await addCaddyRoute(host, container, targetPort);
         restored++;
       } catch (err) {
         console.error(`[Caddy] Could not restore route for ${host}: ${err.message}`);
