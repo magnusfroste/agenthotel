@@ -785,8 +785,27 @@ function getCredentials(agent) {
   // in its config with nowhere to read it — the operator had to know it was
   // there and go digging through the Environment tab.
   const KNOWN = new Set(creds.map(x => x.label))
-  for (const [key, value] of Object.entries(c)) {
-    if (!/(PASSWORD|_TOKEN|_SECRET|ADMIN_USER)$/.test(key)) continue
+
+  // A compose guest keeps every secret inside COMPOSE_ENV — one blob of
+  // KEY=VALUE lines, not config keys — so this tab was empty for a stack whose
+  // whole point is the keys it hands out. Read them out of the blob.
+  const pairs = Object.entries(c)
+  if (typeof c.COMPOSE_ENV === 'string' && c.COMPOSE_ENV.includes('=')) {
+    for (const line of c.COMPOSE_ENV.split('\n')) {
+      const t = line.trim()
+      if (!t || t.startsWith('#')) continue
+      const at = t.indexOf('=')
+      if (at < 1) continue
+      pairs.push([t.slice(0, at), t.slice(at + 1)])
+    }
+  }
+
+  for (const [key, value] of pairs) {
+    // Names that mean "this is a credential". MCP_KEY_NN is matched by prefix
+    // because a stack hands one to each agent, and DASHBOARD_USERNAME comes
+    // along so the password it belongs to is not shown without its user.
+    if (!/(PASSWORD|_TOKEN|_SECRET|ADMIN_USER|_KEY|USERNAME)$/.test(key) && !/^MCP_KEY_/.test(key)) continue
+    if (/_KEY_BASE$|^EMBEDDING_MODEL$/.test(key)) continue
     if (typeof value !== 'string' || !value) continue
     const label = key.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase())
     if (KNOWN.has(label)) continue
