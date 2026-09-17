@@ -15,6 +15,7 @@ const { PassThrough } = require('stream');
 const { pipeline } = require('stream/promises');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { execInAgent } = require('./lib/agentExec');
+const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate } = require('./lib/templates');
@@ -878,7 +879,8 @@ app.get('/api/agents/:id/actions', requireAuth, async (req, res) => {
       if (running && a.status) {
         try {
           const out = await execInAgent(docker, agent.id, a.status, {
-            timeoutMs: 15000, user: plugin.terminalUser
+            timeoutMs: 15000, user: plugin.terminalUser,
+            container: containerNameFor(runtimes, agent)
           });
           try { entry.status = JSON.parse((out.output || '').trim().split('\n').pop()); }
           catch (e) { entry.status = null; }
@@ -902,7 +904,8 @@ app.post('/api/agents/:id/actions/:actionId', requireAuth, async (req, res) => {
     if (agent.status !== 'running') return res.status(409).json({ error: 'Agent is not running' });
 
     const result = await execInAgent(docker, agent.id, action.run, {
-      timeoutMs: action.timeoutMs || 60000, user: plugin.terminalUser
+      timeoutMs: action.timeoutMs || 60000, user: plugin.terminalUser,
+      container: containerNameFor(runtimes, agent)
     });
     logEvent('agent.action', agent.id, `Ran action "${action.id}" on ${agent.name}`);
     res.json({
@@ -1981,7 +1984,8 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
 
 app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agenthotel-${req.params.id}`);
+    const agentRow = db.prepare('SELECT id, runtime, config FROM agents WHERE id = ?').get(req.params.id);
+    const container = docker.getContainer(containerNameFor(runtimes, agentRow || { id: req.params.id }));
     const logs = await container.logs({
       stdout: true, stderr: true,
       tail: parseInt(req.query.tail) || 100,
@@ -2010,7 +2014,8 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
   (async () => {
     let stream = null;
     try {
-      const container = docker.getContainer(`agenthotel-${req.params.id}`);
+      const termAgent = db.prepare('SELECT id, runtime, config FROM agents WHERE id = ?').get(req.params.id);
+      const container = docker.getContainer(containerNameFor(runtimes, termAgent || { id: req.params.id }));
       console.log('[Terminal] Got container, creating exec...');
       const agentRow = db.prepare('SELECT runtime FROM agents WHERE id = ?').get(req.params.id);
       const terminalUser = runtimes[agentRow?.runtime]?.terminalUser;
@@ -2233,7 +2238,8 @@ app.get('/api/templates/:id', requireAuth, (req, res) => {
 
 app.get('/api/agents/:id/status', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agenthotel-${req.params.id}`);
+    const agentRow = db.prepare('SELECT id, runtime, config FROM agents WHERE id = ?').get(req.params.id);
+    const container = docker.getContainer(containerNameFor(runtimes, agentRow || { id: req.params.id }));
     const info = await container.inspect();
     res.json({
       status: info.State.Running ? 'running' : 'stopped',
@@ -2249,7 +2255,8 @@ app.get('/api/agents/:id/status', requireAuth, async (req, res) => {
 // container is missing or stopped so the UI can show a friendly empty state.
 app.get('/api/agents/:id/stats', requireAuth, async (req, res) => {
   try {
-    const container = docker.getContainer(`agenthotel-${req.params.id}`);
+    const agentRow = db.prepare('SELECT id, runtime, config FROM agents WHERE id = ?').get(req.params.id);
+    const container = docker.getContainer(containerNameFor(runtimes, agentRow || { id: req.params.id }));
     const info = await container.inspect().catch(() => null);
     if (!info || !info.State.Running) return res.json({ running: false });
 

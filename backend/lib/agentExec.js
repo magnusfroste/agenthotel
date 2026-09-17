@@ -10,11 +10,11 @@ const { demuxDockerBuffer } = require('./demux');
 const OUTPUT_CAP = 256 * 1024; // a runaway command must not flood the caller
 const MAX_TIMEOUT_MS = 300000;
 
-async function execInAgent(docker, agentId, command, { timeoutMs = 60000, user = null } = {}) {
+async function execInAgent(docker, agentId, command, { timeoutMs = 60000, user = null, container: containerName = null } = {}) {
   const cmd = String(command || '').trim();
   if (!cmd) throw new Error('command is required');
 
-  const container = docker.getContainer(`agenthotel-${agentId}`);
+  const container = docker.getContainer(containerName || `agenthotel-${agentId}`);
   const info = await container.inspect().catch(() => null);
   if (!info || !info.State.Running) throw new Error('Agent is not running');
 

@@ -1,3 +1,4 @@
+const { containerNameFor } = require('./containerFor');
 // Host, Docker and fleet metrics for the MCP observability tools. The REST
 // stats endpoint in server.js predates this module and keeps its own shape;
 // new consumers should read from here.
@@ -90,12 +91,12 @@ async function collectDockerUsage(docker) {
 
 // Live CPU/memory/network per agent. Docker's single-shot stats sample carries
 // precpu_stats, so one call per container is enough to derive a percentage.
-async function collectAgentStats(docker, db) {
+async function collectAgentStats(docker, db, runtimes = null) {
   const agents = db.prepare('SELECT id, name, runtime FROM agents').all();
   const out = await Promise.all(agents.map(async (agent) => {
     const base = { id: agent.id, name: agent.name, runtime: agent.runtime };
     try {
-      const container = docker.getContainer(`agenthotel-${agent.id}`);
+      const container = docker.getContainer(containerNameFor(runtimes, agent));
       const info = await container.inspect();
       if (!info.State.Running) {
         return { ...base, running: false, status: info.State.Status };

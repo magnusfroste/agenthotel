@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { execInAgent } = require('./lib/agentExec');
+const { containerNameFor } = require('./lib/containerFor');
 const {
   collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
 } = require('./lib/observability');
@@ -493,7 +494,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         // a few hundred ms; running them together skews the CPU numbers.
         const host = await collectHostMetrics();
         const dockerUsage = await collectDockerUsage(docker);
-        const agentStats = await collectAgentStats(docker, db);
+        const agentStats = await collectAgentStats(docker, db, runtimes);
         const uptime = collectUptime(db, 24);
         const expectedAgents = db.prepare('SELECT COUNT(*) AS n FROM agents').get().n;
         const report = buildHealthReport({ host, dockerUsage, agentStats, uptime, expectedAgents });
@@ -505,7 +506,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
 
       case 'get_agent_stats': {
-        return { content: [{ type: 'text', text: JSON.stringify(await collectAgentStats(docker, db), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await collectAgentStats(docker, db, runtimes), null, 2) }] };
       }
 
       case 'get_uptime': {
@@ -635,7 +636,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         try {
           const result = await execInAgent(docker, agent.id, args.command, {
             timeoutMs: parseInt(args.timeout_ms) || 60000,
-            user: runtimes[agent.runtime]?.terminalUser
+            user: runtimes[agent.runtime]?.terminalUser,
+            container: containerNameFor(runtimes, agent)
           });
           db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
             .run('agent.exec', agent.id, `Ran over MCP: ${String(args.command).slice(0, 120)}`);
