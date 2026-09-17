@@ -280,9 +280,20 @@ function AgentDetail() {
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {envPairs.length === 0 && <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '1rem' }}>No environment variables.</div>}
             {envPairs.map((p, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) 2fr auto', gap: '0.5rem', alignItems: 'center' }}>
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) 2fr auto', gap: '0.5rem', alignItems: multiline(p.value) ? 'start' : 'center' }}>
                 <input style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} value={p.key} placeholder="KEY" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
-                <input style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} type={SENSITIVE.test(p.key) ? 'password' : 'text'} value={p.value} placeholder="value" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                {/* A value that is a document — a compose file, a .env of ninety
+                    lines — is unreadable and uneditable in a one-line box. */}
+                {multiline(p.value) ? (
+                  <textarea
+                    style={{ fontFamily: 'monospace', fontSize: '0.8rem', minHeight: '260px', lineHeight: 1.5, resize: 'vertical', width: '100%' }}
+                    spellCheck="false"
+                    value={p.value}
+                    placeholder="value"
+                    onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                ) : (
+                  <input style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} type={SENSITIVE.test(p.key) ? 'password' : 'text'} value={p.value} placeholder="value" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                )}
                 <button className="btn btn-danger" title="Remove" onClick={() => setEnvPairs(envPairs.filter((_, j) => j !== i))}><X size={15} color="white" /></button>
               </div>
             ))}
@@ -755,6 +766,11 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
 }
+
+// A value worth a box of its own: anything with a line break, or long enough
+// that a single line would hide most of it. COMPOSE_ENV for a Supabase stack is
+// ninety lines; COMPOSE_FILE can be six hundred.
+const multiline = (v) => typeof v === 'string' && (v.includes('\n') || v.length > 160)
 
 function getCredentials(agent) {
   const c = agent.config || {}
