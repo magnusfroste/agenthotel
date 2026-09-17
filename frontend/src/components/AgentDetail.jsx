@@ -29,6 +29,8 @@ function AgentDetail() {
   const [tab, setTab] = useState('overview')
   const [logs, setLogs] = useState('')
   const [envPairs, setEnvPairs] = useState([])
+  // What the editor was handed, so a save can say which keys the user removed.
+  const envLoadedKeys = useRef([])
   const [envSaving, setEnvSaving] = useState(false)
   const [settings, setSettings] = useState({ domain: '', image: '', port: '' })
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -43,7 +45,16 @@ function AgentDetail() {
       const res = await authFetch(`/api/agents/${id}`)
       const data = await res.json()
       setAgent(data)
-      setEnvPairs(Object.entries(data.config || {}).map(([k, v]) => ({ key: k, value: String(v) })))
+      // Source fields live in the same config blob but are edited on the
+      // Overview panel that owns them; listing them here as well meant
+      // GIT_REF sat between two API keys and could be changed from either
+      // place, with two different save buttons doing two different things.
+      const sourceKeys = new Set((data.configFields || []).filter(f => f.group === 'source').map(f => f.key))
+      const pairs = Object.entries(data.config || {})
+        .filter(([k]) => !sourceKeys.has(k))
+        .map(([k, v]) => ({ key: k, value: String(v) }))
+      envLoadedKeys.current = pairs.map(p => p.key)
+      setEnvPairs(pairs)
       setSettings({ domain: data.domain || '', image: data.image || '', port: data.port || '' })
     } catch (err) { console.error('Failed to fetch agent:', err) }
   }
@@ -112,8 +123,11 @@ function AgentDetail() {
     try {
       const config = {}
       for (const p of envPairs) { const k = p.key.trim(); if (k) config[k] = p.value }
+      // A PUT merges, so dropping a key from the payload keeps it. Name the
+      // ones that are gone, or Remove does nothing but look like it worked.
+      const removeKeys = envLoadedKeys.current.filter(k => !(k in config))
       const res = await authFetch(`/api/agents/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config })
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config, removeKeys })
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
       notify('success', 'Environment saved & redeployed')
@@ -239,7 +253,7 @@ function AgentDetail() {
             </div>
           )}
           <AgentActions agentId={id} status={agent.status} />
-          {agent.source && <AgentSource agent={agent} onSaved={fetchAgent} />}
+          <AgentSource agent={agent} onSaved={fetchAgent} />
           <AgentStats agentId={id} />
           <AgentResources agentId={id} config={agent.config} runtime={agent.runtime} onSaved={fetchAgent} />
           <AgentUptime agentId={id} />
@@ -469,20 +483,27 @@ function AgentActions({ agentId, status }) {
 // Environment tab as raw variables asks the operator to know which keys mean
 // "source". The commit underneath is read from the checkout, so it reports
 // what is running rather than what was requested.
+// Where the guest's code comes from — repository, ref, which compose file,
+// which service the domain points at. Easypanel keeps this apart from the
+// environment and it is the right split: GIT_REF is not a variable the app
+// reads, it decides what the app *is*. Which fields belong here is the
+// plugin's call, declared as group: 'source' on the field.
 function AgentSource({ agent, onSaved }) {
   const src = agent.source || {}
   const c = agent.config || {}
-  const [form, setForm] = useState({
-    GIT_REPO: c.GIT_REPO || '',
-    GIT_REF: c.GIT_REF || 'main',
-    GIT_SUBDIR: c.GIT_SUBDIR || '',
-    GIT_DOCKERFILE: c.GIT_DOCKERFILE || 'Dockerfile'
-  })
+  const fields = (agent.configFields || []).filter(f => f.group === 'source')
+  const initial = () => Object.fromEntries(fields.map(f => [f.key, c[f.key] ?? (f.default !== undefined ? String(f.default) : '')]))
+  const [form, setForm] = useState(initial)
   const [saving, setSaving] = useState(false)
   const toast = useToast()
 
-  const dirty = ['GIT_REPO', 'GIT_REF', 'GIT_SUBDIR', 'GIT_DOCKERFILE']
-    .some(k => (form[k] || '') !== (c[k] || (k === 'GIT_REF' ? 'main' : k === 'GIT_DOCKERFILE' ? 'Dockerfile' : '')))
+  // The agent reloads after a save, and after a redeploy elsewhere; without
+  // this the panel would keep showing what was typed before that.
+  useEffect(() => { setForm(initial()) }, [agent.id, JSON.stringify(fields.map(f => c[f.key]))])
+
+  if (fields.length === 0) return null
+
+  const dirty = fields.some(f => (form[f.key] || '') !== (c[f.key] ?? (f.default !== undefined ? String(f.default) : '')))
 
   async function save() {
     setSaving(true)
@@ -506,19 +527,6 @@ function AgentSource({ agent, onSaved }) {
     }
   }
 
-  const field = (key, label, hint, placeholder) => (
-    <div key={key}>
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>{label}</div>
-      <input
-        value={form[key]}
-        placeholder={placeholder}
-        onChange={e => setForm({ ...form, [key]: e.target.value })}
-        style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.85rem' }}
-      />
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{hint}</div>
-    </div>
-  )
-
   return (
     <div style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
       <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -526,10 +534,18 @@ function AgentSource({ agent, onSaved }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-        {field('GIT_REPO', 'Repository', 'An http(s) or git@ URL', 'https://github.com/owner/repo')}
-        {field('GIT_REF', 'Branch, tag or commit', 'Must exist in the repository', 'main')}
-        {field('GIT_SUBDIR', 'Build path', 'For a monorepo. Empty means the root', '/')}
-        {field('GIT_DOCKERFILE', 'Dockerfile', 'Name and path, relative to the build path', 'Dockerfile')}
+        {fields.map(f => (
+          <div key={f.key}>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>{f.label || f.key}</div>
+            <input
+              value={form[f.key] ?? ''}
+              placeholder={f.placeholder || (f.default !== undefined ? String(f.default) : '')}
+              onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.85rem' }}
+            />
+            {f.hint && <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{f.hint}</div>}
+          </div>
+        ))}
       </div>
 
       <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>

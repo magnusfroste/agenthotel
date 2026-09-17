@@ -948,7 +948,11 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
     try { source = plugin.describeSource(agent.id, config); }
     catch (err) { source = { error: err.message }; }
   }
-  res.json({ ...agent, config, source });
+  // The panel splits what it shows by the group a field declares: where the
+  // code comes from belongs with the source, not in a list of environment
+  // variables. Sending the declaration rather than a list of key names keeps
+  // that decision with the plugin that owns the field.
+  res.json({ ...agent, config, source, configFields: plugin?.configFields || [] });
 });
 
 // Per-service export (Easypanel-style): the agent's full configuration as a
@@ -1873,8 +1877,13 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const { config, domain } = req.body;
+    const { config, domain, removeKeys } = req.body;
+    // A PUT merges, so a caller that simply stopped sending a key left it in
+    // place: pressing Remove in the environment editor and saving appeared to
+    // work and changed nothing. Deleting has to be said out loud — and it must
+    // be, now that each editor sends only the fields it owns.
     const updatedConfig = config ? { ...JSON.parse(agent.config || '{}'), ...config } : JSON.parse(agent.config || '{}');
+    if (Array.isArray(removeKeys)) for (const key of removeKeys) delete updatedConfig[key];
     const updatedDomain = domain !== undefined ? domain : agent.domain;
 
     db.prepare("UPDATE agents SET config = ?, domain = ?, status = 'updating', updated_at = CURRENT_TIMESTAMP WHERE id = ?")

@@ -84,16 +84,16 @@ module.exports = {
   // the guest opts in with INJECT_PROVIDER_ENV.
   providerCredentials: 'optional',
   configFields: [
-    { key: 'GIT_REPO', label: 'Repository URL', type: 'text', required: true },
-    { key: 'GIT_REF', label: 'Branch, tag or commit', type: 'text', default: 'main' },
-    { key: 'GIT_SUBDIR', label: 'Subdirectory holding the stack', type: 'text', required: false },
-    { key: 'COMPOSE_FILE', label: 'Compose file (relative to the repo)', type: 'text', default: 'docker-compose.yml' },
-    { key: 'COMPOSE_PROJECT', label: 'Compose project name', type: 'text', required: false },
+    { key: 'GIT_REPO', label: 'Repository URL', type: 'text', required: true, hint: 'An http(s) or git@ URL', group: 'source' },
+    { key: 'GIT_REF', label: 'Branch, tag or commit', type: 'text', default: 'main', hint: 'Must exist in the repository', group: 'source' },
+    { key: 'GIT_SUBDIR', label: 'Subdirectory holding the stack', type: 'text', required: false, hint: 'For a monorepo. Empty means the root', group: 'source' },
+    { key: 'COMPOSE_FILE', label: 'Compose file (relative to the repo)', type: 'text', default: 'docker-compose.yml', hint: 'Relative to the build path', group: 'source' },
+    { key: 'COMPOSE_PROJECT', label: 'Compose project name', type: 'text', required: false, hint: 'Prefixes every container and volume the stack creates', group: 'source' },
     { key: 'COMPOSE_ENV', label: 'Environment (.env contents)', type: 'textarea', required: false },
     // A stack like this publishes no host ports: the panel must be told which
     // service answers, or there is nothing for the domain to point at.
-    { key: 'ROUTE_SERVICE', label: 'Service the domain routes to', type: 'text', required: false },
-    { key: 'ROUTE_PORT', label: 'Port on that service', type: 'number', default: 8000 },
+    { key: 'ROUTE_SERVICE', label: 'Service the domain routes to', type: 'text', required: false, hint: 'The stack publishes no host ports, so name the service that answers', group: 'source' },
+    { key: 'ROUTE_PORT', label: 'Port on that service', type: 'number', default: 8000, hint: 'The port inside that service, not a host port', group: 'source' },
     { key: 'INJECT_PROVIDER_ENV', label: 'Inject provider API keys (true/false)', type: 'text', required: false }
   ],
 
