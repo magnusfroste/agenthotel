@@ -41,6 +41,37 @@ function compose(args, cwd, envFile) {
   }
 }
 
+// Create the external networks a stack declares but does not own.
+//
+// A compose file written for another platform names that platform's shared
+// network — SkillHub declares `easypanel`, which is where that panel's proxy
+// lives. Under AgentHotel nothing has created it, and compose refuses to start
+// with "declared as external, but could not be found". Creating it is enough:
+// the stack only needs something to attach to, and the panel reaches the guest
+// by joining the routed container to its own network anyway.
+function ensureExternalNetworks(file) {
+  const text = fs.readFileSync(file, 'utf8');
+  // Only the top-level networks: block, and only entries marked external.
+  const block = /\nnetworks:\n([\s\S]*?)(?=\n[a-z_]+:\n|$)/.exec('\n' + text);
+  if (!block) return [];
+  const created = [];
+  const re = /^ {2}([A-Za-z0-9_.-]+):\s*$\n((?:^ {4}.*$\n?)*)/gm;
+  let m;
+  while ((m = re.exec(block[1]))) {
+    const [, name, body] = m;
+    if (!/external:\s*true/.test(body)) continue;
+    const named = /name:\s*([A-Za-z0-9_.-]+)/.exec(body);
+    const actual = named ? named[1] : name;
+    try {
+      execFileSync('docker', ['network', 'inspect', actual], { stdio: 'pipe', timeout: 30000 });
+    } catch (e) {
+      execFileSync('docker', ['network', 'create', actual], { stdio: 'pipe', timeout: 60000 });
+      created.push(actual);
+    }
+  }
+  return created;
+}
+
 module.exports = {
   name: 'Git Compose',
   // The stack runs its own containers; the panel neither creates nor
@@ -124,6 +155,9 @@ module.exports = {
       envFile = path.join(co.dir, '.env');
       fs.writeFileSync(envFile, config.COMPOSE_ENV, { mode: 0o600 });
     }
+
+    const madeNetworks = ensureExternalNetworks(file);
+    if (madeNetworks.length) console.log(`[Git Compose] Created external network(s): ${madeNetworks.join(', ')}`);
 
     compose(['-p', project, '-f', file, 'up', '-d', '--remove-orphans'], co.dir, envFile);
     return { success: true, commit: co.commit };
