@@ -31,6 +31,9 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // removeAgentVolumes likewise mirrors DELETE /api/agents/:id — without it an
   // MCP delete left every named volume behind as an orphan.
   const { pruneDocker, removeAgentVolumes, ensureAgentImage } = extras;
+  // See server.js: ask the plugin whether it runs its own containers, rather
+  // than matching the runtime's name.
+  const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 
   const tools = {
     list_agents: {
@@ -292,9 +295,9 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
         if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
 
-        if (agent.runtime === 'compose') {
+        if (composeManaged(agent.runtime)) {
           // Compose agents have no single container — tear the project down.
-          const plugin = runtimes.compose;
+          const plugin = runtimes[agent.runtime];
           const config = JSON.parse(agent.config || '{}');
           try { await plugin.remove(agent.id, config); } catch (e) {}
         } else {
@@ -347,7 +350,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         // panel writes COMPOSE_ENV to a .env file beside the stack, and the
         // compose file interpolates from there. Setting a top-level key would
         // store the value where nothing ever reads it.
-        const isCompose = agent.runtime === 'compose';
+        const isCompose = composeManaged(agent.runtime);
         const composeEnv = isCompose
           ? (config.COMPOSE_ENV || '').split('\n').filter(l => l.trim() !== '')
           : null;
@@ -388,7 +391,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         db.prepare("UPDATE agents SET config = ?, status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(deployConfig), args.agent_id);
 
         try {
-          if (agent.runtime === 'compose') {
+          if (composeManaged(agent.runtime)) {
             try { await plugin.stop(agent.id, deployConfig); } catch (e) {}
             await plugin.deploy(agent.id, agent.name, deployConfig, plugin);
           } else {
@@ -431,7 +434,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
 
         try {
-          if (agent.runtime === 'compose') {
+          if (composeManaged(agent.runtime)) {
             // Compose agents are managed via the compose plugin, not dockerode.
             try { await plugin.stop(agent.id, config); } catch (e) {}
             await plugin.deploy(agent.id, agent.name, config, plugin);

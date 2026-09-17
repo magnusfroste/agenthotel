@@ -834,8 +834,15 @@ const runtimes = {
   odysseus: require('./plugins/odysseus'),
   'docker-app': require('./plugins/docker-app'),
   'git-app': require('./plugins/git-app'),
+  'git-compose': require('./plugins/git-compose'),
   compose: require('./plugins/compose')
 };
+
+// A runtime that brings up its own containers (a compose stack) rather than
+// one container the panel creates. Asking the plugin beats matching the
+// runtime's name: a second compose-shaped runtime would silently miss every
+// one of these branches.
+const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 
 const { createMcpServer } = require('./mcp');
 const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage });
@@ -969,7 +976,7 @@ async function getSelfInfo() {
 // compose agents.
 async function listAgentVolumes(agent) {
   const prefixes = [`agenthotel-${agent.id}-`, `agenthotel-${agent.id}_`];
-  if (agent.runtime === 'compose') {
+  if (composeManaged(agent.runtime)) {
     try {
       const cfg = JSON.parse(agent.config || '{}');
       if (cfg.COMPOSE_PROJECT && /^[a-zA-Z0-9_-]+$/.test(cfg.COMPOSE_PROJECT)) {
@@ -1108,8 +1115,9 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     `).run(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, JSON.stringify(agentConfig));
 
     // Handle compose runtime separately
-    if (runtime === 'compose') {
+    if (composeManaged(runtime)) {
       await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin));
+      await attachComposeRoute({ id }, plugin, agentConfig, domain);
     } else {
       await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin));
     }
@@ -1194,7 +1202,7 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
         fs.mkdirSync(path.dirname(stagedZip), { recursive: true });
         fs.copyFileSync(tmpZip, stagedZip);
 
-        const customProject = a.runtime === 'compose' && a.config && a.config.COMPOSE_PROJECT;
+        const customProject = composeManaged(a.runtime) && a.config && a.config.COMPOSE_PROJECT;
         const oldPrefixes = [`agenthotel-${a.id}-`, `agenthotel-${a.id}_`];
         if (customProject) oldPrefixes.push(`${a.config.COMPOSE_PROJECT}_`);
         for (const entryName of volumeEntries) {
@@ -1641,6 +1649,30 @@ function parseDomainAliases(config, primary) {
   return out;
 }
 
+// Give a compose-managed guest a domain.
+//
+// Its containers live on the stack's own network, which Caddy cannot reach, so
+// the target is joined to the panel's network first. Connecting an already
+// connected container is an error worth swallowing — a redeploy hits this every
+// time.
+async function attachComposeRoute(agent, plugin, config, domain) {
+  if (!domain || typeof plugin.routeTarget !== 'function') return;
+  const target = plugin.routeTarget(agent.id, config);
+  if (!target) return;
+
+  const networkRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_network');
+  const network = docker.getNetwork(networkRow?.value || 'agenthotel_agenthotel');
+  try {
+    await network.connect({ Container: target.container });
+  } catch (err) {
+    if (!/already exists|already connected/i.test(err.message || '')) throw err;
+  }
+  await addCaddyRoute(domain, target.container, target.port);
+  for (const alias of parseDomainAliases(config, domain)) {
+    await addCaddyRoute(alias, target.container, target.port);
+  }
+}
+
 async function addCaddyRoute(domain, containerName, port) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
@@ -1720,9 +1752,9 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    if (agent.runtime === 'compose') {
+    if (composeManaged(agent.runtime)) {
       // Compose agents have no single container — tear the project down.
-      const plugin = runtimes.compose;
+      const plugin = runtimes[agent.runtime];
       const config = JSON.parse(agent.config || '{}');
       await plugin.remove(agent.id, config);
     } else {
@@ -1823,7 +1855,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
 
     const plugin = runtimes[agent.runtime];
 
-    if (agent.runtime === 'compose') {
+    if (composeManaged(agent.runtime)) {
       // Compose agents are managed via the compose plugin, not dockerode
       // (their image is 'compose' and can't be created as a container).
       await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
@@ -1860,7 +1892,7 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
-    if (agent.runtime === 'compose') return res.status(400).json({ error: 'Compose agents manage resources in their compose file' });
+    if (composeManaged(agent.runtime)) return res.status(400).json({ error: 'Compose agents manage resources in their compose file' });
 
     const memoryMB = parseInt(req.body?.memoryMB);
     const cpus = parseFloat(req.body?.cpus);
@@ -1918,7 +1950,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
 
     await enqueueDeploy(async () => {
-      if (agent.runtime === 'compose') {
+      if (composeManaged(agent.runtime)) {
         // Compose agents are managed via the compose plugin, not dockerode.
         await plugin.stop(agent.id, config);
         await plugin.deploy(agent.id, agent.name, config, plugin);
@@ -3534,7 +3566,7 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
     const port = agent.port || plugin?.defaultPort;
     if (!port) continue;
     // Compose guests publish their own ports and are not proxied here.
-    if (agent.runtime === 'compose') continue;
+    if (composeManaged(agent.runtime)) continue;
     const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)];
     for (const host of hosts) {
       if (present && present.has(host)) continue;

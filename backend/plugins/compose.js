@@ -14,6 +14,9 @@ function resolveProjectName(id, config) {
 
 module.exports = {
   name: 'Docker Compose',
+  // The stack runs its own containers; the panel neither creates nor
+  // inspects one container for this guest.
+  composeManaged: true,
   description: 'Deploy from docker-compose.yml file',
   defaultImage: 'compose',
   // Hosts arbitrary images, so it is not handed provider credentials
