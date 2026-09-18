@@ -16,7 +16,7 @@ Two tiers of env vars are injected per provider:
    a provider named `Hetzner` becomes `HETZNER_API_KEY`, `HETZNER_BASE_URL` and `HETZNER_MODELS` (comma-separated). Rename a provider and the variable names change accordingly on the next redeploy.
 2. **Canonical slots** — well-known providers (OpenAI, OpenRouter, Anthropic, Gemini, DeepSeek, Groq, xAI, Mistral) additionally fill their conventional variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, …), which many agent frameworks read natively. A custom OpenAI-compatible provider only claims the `OPENAI_*` slots if no real OpenAI provider exists.
 
-If no model is configured, agents default to `openai/gpt-5.3` (OpenClaw) / `openai/gpt-5.4` (Hermes) when an OpenAI key is present, falling back to the OpenRouter equivalents.
+If no model is configured, agents default to `openai/gpt-5.3` (OpenClaw) / `openai/gpt-5.6-luna` (Hermes) when an OpenAI key is present, falling back to the OpenRouter equivalents.
 
 ### Per-runtime provider support
 

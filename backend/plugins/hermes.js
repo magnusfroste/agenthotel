@@ -108,9 +108,9 @@ module.exports = {
   // quoting of the message is required. -z is hermes's one-shot mode: it runs a
   // single turn and exits rather than opening a session.
   dispatch: (message) => ['hermes', '-z', message],
-  fallbackModel: 'gpt-5.4',
+  fallbackModel: 'gpt-5.6-luna',
   configFields: [
-    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.4', placeholder: 'provider/model (e.g. openai/gpt-5.4, openrouter/anthropic/claude-3.5-sonnet)' },
+    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.6-luna', placeholder: 'provider/model (e.g. openai/gpt-5.6-luna, openrouter/anthropic/claude-3.5-sonnet)' },
     // hermes warns on every start when TERMINAL_CWD is in the environment and
     // terminal.cwd is left at the non-explicit default ("." / "auto" / ""), so
     // an explicit path silences it — see hermes_cli/config.py. /opt/data is
@@ -137,7 +137,7 @@ module.exports = {
         if (baseUrlEnv && !autoConfig[baseUrlEnv] && row.baseUrl) autoConfig[baseUrlEnv] = row.baseUrl;
       }
     }
-    if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.4';
+    if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.6-luna';
 
     // Deliberately NOT hijacking the OPENAI_* slot for a private provider any
     // more. That worked, but made the private endpoint the ONLY one hermes
@@ -197,7 +197,7 @@ module.exports = {
   // exceeded" / "session_id" bugs in v0.19.0.
   generateConfig(config) {
     let providerIn = 'openai';
-    let bareModel = 'gpt-5.4';
+    let bareModel = 'gpt-5.6-luna';
     if (config.HERMES_MODEL) {
       const parsed = splitModel(config.HERMES_MODEL, config);
       providerIn = parsed.providerIn;
