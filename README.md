@@ -219,6 +219,88 @@ docker compose logs -f backend
 
 See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations), and [BACKLOG.md](BACKLOG.md) for the roadmap.
 
+## Troubleshooting
+
+Every entry here is a failure that actually happened, with the check that told us
+what it really was. The theme: **measure the thing, don't infer it.**
+
+### A hostname answers, but with nothing
+
+An empty `200` is the answer Caddy gives when it has *no route* for that hostname.
+A status-code check calls that healthy, so check the size too:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://your-agent.example.com/
+```
+
+`200 0` means no route. The panel re-checks its routes every minute and restores
+missing ones, so this should heal itself — if it does not, the hostname probably
+belongs to no agent.
+
+### A hostname answers 502
+
+The route exists and points at a container Caddy cannot reach. For a compose
+guest this is almost always the network: compose recreates its containers on
+`up`, and a recreated container comes back on the stack's own networks only.
+
+```bash
+docker inspect <the target container> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+```
+
+The panel rejoins compose guests to its network every minute. A route that looks
+perfect over a lost network is a 502 that no route check would catch — which is
+why the membership is re-checked and not just the route.
+
+### A hostname answers 308 or 404
+
+Nothing is routed there yet. With a Cloudflare Tunnel, check that the hostname
+exists as a public hostname on the tunnel (`HTTP` → `agenthotel-caddy:80`) — a
+wildcard covers every future guest, but only use one on a zone you are willing to
+route entirely here.
+
+### An agent is unhealthy right after a deploy
+
+Give it a minute. Hermes takes ~30 seconds from container start to listening, and
+answers 502 until then; its log says `HERMES_DASHBOARD_READY port=9119` when it is
+up. The health sweep corrects itself on the next pass.
+
+### A compose stack's database fails to initialise
+
+Symptom: `psql: .../roles.sql: could not read from input file: Is a directory`.
+The Docker daemon resolves a stack's bind mounts **on the host**, not inside the
+panel — so a checkout that exists only in the panel's own volume is invisible
+there, and Docker silently creates an empty directory where the file should be.
+Checkouts therefore live at `/var/lib/agenthotel/checkouts`, mounted at the same
+path on both sides. If you moved it, move it back.
+
+### An agent cannot reach its model
+
+The model id picks the provider: the prefix is part of the name, so
+`openai/gpt-5.6-luna` and `openrouter/...` go to different places. Hermes also
+declines a model with less than 64k context at deploy rather than failing later.
+If a provider was added *after* the agent, redeploy it — keys are injected on
+redeploy, and only into slots that are empty.
+
+Check what the container actually got:
+
+```bash
+docker exec <container> env | grep -E 'API_KEY|MODEL'
+```
+
+### Logged out of an agent's dashboard after every redeploy
+
+Hermes signs dashboard sessions with a key it generates per process unless one is
+configured. The panel now generates `HERMES_DASHBOARD_BASIC_AUTH_SECRET` per agent
+and keeps it in the agent's config; agents created before that get one by being
+redeployed once on a current panel.
+
+### Careful with what you print
+
+`curl -w '%{url_effective}'` prints the URL **including any credentials you passed
+with `-u`**. Two of this project's secrets ended up in a transcript that way. Print
+the status code and the byte count; they answer the question without carrying the
+password along.
+
 ## Trademarks
 
 AgentHotel deploys upstream projects' own container images, and the fleet and
