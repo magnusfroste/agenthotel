@@ -153,6 +153,15 @@ fi
 
 cd "$INSTALL_DIR"
 
+# Compose guests are checked out here, and the path is identical inside the
+# backend and on the host — the Docker daemon resolves a stack's bind mounts
+# against the host, so any other path gives the guest empty directories where
+# its own files should be. Docker would create it on first use, but as a
+# world-readable directory: these checkouts hold .env files full of generated
+# secrets.
+mkdir -p /var/lib/agenthotel/checkouts
+chmod 700 /var/lib/agenthotel/checkouts
+
 echo ""
 echo "Building and starting AgentHotel..."
 # Bake the checked-out commit into the image so the panel reports the version it
