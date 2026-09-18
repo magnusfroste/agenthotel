@@ -16,6 +16,7 @@ Because that is what running several agents actually is. The metaphor is not dec
 | **Guests remember** | Sessions, memory and workspace files live in volumes that outlive the container. |
 | **Room keys** | Provider API keys are configured once and injected into every agent that needs them. |
 | **Housekeeping** | Stopped containers, dangling images and build cache are reclaimed on a schedule. |
+| **The dining room** | Guests share a data store, so an agent can find what a colleague already worked out instead of starting from nothing. |
 | **The ledger** | Health, uptime, resource use and events — from the UI or over MCP. |
 
 Running AI agents on your own server otherwise means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentHotel removes all of that.
@@ -23,9 +24,10 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 ## Features
 
 ### Agent Management
-- **Five runtimes** — Hermes, OpenClaw, Odysseus, generic Docker App, and full Docker Compose deployments
+- **Seven runtimes** — Hermes, OpenClaw, Odysseus, generic Docker App, Git App, Git Compose, and full Docker Compose deployments
 - **Quick Start** — API keys are injected automatically from your configured providers (OpenAI, Anthropic, OpenRouter, Gemini, DeepSeek, Groq, xAI, Mistral, or any OpenAI-compatible endpoint like vLLM)
 - **Tabbed agent view** — Overview, Logs, Console, Environment, Credentials and Settings in one place
+- **Source apart from environment** — where a guest's code comes from (repository, ref, compose file, which service the domain points at) is edited on its own panel, with the commit it is running. `GIT_REF` is not a variable the app reads; it decides what the app *is*, and mixing the two put it between two API keys
 - **Start / Stop / Redeploy / Delete** from the dashboard, with one-click Open on the agent's URL
 - **Web terminal** — full TTY shell into any container via WebSocket + xterm.js
 
@@ -33,6 +35,14 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Browsable library** — every deployable runtime as a card with its category, tags, default image and port, filtered by search, category or tag
 - **Template detail page** — what the template is, what to do after deployment, benefits, features, upstream links, changelog, and the exact config fields the deploy form will ask for
 - **Data-driven** — presentation lives in `templates/<id>/meta.yaml`, so a new template needs no frontend change; edits are picked up without restarting the backend
+- **Templates are deployable** — a template can be a recipe rather than a runtime: an image, a compose file, or a repository whose compose file it runs. Deploying one fills in the form a person would otherwise fill in, then creates an ordinary agent on the runtime it names
+- **Declared secrets** — a template says what is secret and how to make it (`hex`, `password`, or a JWT signed with another generated secret), and the panel generates it at deploy. No template ever carries a credential, and two deployments never share one
+- **SkillHub** — self-hosted Supabase as a shared data layer for the hotel's agents: Postgres with pgvector, storage, edge functions and Studio, with every secret generated per deployment
+
+### Agents That Reach Your Tools
+- **MCP servers as configuration** — point a Hermes agent at an MCP server from the panel and the block is written into its config on deploy. A new agent is born able to reach the organisation's tools, several agents follow one edit, and an agent recreated from its config comes back whole
+- **Identity per agent** — a shared data store like SkillHub derives *who is writing* from the key in the header, so each agent gets its own. Sharing one key would make the store unable to tell whose work is whose
+- **The panel owns what guards a guest** — dashboard credentials and session-signing keys are generated per agent and shown under Credentials, never a constant baked into a runtime
 
 ### Deploy Anything
 - **Docker App runtime** — deploy any Docker image with port, env vars and volume mounts
@@ -55,6 +65,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
 - **Resource guardrails** — the panel can never be frozen out by its own fleet: every agent gets a CPU cap (default 1 core, `CPU_LIMIT`) and RAM cap (default 1024 MB, `MEMORY_LIMIT_MB`), low cpu-shares (256) and a high OOM-kill priority, while the panel containers run at 2048 shares with `oom_score_adj: -500`. Shares only matter under saturation, so agents still use all idle capacity — but the panel always stays responsive, no reboot needed. Host-wide defaults via `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB`
 - **Serialized deploys** — one build/deploy at a time, so concurrent deploys can't saturate the host
+- **Routes that heal** — Caddy holds its routes in memory, and a compose stack's containers come back on their own networks when recreated. Both are re-checked every minute: a present route over a lost network is a 502 that no route check would catch
 - **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
 - **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
 - **Alert notifications** — webhook (Slack/Discord) or Telegram alerts when an agent goes down or recovers, or when host disk/memory crosses a configurable threshold
@@ -108,6 +119,8 @@ The panel itself is light — 1 vCPU / 1GB RAM runs it fine. What matters is wha
 - **4 vCPU / 8GB** — a comfortable fit for a handful of agents.
 - **8 vCPU / 16GB+** — many agents, or a heavier observability stack.
 
+A shared data layer is the heavy guest, and worth budgeting for separately: SkillHub idles at ~1.2GB RAM across eleven containers and its images are ~9.3GB on disk before it holds anything. A 4GB host runs it alongside two agents; it will not have much left over.
+
 The built-in observability (per-agent stats, uptime checks, activity log) is intentionally lightweight and adds no meaningful overhead. If you outgrow it on a bigger host, layer on Prometheus/Grafana/Loki — they run fine side by side as Docker App deployments.
 
 ## Runtimes
@@ -119,6 +132,7 @@ The built-in observability (per-agent stats, uptime checks, activity log) is int
 | **Odysseus** | Self-hosted AI workspace with browser tooling |
 | **Docker App** | Any Docker image, with env vars and volumes |
 | **Git App** | Build straight from a Git repository — for apps that ship a Dockerfile but no image, including the MCP tools your agents call |
+| **Git Compose** | Run a whole stack from a repository. For a compose file that mounts its own files — init SQL, a gateway config, edge functions — the repository is the deployable unit; the file alone is not |
 | **Compose** | Full `docker-compose.yml` deployments |
 
 ## MCP Integration
