@@ -117,6 +117,12 @@ module.exports = {
     // also the better default in its own right: it is the agent's persistent
     // volume, where its work actually lives, rather than /opt/hermes where the
     // application happens to be installed.
+    // An agent that cannot reach the organisation's tools is an agent that can
+    // only talk. SkillHub — nineteen tools over MCP, identity derived from the
+    // key in the header — is the case this exists for, but nothing here is
+    // SkillHub-specific: any MCP server hermes can reach fits.
+    { key: 'MCP_SERVERS', label: 'MCP servers (JSON)', type: 'textarea', required: false,
+      placeholder: '{"skillhub": {"url": "https://skillhub.example.com/skillhub", "headers": {"apikey": "…"}}}' },
     { key: 'HERMES_TERMINAL_CWD', label: 'Terminal working directory', type: 'text', default: '/opt/data', placeholder: 'Where the agent shell and terminal tools start' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
@@ -195,6 +201,42 @@ module.exports = {
   // URL override from OPENAI_BASE_URL) works for BOTH CLI and dashboard.
   // Do NOT set api_mode or custom_providers — those triggered "Context length
   // exceeded" / "session_id" bugs in v0.19.0.
+  // Turn MCP_SERVERS into the mcp_servers: block hermes reads from
+  // /opt/data/config.yaml. Written as YAML by hand rather than with a library
+  // because the patcher splices text into a file hermes also owns, and a
+  // reformatted file is a file whose other sections moved.
+  //
+  // Malformed JSON returns null rather than throwing: a typo in one field must
+  // not take down a deploy that is otherwise fine. It shows up as an agent
+  // without its tools, which is visible, instead of a failed redeploy.
+  generateMcpBlock(config) {
+    const raw = String(config.MCP_SERVERS || '').trim();
+    if (!raw) return null;
+    let servers;
+    try {
+      servers = JSON.parse(raw);
+    } catch (err) {
+      console.error(`[Hermes] MCP_SERVERS is not valid JSON, ignoring it: ${err.message}`);
+      return null;
+    }
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return null;
+
+    const quote = (v) => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    const lines = ['mcp_servers:'];
+    for (const [name, spec] of Object.entries(servers)) {
+      if (!spec || typeof spec !== 'object' || !spec.url) continue;
+      lines.push(`  ${name}:`);
+      lines.push(`    url: ${quote(spec.url)}`);
+      if (spec.headers && typeof spec.headers === 'object') {
+        lines.push('    headers:');
+        for (const [h, v] of Object.entries(spec.headers)) lines.push(`      ${h}: ${quote(v)}`);
+      }
+      lines.push(`    enabled: ${spec.enabled === false ? 'false' : 'true'}`);
+      lines.push(`    timeout: ${parseInt(spec.timeout) || 120}`);
+    }
+    return lines.length > 1 ? lines.join('\n') + '\n' : null;
+  },
+
   generateConfig(config) {
     let providerIn = 'openai';
     let bareModel = 'gpt-5.6-luna';

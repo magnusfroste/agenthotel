@@ -1598,30 +1598,47 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const hermesTerminalCwd = runtime === 'hermes'
     ? String(config.HERMES_TERMINAL_CWD || '').trim()
     : '';
-  if (hermesModelBlock || hermesTerminalCwd) {
-    patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd).catch(err =>
+  // MCP servers the panel owns. /opt/data is a named volume, so anything the
+  // operator adds inside hermes itself already survives a restart — this is not
+  // about persistence. It is so a new agent is born able to reach the
+  // organisation's tools, so several agents follow one edit instead of being
+  // configured by hand, and so an agent recreated from its config comes back
+  // whole once its volume is gone.
+  const hermesMcpBlock = runtime === 'hermes' && plugin.generateMcpBlock
+    ? plugin.generateMcpBlock(config)
+    : null;
+  if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock) {
+    patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock).catch(err =>
       console.error('[Hermes] config patch failed:', err.message)
     );
   }
 }
 
-async function patchHermesConfig(container, modelBlock, terminalCwd) {
+async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock) {
   const b64 = Buffer.from(modelBlock || '').toString('base64');
   const cwdB64 = Buffer.from(terminalCwd || '').toString('base64');
+  const mcpB64 = Buffer.from(mcpBlock || '').toString('base64');
   // Wait for the s6 init scripts to finish writing the baked config.
   await new Promise(r => setTimeout(r, 5000));
   const patchScript = `
 import base64
 mb = base64.b64decode('${b64}').decode()
+mcp = base64.b64decode('${mcpB64}').decode()
 with open('/opt/data/config.yaml') as f: lines = f.readlines()
+
+# mcp_servers is replaced only when the panel has one to put there. Stripping it
+# unconditionally would delete servers the operator added inside hermes, which
+# the panel knows nothing about and could not put back.
+drop = ['model:', 'custom_providers:'] + (['mcp_servers:'] if mcp else [])
 out, i = [], 0
 while i < len(lines):
-    if lines[i].startswith('model:') or lines[i].startswith('custom_providers:'):
+    if any(lines[i].startswith(d) for d in drop):
         i += 1
         while i < len(lines) and (lines[i].startswith('  ') or lines[i].startswith('- ')): i += 1
         continue
     out.append(lines[i]); i += 1
 out = mb.splitlines(True) + out if mb else out
+out = mcp.splitlines(True) + out if mcp else out
 
 # terminal.cwd is edited in place: replace the cwd line inside the existing
 # terminal: block, or add one if the block has none. Rewriting the whole block
