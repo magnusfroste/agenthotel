@@ -28,10 +28,20 @@ function CreateAgent() {
     authFetch('/api/system/capacity').then(r => r.json()).then(setCapacity).catch(() => {})
   }, [])
 
+  // Runtimes are plugins; data templates are recipes that deploy through one.
+  // The form treats them alike — pick it, fill in its fields, deploy — so the
+  // list is both, or the library's Deploy button leads to a form that does not
+  // know what was clicked.
   async function fetchRuntimes() {
     try {
-      const res = await authFetch('/api/runtimes')
-      const data = await res.json()
+      const [plugins, templates] = await Promise.all([
+        authFetch('/api/runtimes').then(r => r.json()),
+        authFetch('/api/templates').then(r => r.json()).catch(() => [])
+      ])
+      const recipes = (templates || [])
+        .filter(t => t.custom && t.usable)
+        .map(t => ({ ...t, isTemplate: true, configFields: [] }))
+      const data = [...plugins, ...recipes]
       setRuntimes(data)
       if (data.length > 0) {
         const preset = searchParams.get('runtime')
@@ -41,18 +51,51 @@ function CreateAgent() {
     } catch (err) { console.error('Failed to fetch runtimes:', err) }
   }
 
+  // A template's fields live on its detail endpoint, fetched when it is the one
+  // selected rather than for all of them up front.
+  const [templateFields, setTemplateFields] = useState({})
+  useEffect(() => {
+    const selected = runtimes.find(r => r.id === formData.runtime)
+    if (!selected?.isTemplate || templateFields[formData.runtime]) return
+    authFetch(`/api/templates/${formData.runtime}`)
+      .then(r => r.json())
+      .then(t => setTemplateFields(prev => ({ ...prev, [t.id || formData.runtime]: t.configFields || [] })))
+      .catch(() => {})
+  }, [formData.runtime, runtimes])
+
   async function fetchProviders() {
     try { setProviders(await (await authFetch('/api/providers')).json()) }
     catch (err) { console.error('Failed to fetch providers:', err) }
   }
 
-  const selectedRuntime = runtimes.find(r => r.id === formData.runtime)
+  const selectedRuntimeRaw = runtimes.find(r => r.id === formData.runtime)
+  const selectedRuntime = selectedRuntimeRaw?.isTemplate
+    ? { ...selectedRuntimeRaw, configFields: templateFields[formData.runtime] || [] }
+    : selectedRuntimeRaw
   const isCompose = formData.runtime === 'compose'
+  const isTemplate = Boolean(selectedRuntimeRaw?.isTemplate)
 
   function handleChange(e) {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
   }
+
+  const renderField = (field) => (
+    <div key={field.key} className="form-group">
+      <label>{field.label} {field.required && '*'}</label>
+      {field.type === 'textarea' ? (
+        <textarea value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || ''} required={field.required} />
+      ) : field.type === 'select' ? (
+        <select value={formData.config[field.key] || field.default || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} required={field.required}>
+          <option value="">Select…</option>
+          {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      ) : (
+        <input type={field.type} value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || field.placeholder || ''} required={field.required} />
+      )}
+      {field.description && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>{field.description}</div>}
+    </div>
+  )
 
   function handleConfigChange(key, value) {
     setFormData(prev => ({ ...prev, config: { ...prev.config, [key]: value } }))
@@ -64,11 +107,14 @@ function CreateAgent() {
     setLoading(true); setError('')
     try {
       const payload = { name: formData.name, runtime: formData.runtime, domain: formData.domain || undefined, quickStart }
-      if (!quickStart) {
+      if (!quickStart && !isTemplate) {
         payload.image = formData.image || undefined
         payload.port = formData.port ? parseInt(formData.port) : undefined
         payload.config = formData.config
       }
+      // A template's fields are what fills its .env — never dropped because
+      // Quick Start happens to be on.
+      if (isTemplate) payload.config = formData.config
       if (formData.memoryLimit) {
         payload.config = { ...(payload.config || {}), MEMORY_LIMIT_MB: String(parseInt(formData.memoryLimit)) }
       }
@@ -220,6 +266,15 @@ function CreateAgent() {
           )
         })()}
 
+        {/* A template's own fields are the point of deploying it — they are not
+            an advanced option to be revealed, and Quick Start has nothing to do
+            with them. */}
+        {isTemplate && selectedRuntime && selectedRuntime.configFields.length > 0 && (
+          <div style={{ marginBottom: '1.5rem' }}>
+            {selectedRuntime.configFields.map(renderField)}
+          </div>
+        )}
+
         {!isCompose && (
           <div className="form-group" style={{ marginTop: '1.25rem', marginBottom: '1.5rem' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -230,7 +285,7 @@ function CreateAgent() {
           </div>
         )}
 
-        {!quickStart && !isCompose && selectedRuntime && (
+        {!quickStart && !isCompose && !isTemplate && selectedRuntime && (
           <>
             <div className="form-group">
               <label>Image <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>(default: {selectedRuntime.defaultImage})</span></label>
@@ -240,21 +295,7 @@ function CreateAgent() {
               <label>Port <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>(default: {selectedRuntime.defaultPort})</span></label>
               <input type="number" name="port" value={formData.port} onChange={handleChange} placeholder={selectedRuntime.defaultPort} />
             </div>
-            {selectedRuntime.configFields.map(field => (
-              <div key={field.key} className="form-group">
-                <label>{field.label} {field.required && '*'}</label>
-                {field.type === 'textarea' ? (
-                  <textarea value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || ''} required={field.required} />
-                ) : field.type === 'select' ? (
-                  <select value={formData.config[field.key] || field.default || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} required={field.required}>
-                    <option value="">Select…</option>
-                    {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                ) : (
-                  <input type={field.type} value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || field.placeholder || ''} required={field.required} />
-                )}
-              </div>
-            ))}
+            {selectedRuntime.configFields.map(renderField)}
           </>
         )}
 

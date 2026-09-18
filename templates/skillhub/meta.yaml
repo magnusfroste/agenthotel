@@ -1,0 +1,964 @@
+name: SkillHub
+category: Data
+icon: database
+color: '#3ecf8e'
+source: builtin
+description: 'Self-hosted Supabase as a shared data layer for the agents in the hotel — Postgres with pgvector, an auth and REST gateway, storage, edge functions and Studio. SkillHub adds the embedding and similarity search the agents use to find each other''s work.
+
+  '
+instructions: 'Deploying generates every secret this stack needs, including the anon and service-role keys, which are JWTs signed with the generated JWT secret. Nothing is shared with any other deployment.
+
+
+  The domain you give the agent becomes the public URL. Studio is behind HTTP basic auth on that domain: the username you chose, and a generated password you will find under Credentials.
+
+
+  Embeddings go to OpenAI with the key you supply. Point EMBEDDING_URL at your own endpoint in the Environment tab to keep them in house.
+
+  '
+tags:
+- supabase
+- postgres
+- pgvector
+- storage
+- shared data
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/skillhub
+- label: Supabase self-hosting
+  url: https://supabase.com/docs/guides/self-hosting/docker
+benefits:
+- title: One data layer
+  description: Every agent in the hotel reads and writes the same Postgres, instead of each keeping its own
+- title: Search by meaning
+  description: pgvector and an embedding function, so an agent can find work related to its own
+- title: Keys that are yours
+  description: Secrets are generated per deployment. No template ever carries a real credential
+features:
+- title: Postgres + pgvector
+  description: With the Supabase extensions, migrations and roles already in place
+- title: Kong gateway
+  description: REST, auth, storage and edge functions behind one hostname
+- title: Studio
+  description: The full Supabase UI, behind basic auth on the agent's domain
+deploy:
+  runtime: git-compose
+  repo: https://github.com/magnusfroste/skillhub
+  ref: main
+  composeFile: docker-compose.yml
+  routeService: kong
+  routePort: 8000
+  env:
+  - key: OPENAI_API_KEY
+    label: OpenAI API key
+    type: password
+    required: true
+    description: Used for embeddings. Swap EMBEDDING_URL for a private endpoint later
+  - key: DASHBOARD_USERNAME
+    label: Studio username
+    type: text
+    default: admin
+    description: The password is generated and shown under Credentials
+  - key: EMBEDDING_MODEL
+    label: Embedding model
+    type: text
+    default: text-embedding-3-small
+    description: Must match the vector dimension the schema was created with
+  secrets:
+  - key: POSTGRES_PASSWORD
+    generate: password
+    length: 32
+  - key: JWT_SECRET
+    generate: password
+    length: 48
+  - key: ANON_KEY
+    generate: supabase-jwt
+    role: anon
+    signedWith: JWT_SECRET
+  - key: SERVICE_ROLE_KEY
+    generate: supabase-jwt
+    role: service_role
+    signedWith: JWT_SECRET
+  - key: DASHBOARD_PASSWORD
+    generate: password
+    length: 24
+  - key: SECRET_KEY_BASE
+    generate: password
+    length: 64
+  - key: REALTIME_DB_ENC_KEY
+    generate: password
+    length: 16
+  - key: VAULT_ENC_KEY
+    generate: password
+    length: 32
+  - key: PG_META_CRYPTO_KEY
+    generate: password
+    length: 32
+  - key: LOGFLARE_PUBLIC_ACCESS_TOKEN
+    generate: hex
+    bytes: 32
+  - key: LOGFLARE_PRIVATE_ACCESS_TOKEN
+    generate: hex
+    bytes: 32
+  - key: MINIO_ROOT_PASSWORD
+    generate: password
+    length: 24
+  envFile: '############
+
+    # Docker compose override files to layer on top of docker-compose.yml.
+
+    # Native docker compose COMPOSE_FILE: colon-separated list, base file first.
+
+    # Manage with: ./run.sh config add|remove <name>
+
+    #
+
+    # Examples:
+
+    #   COMPOSE_FILE=docker-compose.yml
+
+    #   COMPOSE_FILE=docker-compose.yml:docker-compose.pg17.yml
+
+    #
+
+    ############
+
+    COMPOSE_FILE=docker-compose.yml
+
+
+
+    ############
+
+    # Secrets
+
+    #
+
+    # YOU MUST CHANGE ALL THE DEFAULT VALUES BELOW BEFORE STARTING
+
+    # THE CONTAINERS FOR THE FIRST TIME!
+
+    #
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/docker#configuring-and-securing-supabase
+
+    #
+
+    # To generate secrets and API keys:
+
+    # 1. sh utils/generate-keys.sh
+
+    # 2. sh utils/add-new-auth-keys.sh
+
+    #
+
+    ############
+
+
+    # Postgres
+
+    POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+
+    # Legacy symmetric HS256 key
+
+    JWT_SECRET=${JWT_SECRET}
+
+    # Legacy API keys (HS256-signed JWTs)
+
+    ANON_KEY=${ANON_KEY}
+
+    SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+
+
+    # Asymmetric key pair (ES256) and opaque API keys
+
+    #
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/self-hosted-auth-keys
+
+    #
+
+    # To generate:
+
+    # sh ./utils/add-new-auth-keys.sh
+
+    #
+
+    # Opaque API key for client-side use (anon role).
+
+    SUPABASE_PUBLISHABLE_KEY=
+
+    # Opaque API key for server-side use (service_role). Never expose in client code.
+
+    SUPABASE_SECRET_KEY=
+
+    # JSON array of signing JWKs (EC private + legacy symmetric).
+
+    # Used by Auth.
+
+    JWT_KEYS=
+
+    # JWKS for token verification (EC public + legacy symmetric).
+
+    # Used by PostgREST, Realtime, Storage to verify tokens.
+
+    JWT_JWKS=
+
+
+    # Access to Dashboard
+
+    DASHBOARD_USERNAME=${DASHBOARD_USERNAME}
+
+    DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
+
+
+    # Encryption key for securing Realtime and Supavisor communications.
+
+    # (Must be at least 64 characters; generate with: openssl rand -base64 48)
+
+    SECRET_KEY_BASE=${SECRET_KEY_BASE}
+
+
+    # Encryption key used by Realtime for sensitive fields in the `_realtime` schema.
+
+    # (Must be exactly 16 characters; generate with: `openssl rand -hex 8`)
+
+    REALTIME_DB_ENC_KEY=${REALTIME_DB_ENC_KEY}
+
+
+    # Encryption key used by Supavisor for storing encrypted configuration.
+
+    # (Must be exactly 32 characters; generate with: openssl rand -hex 16)
+
+    VAULT_ENC_KEY=${VAULT_ENC_KEY}
+
+
+    # Encryption key for securing connection strings used by Studio against postgres-meta.
+
+    # (Must be at least 32 characters; generate with openssl rand -base64 24)
+
+    PG_META_CRYPTO_KEY=${PG_META_CRYPTO_KEY}
+
+
+    # API token for log ingestion used by Logflare and Vector.
+
+    # (Must be at least 32 characters; generate with openssl rand -base64 24)
+
+    LOGFLARE_PUBLIC_ACCESS_TOKEN=${LOGFLARE_PUBLIC_ACCESS_TOKEN}
+
+    # API token used for Logflare management operations. Never expose client-side.
+
+    # (Must be at least 32 characters; generate with openssl rand -base64 24)
+
+    LOGFLARE_PRIVATE_ACCESS_TOKEN=${LOGFLARE_PRIVATE_ACCESS_TOKEN}
+
+
+    # Access key ID (username-like) for accessing the S3 protocol endpoint in Storage.
+
+    # (Generate with: openssl rand -hex 16)
+
+    S3_PROTOCOL_ACCESS_KEY_ID=625729a08b95bf1b7ff351a663f3a23c
+
+    # Secret key (password-like) used with S3_PROTOCOL_ACCESS_KEY_ID.
+
+    # (Generate with: openssl rand -hex 32)
+
+    S3_PROTOCOL_ACCESS_KEY_SECRET=850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907
+
+
+
+    ############
+
+    # URLs - Configure hostnames below to reflect your actual domain name
+
+    ############
+
+
+    # Access to Dashboard and REST API
+
+    SUPABASE_PUBLIC_URL=https://${DOMAIN}
+
+
+    # Full external URL of the Auth service, used to construct OAuth callbacks,
+
+    # SAML endpoints, and email links
+
+    API_EXTERNAL_URL=https://${DOMAIN}/auth/v1
+
+
+    # See also the Auth section below for Site URL and Redirect URLs configuration
+
+
+
+    ############
+
+    # Database - Postgres configuration
+
+    ############
+
+
+    # Using default user (postgres)
+
+    POSTGRES_HOST=db
+
+    POSTGRES_DB=postgres
+
+
+    # Default configuration includes Supavisor exposing POSTGRES_PORT
+
+    # Postgres uses POSTGRES_PORT inside the container
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/accessing-postgres
+
+    POSTGRES_PORT=5432
+
+
+
+    ############
+
+    # Database pooler
+
+    ############
+
+
+    # Self-hosted Supabase uses Supavisor as the default database pooler.
+
+    # If you use the PgBouncer docker-compose override, Supavisor is disabled
+
+    # and the pooler settings below are used to configure PgBouncer instead.
+
+    #
+
+    # Supavisor exposes POSTGRES_PORT and POOLER_PROXY_PORT_TRANSACTION,
+
+    # POSTGRES_PORT is used for session mode pooling
+
+    # PgBouncer only exposes POOLER_PROXY_PORT_TRANSACTION.
+
+    #
+
+    # Port to use for transaction mode pooling connections
+
+    POOLER_PROXY_PORT_TRANSACTION=6543
+
+
+    # Maximum number of PostgreSQL connections Supavisor or PgBouncer opens per pool
+
+    POOLER_DEFAULT_POOL_SIZE=20
+
+
+    # Maximum number of client connections Supavisor or PgBouncer accepts per pool
+
+    POOLER_MAX_CLIENT_CONN=100
+
+
+    # Unique Supavisor tenant identifier
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/accessing-postgres
+
+    POOLER_TENANT_ID=${AGENT_NAME}
+
+
+    # Pool size for internal metadata storage used by Supavisor
+
+    # This is separate from client connections and used only by Supavisor itself
+
+    POOLER_DB_POOL_SIZE=5
+
+
+
+    ############
+
+    # Studio - Configuration for the Dashboard
+
+    ############
+
+
+    STUDIO_DEFAULT_ORGANIZATION=Default Organization
+
+    STUDIO_DEFAULT_PROJECT=Default Project
+
+
+    # Add your OpenAI API key to enable AI Assistant
+
+    OPENAI_API_KEY=${OPENAI_API_KEY}
+
+
+
+    ############
+
+    # Auth - Configuration for the authentication server
+
+    ############
+
+
+    ## General settings
+
+
+    # Equivalent to "Site URL" and "Redirect URLs" platform configuration options
+
+    # Documentation: https://supabase.com/docs/guides/auth/redirect-urls
+
+    SITE_URL=https://${DOMAIN}
+
+    ADDITIONAL_REDIRECT_URLS=
+
+
+    JWT_EXPIRY=3600
+
+    DISABLE_SIGNUP=false
+
+
+    ## Mailer Config
+
+    MAILER_URLPATHS_CONFIRMATION="/auth/v1/verify"
+
+    MAILER_URLPATHS_INVITE="/auth/v1/verify"
+
+    MAILER_URLPATHS_RECOVERY="/auth/v1/verify"
+
+    MAILER_URLPATHS_EMAIL_CHANGE="/auth/v1/verify"
+
+
+    ## Email auth
+
+    ENABLE_EMAIL_SIGNUP=true
+
+    ENABLE_EMAIL_AUTOCONFIRM=false
+
+    SMTP_ADMIN_EMAIL=admin@example.com
+
+    SMTP_HOST=supabase-mail
+
+    SMTP_PORT=2500
+
+    SMTP_USER=fake_mail_user
+
+    SMTP_PASS=fake_mail_password
+
+    SMTP_SENDER_NAME=fake_sender
+
+    ENABLE_ANONYMOUS_USERS=false
+
+
+    ## Phone auth
+
+    ENABLE_PHONE_SIGNUP=true
+
+    ENABLE_PHONE_AUTOCONFIRM=true
+
+
+    ## OAuth / Social login providers
+
+
+    # Uncomment and fill in the providers you want to enable.
+
+    # You must ALSO uncomment the matching GOTRUE_EXTERNAL_* lines in docker-compose.yml
+
+    # Documentation: https://supabase.com/docs/guides/self-hosting/self-hosted-oauth
+
+    # GOOGLE_ENABLED=false
+
+    # GOOGLE_CLIENT_ID=
+
+    # GOOGLE_SECRET=
+
+
+    # GITHUB_ENABLED=false
+
+    # GITHUB_CLIENT_ID=
+
+    # GITHUB_SECRET=
+
+
+    # AZURE_ENABLED=false
+
+    # AZURE_CLIENT_ID=
+
+    # AZURE_SECRET=
+
+
+    # Phone / SMS provider configuration
+
+    # Uncomment to configure SMS delivery for phone auth and phone MFA.
+
+    # You must ALSO uncomment the matching GOTRUE_SMS_* lines in docker-compose.yml
+
+    # Documentation: https://supabase.com/docs/guides/self-hosting/self-hosted-phone-mfa
+
+    # SMS_PROVIDER=twilio
+
+    # SMS_OTP_EXP=60
+
+    # SMS_OTP_LENGTH=6
+
+    # SMS_MAX_FREQUENCY=60s
+
+    # SMS_TEMPLATE=Your code is {{ .Code }}
+
+
+    # SMS_TWILIO_ACCOUNT_SID=
+
+    # SMS_TWILIO_AUTH_TOKEN=
+
+    # SMS_TWILIO_MESSAGE_SERVICE_SID=
+
+
+    # Test OTP: map phone numbers to fixed OTP codes for development
+
+    # Format: phone1:code1,phone2:code2
+
+    # SMS_TEST_OTP=
+
+
+    # Multi-factor authentication (MFA)
+
+    # Uncomment to change MFA defaults.
+
+    # You must ALSO uncomment the matching GOTRUE_MFA_* lines in docker-compose.yml
+
+
+    # App Authenticator (TOTP) - enabled by default
+
+    # MFA_TOTP_ENROLL_ENABLED=true
+
+    # MFA_TOTP_VERIFY_ENABLED=true
+
+
+    # Phone MFA - disabled by default (opt-in)
+
+    # MFA_PHONE_ENROLL_ENABLED=false
+
+    # MFA_PHONE_VERIFY_ENABLED=false
+
+
+    # Maximum MFA factors a user can enroll
+
+    # MFA_MAX_ENROLLED_FACTORS=10
+
+
+    ## SAML SSO
+
+
+    # You must ALSO uncomment the matching GOTRUE_* lines in docker-compose.yml
+
+    # Documentation: https://supabase.com/docs/guides/self-hosting/self-hosted-saml-sso
+
+
+    # SAML_ENABLED=true
+
+    # SAML_PRIVATE_KEY=<your-base64-encoded-private-key>
+
+
+    # Optional: accept encrypted SAML assertions from IdPs (default: false)
+
+    # SAML_ALLOW_ENCRYPTED_ASSERTIONS=false
+
+
+    # Optional: how long relay state tokens remain valid (default: 2m0s)
+
+    # SAML_RELAY_STATE_VALIDITY_PERIOD=2m0s
+
+
+    # Optional: override the SAML entity ID / ACS base URL
+
+    # Defaults to API_EXTERNAL_URL if not set
+
+    # SAML_EXTERNAL_URL=https://supabase.example.com:8000/auth/v1
+
+
+    # Optional: rate limit on the ACS endpoint (requests per second, default: 15)
+
+    # SAML_RATE_LIMIT_ASSERTION=15
+
+
+
+    ############
+
+    # Storage - Configuration for Storage
+
+    ############
+
+
+    # Check the S3_PROTOCOL_ACCESS_KEY_ID/SECRET above, and
+
+    # refer to the documentation at:
+
+    # https://supabase.com/docs/guides/self-hosting/self-hosted-s3
+
+    # to learn how to configure the S3 protocol endpoint
+
+
+    # S3 bucket when using S3 backend, directory name when using ''file''
+
+    GLOBAL_S3_BUCKET=stub
+
+
+    # Used for S3 protocol endpoint configuration
+
+    REGION=stub
+
+
+    # Used by MinIO when added via:
+
+    # docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
+
+    MINIO_ROOT_USER=supa-storage
+
+    # Root administrator password for the RustFS or MinIO server.
+
+    # (Must be 8+ characters; generate with: openssl rand -hex 16)
+
+    MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+
+
+    # Equivalent to project_ref as described here:
+
+    # https://supabase.com/docs/guides/storage/s3/authentication#session-token
+
+    STORAGE_TENANT_ID=stub
+
+
+
+    ############
+
+    # Functions - Configuration for Edge functions
+
+    ############
+
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/self-hosted-functions
+
+
+    # NOTE: VERIFY_JWT applies to all functions
+
+    FUNCTIONS_VERIFY_JWT=false
+
+
+
+    ############
+
+    # API - Configuration for PostgREST
+
+    ############
+
+
+    # Postgres schemas exposed via the REST API
+
+    PGRST_DB_SCHEMAS=public,graphql_public
+
+
+    # Max number of rows returned by a request
+
+    PGRST_DB_MAX_ROWS=1000
+
+
+    # Extra schemas added to the search_path of every request
+
+    PGRST_DB_EXTRA_SEARCH_PATH=public
+
+
+
+    ############
+
+    # Logs and Analytics
+
+    ############
+
+
+    ## Vector log collection and routing
+
+
+    # Docker socket location - required for proper Vector operation
+
+    DOCKER_SOCKET_LOCATION=/var/run/docker.sock
+
+    # For Podman use the following:
+
+    # DOCKER_SOCKET_LOCATION=/run/podman/podman.sock
+
+
+    ## Analytics (Logflare)
+
+
+    # Check the LOGFLARE_* access token configuration _above_.
+
+    # If Logflare has to be externally exposed - configure securely!
+
+
+    # Google Cloud Project details
+
+    # Documentation:
+
+    # https://supabase.com/docs/reference/self-hosting-analytics/introduction
+
+    GOOGLE_PROJECT_ID=GOOGLE_PROJECT_ID
+
+    GOOGLE_PROJECT_NUMBER=GOOGLE_PROJECT_NUMBER
+
+
+
+    ############
+
+    # API gateway
+
+    ############
+
+
+    # Host port the API gateway (Envoy by default) listens on.
+
+    API_GW_HTTP_PORT=8000
+
+
+    # Kong gateway override only (sh run.sh config add kong). KONG_HTTPS_PORT is
+
+    # Kong''s built-in HTTPS listener; KONG_HTTP_PORT is kept as a fallback for
+
+    # API_GW_HTTP_PORT so existing .env files continue to work.
+
+    KONG_HTTP_PORT=8000
+
+    KONG_HTTPS_PORT=8443
+
+
+    # Used internally by the API gateway - DO NOT use in any client or server code.
+
+    # Pre-signed ES256 JWT "API key" for anon role.
+
+    ANON_KEY_ASYMMETRIC=
+
+    # Pre-signed ES256 JWT "API key" for service_role.
+
+    SERVICE_ROLE_KEY_ASYMMETRIC=
+
+
+
+    ############
+
+    # imgproxy
+
+    ############
+
+
+    # Enable webp support
+
+    IMGPROXY_AUTO_WEBP=true
+
+
+
+    ############
+
+    # TLS Proxy - Optional Caddy or Nginx reverse proxy with Let''s Encrypt
+
+    ############
+
+
+    # Documentation:
+
+    # https://supabase.com/docs/guides/self-hosting/self-hosted-proxy-https
+
+
+    # Usage:
+
+    # docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+
+    # docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+
+
+    # Domain name for the proxy (must point to your server)
+
+    PROXY_DOMAIN=your-domain.example.com
+
+
+    # Email for Let''s Encrypt certificate notifications (nginx only, Caddy uses PROXY_DOMAIN).
+
+    # This should be a valid email, not a placeholder (otherwise Certbot may fail to start).
+
+    CERTBOT_EMAIL=admin@example.com
+
+
+
+    ############
+
+    # skillhub: per-person MCP keys
+
+    #
+
+    # Each non-empty MCP_KEY_NN becomes a Kong consumer agent_NN allowed ONLY on /mcp.
+
+    # agent_NN is also the agent''s default identifier in the data (owner/created_by).
+
+    # Leave unused slots empty. Generate with:  openssl rand -hex 32
+
+    # Revoke by clearing the value and redeploying (Kong re-reads its config on start).
+
+    # NOTE: every key reaching /mcp gets full database access through Studio''s MCP
+
+    # server (execute_sql, apply_migration). Kong decides WHO gets in, not WHAT they
+
+    # may do. See README.md.
+
+    ############
+
+    MCP_KEY_01=
+
+    MCP_KEY_02=
+
+    MCP_KEY_03=
+
+    MCP_KEY_04=
+
+    MCP_KEY_05=
+
+    MCP_KEY_06=
+
+    MCP_KEY_07=
+
+    MCP_KEY_08=
+
+    MCP_KEY_09=
+
+    MCP_KEY_10=
+
+
+    ############
+
+    # skillhub: name under which Kong is reachable on Easypanel''s shared network
+
+    # (what the Cloudflare tunnel ingress or Traefik points at). Easypanel''s own convention
+
+    # is <project>_<service>_kong; change only if the service lives under another name.
+
+    ############
+
+    # Prefix for every container name. Change it to run a SECOND instance on the same host --
+
+    # volumes already get the compose project prefix and KONG_NETWORK_ALIAS is set below, so
+
+    # the container names were the only thing that collided. Leave it alone for a single
+
+    # instance; the default keeps the names this stack has always had.
+
+    CONTAINER_PREFIX=${AGENT_NAME}
+
+
+    KONG_NETWORK_ALIAS=${AGENT_NAME}_kong
+
+
+
+    ############
+
+    # skillhub: private embeddings endpoint for semantic search
+
+    #
+
+    # Read by the edge function `embed`, not by the agents: the index is maintained by
+
+    # lagret oavsett vem som skrev, precis som AnythingLLM embeddar vid inmatning.
+
+    # Left empty, nothing is embedded and keyword search works as usual.
+
+    #
+
+    # EMBEDDING_URL   OpenAI-compatible. The host on its own or a base ending in /v1 is
+
+    #                 completed to /v1/embeddings; a full path is used as written.
+
+    # EMBEDDING_KEY   Bearer token for that endpoint; leave empty if it has no auth
+
+    # EMBEDDING_MODEL the model name the endpoint expects
+
+    #
+
+    # That is all. On its first run the indexer probes the endpoint: the dimension the model
+
+    # returns becomes the vector column (while the table is empty), and how much text one input
+
+    # may carry comes from TEI''s /info, vLLM''s /v1/models, or by trying sizes. It writes what it
+
+    # found to platform.embedder; skillhub_overview shows it under "index", with the last run''s
+
+    # result. To switch models later: truncate platform.embeddings; -- the next run re-probes.
+
+    # Objects are embedded in chunks cut on their headings and sized to that limit, so an
+
+    # embedder built for RAG (512-2048 tokens) indexes a long skill in full.
+
+    ############
+
+    EMBEDDING_URL=https://api.openai.com/v1/embeddings
+
+    EMBEDDING_KEY=${OPENAI_API_KEY}
+
+    EMBEDDING_MODEL=${EMBEDDING_MODEL}
+
+    # EMBEDDING_DIM is no longer read (2026-09-16): the dimension is probed, never configured.
+
+    # Inputs per request to the embedder. Providers refuse a request above their cap --
+
+    # text-embeddings-inference at --max-client-batch-size (32 default; 8 on a small CPU box),
+
+    # OpenAI at 2048 -- so the indexer sends slices of this size and reports how many it made.
+
+    # Eight is under every provider''s limit. Raise it if your embedder allows and you have
+
+    # thousands of objects to index.
+
+    EMBEDDING_MAX_INPUTS=8
+
+    # How much text goes into ONE chunk, and therefore one vector. A retrieval choice, not a
+
+    # model limit: a model that accepts 2,048 tokens is no reason to let one vector stand for ten
+
+    # sections of a document. 2000 is the default; lower it for sharper pointers, raise it for
+
+    # fewer rows. It costs no extra tokens either way -- the same text is embedded -- only more
+
+    # rows, which matters above 4,000 dimensions where there is no index.
+
+    EMBEDDING_CHUNK_CHARS=2000
+
+    # The largest input the endpoint accepts: a ceiling, above which it refuses.
+
+    # 0 (default) = what the probe found. Set it only when the probe
+
+    # guessed wrong -- a run that fails on an object says so in skillhub_overview -> index ->
+
+    # last_error -- about 3 characters per token, so 5500 fits a 2048-token model.
+
+    # The probe also measures characters per token from the endpoint''s usage figures, so a
+
+    # tokenizer that spends more on Swedish (Qwen''s does) gets smaller chunks, not refusals.
+
+    # On vLLM the indexer sends truncate_prompt_tokens = max_model_len by itself, so a chunk
+
+    # that still overshoots is cut, not lost. EMBEDDING_TRUNCATE_TOKENS overrides that value;
+
+    # leave it empty for OpenAI, which rejects unknown fields. A failing input is isolated and
+
+    # reported; the rest of the batch is embedded.
+
+    EMBEDDING_MAX_CHARS=0
+
+    EMBEDDING_TRUNCATE_TOKENS=
+
+    # On the dimension: pgvector''s HNSW index takes vector up to 2,000 dimensions and halfvec up
+
+    # to 4,000; above that platform.set_vector_dim() creates no index and searches are exact
+
+    # scans, which is fine below tens of thousands of rows. Qwen3-Embedding-8B is 4,096 native.
+
+    # Changing the dimension means emptying platform.embeddings first -- vectors from different
+
+    # models are never mixed -- and everything re-indexes on the next runs.
+
+    '

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { normalizeSecrets, generateSecrets, renderEnvFile } = require('./templateSecrets');
 
 // templates/ is bind-mounted read-only-ish at /templates (docker-compose.yml).
 const TEMPLATES_DIR = process.env.TEMPLATES_DIR || '/templates';
@@ -37,10 +38,16 @@ const ID_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 // template on the host shows up without restarting the backend.
 const cache = new Map();
 
+// A data template — one with a deploy block rather than a runtime plugin —
+// can be shipped in git alongside the runtimes, or written at runtime into
+// custom/. Both are equally inert data; the only difference is who wrote it,
+// and a runtime-written one shadows a shipped one of the same name never: the
+// shipped tree is checked only when custom/ has nothing.
 function metaPath(id, custom) {
-  return custom
-    ? path.join(CUSTOM_DIR, id, 'meta.yaml')
-    : path.join(TEMPLATES_DIR, id, 'meta.yaml');
+  if (!custom) return path.join(TEMPLATES_DIR, id, 'meta.yaml');
+  const written = path.join(CUSTOM_DIR, id, 'meta.yaml');
+  if (fs.existsSync(written)) return written;
+  return path.join(TEMPLATES_DIR, id, 'meta.yaml');
 }
 
 function loadMeta(id, custom = false) {
@@ -109,7 +116,7 @@ function summarize(id, plugin) {
 function normalizeDeploy(deploy) {
   if (!deploy || typeof deploy !== 'object') return null;
   const runtime = text(deploy.runtime);
-  if (runtime !== 'docker-app' && runtime !== 'compose') return null;
+  if (runtime !== 'docker-app' && runtime !== 'compose' && runtime !== 'git-compose') return null;
 
   const env = list(deploy.env)
     .filter(f => f && typeof f === 'object' && text(f.key))
@@ -127,9 +134,96 @@ function normalizeDeploy(deploy) {
     if (!compose) return null;
     return { runtime, compose, env };
   }
+
+  // A stack whose compose file bind-mounts files from its own repository —
+  // init scripts, a gateway config, edge functions — cannot be carried as
+  // compose text. Embedding just the file deploys a stack whose database
+  // cannot initialise. Such a template has to bring the repository.
+  if (runtime === 'git-compose') {
+    const repo = text(deploy.repo);
+    if (!repo) return null;
+    return {
+      runtime,
+      repo,
+      ref: text(deploy.ref) || 'main',
+      subdir: text(deploy.subdir) || '',
+      composeFile: text(deploy.composeFile) || 'docker-compose.yml',
+      composeProject: text(deploy.composeProject) || '',
+      routeService: text(deploy.routeService) || '',
+      routePort: parseInt(deploy.routePort) || 0,
+      // The .env the stack is handed, with ${PLACEHOLDER} for anything
+      // generated or asked for on the deploy form.
+      envFile: typeof deploy.envFile === 'string' ? deploy.envFile : '',
+      secrets: normalizeSecrets(deploy.secrets),
+      env
+    };
+  }
   const image = text(deploy.image);
   if (!image) return null;
   return { runtime, image, port: parseInt(deploy.port) || 80, env };
+}
+
+// Turn a template's deploy block into the runtime and config that
+// POST /api/agents would otherwise have been handed by a human. This is the
+// whole of what deploying a data template means — the panel runs no template
+// code, it just fills in the same form.
+function materializeDeploy(deploy, provided = {}) {
+  const supplied = {};
+  for (const [key, value] of Object.entries(provided || {})) {
+    if (value !== undefined && value !== null && String(value) !== '') supplied[key] = String(value);
+  }
+
+  // What the panel knows about this particular deployment. It is there to be
+  // substituted into the env file, not to become configuration of its own —
+  // without this every template-deployed container got an AGENT_NAME variable
+  // nobody asked for.
+  const context = {};
+  for (const key of ['DOMAIN', 'AGENT_NAME']) {
+    if (supplied[key] !== undefined) { context[key] = supplied[key]; delete supplied[key]; }
+  }
+
+  if (deploy.runtime === 'docker-app') {
+    // image and port are columns on the agent, not just config: the container
+    // is created from the column. A template that set only the config field
+    // deployed an agent with an empty image — "no command specified", from
+    // Docker, long after the template looked fine.
+    return {
+      runtime: 'docker-app',
+      image: deploy.image,
+      port: deploy.port || 80,
+      config: { IMAGE: deploy.image, PORT: String(deploy.port || 80), ...supplied }
+    };
+  }
+  if (deploy.runtime === 'compose') {
+    return { runtime: 'compose', config: { COMPOSE_FILE: deploy.compose, ...supplied } };
+  }
+
+  // A field's default is what the form shows; leaving it untouched must mean
+  // the default, not an unfilled ${PLACEHOLDER} in the deployed .env.
+  for (const field of deploy.env || []) {
+    if (supplied[field.key] === undefined && field.default !== '') supplied[field.key] = String(field.default);
+  }
+
+  const values = { ...generateSecrets(deploy.secrets || [], supplied), ...context };
+  const config = {
+    GIT_REPO: deploy.repo,
+    GIT_REF: deploy.ref,
+    COMPOSE_FILE: deploy.composeFile
+  };
+  if (deploy.subdir) config.GIT_SUBDIR = deploy.subdir;
+  if (deploy.composeProject) config.COMPOSE_PROJECT = deploy.composeProject;
+  if (deploy.routeService) config.ROUTE_SERVICE = deploy.routeService;
+  if (deploy.routePort) config.ROUTE_PORT = String(deploy.routePort);
+  if (deploy.envFile) config.COMPOSE_ENV = renderEnvFile(deploy.envFile, values);
+
+  // Anything the operator typed that the env file did not consume is still
+  // theirs — a field offered on the form must end up somewhere.
+  for (const field of deploy.env || []) {
+    if (supplied[field.key] !== undefined && !(config.COMPOSE_ENV || '').includes(`${field.key}=`)) {
+      config[field.key] = supplied[field.key];
+    }
+  }
+  return { runtime: 'git-compose', config };
 }
 
 function summarizeCustom(id) {
@@ -160,15 +254,29 @@ function summarizeCustom(id) {
   };
 }
 
-function listCustomIds() {
+function dirsWithMeta(root) {
   try {
-    return fs.readdirSync(CUSTOM_DIR, { withFileTypes: true })
+    return fs.readdirSync(root, { withFileTypes: true })
       .filter(e => e.isDirectory() && ID_RE.test(e.name))
       .map(e => e.name)
-      .filter(id => fs.existsSync(metaPath(id, true)));
+      .filter(id => fs.existsSync(path.join(root, id, 'meta.yaml')));
   } catch (_) {
     return []; // directory does not exist yet
   }
+}
+
+// Every data template, written or shipped. A shipped directory only counts as
+// one if it declares a deploy block — the rest are the runtimes' own
+// presentation metadata, which the plugin list already covers.
+function listCustomIds() {
+  const written = dirsWithMeta(CUSTOM_DIR);
+  const shipped = dirsWithMeta(TEMPLATES_DIR)
+    .filter(id => !written.includes(id))
+    .filter(id => {
+      const meta = loadMeta(id);
+      return Boolean(meta && meta.deploy);
+    });
+  return [...written, ...shipped];
 }
 
 function listTemplates(runtimes) {
@@ -186,6 +294,9 @@ function getTemplate(id, runtimes) {
   const plugin = runtimes[id];
   if (!plugin) {
     if (!ID_RE.test(id) || !fs.existsSync(metaPath(id, true))) return null;
+    // Shipped data templates are cached under the plugin key, written ones
+    // under custom: — loadMeta is told which by where the file was found.
+
     const meta = loadMeta(id, true) || {};
     const deploy = normalizeDeploy(meta.deploy);
     return {
@@ -264,5 +375,5 @@ function deleteTemplate(id) {
 
 module.exports = {
   listTemplates, getTemplate, saveTemplate, deleteTemplate,
-  normalizeDeploy, ID_RE, CUSTOM_DIR, metaPath
+  normalizeDeploy, materializeDeploy, ID_RE, CUSTOM_DIR, metaPath
 };

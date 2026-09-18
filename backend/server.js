@@ -18,7 +18,7 @@ const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
-const { listTemplates, getTemplate, saveTemplate, deleteTemplate } = require('./lib/templates');
+const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
 const { evaluateHealth } = require('./lib/agentHealth');
 const { execFile, execFileSync, spawn } = require('child_process');
 
@@ -1094,7 +1094,35 @@ Store this file safely.
 app.post('/api/agents', requireAuth, async (req, res) => {
   let createdId = null;
   try {
-    const { name, runtime, domain, image, port, config, quickStart } = req.body;
+    const { name, domain, quickStart } = req.body;
+    let image = req.body.image;
+    let port = req.body.port;
+
+    // A template is a recipe, not a runtime: deploying one fills in the form a
+    // person would otherwise have filled in, then creates an ordinary agent on
+    // the runtime it names. Until this existed the library listed templates
+    // that could not be deployed at all — the button led to "Unknown runtime".
+    let runtime = req.body.runtime;
+    let config = req.body.config;
+    if (!runtimes[runtime]) {
+      const template = getTemplate(runtime, runtimes);
+      if (!template || !template.deploy) {
+        return res.status(400).json({ error: `Unknown runtime: ${runtime}` });
+      }
+      try {
+        // The two things the panel knows and the template cannot: where this
+        // guest will answer, and what it is called. A stack that names its
+        // containers after the agent can be deployed twice on one host.
+        const filled = materializeDeploy(template.deploy, { ...(config || {}), DOMAIN: domain || '', AGENT_NAME: name });
+        runtime = filled.runtime;
+        config = filled.config;
+        if (!image && filled.image) image = filled.image;
+        if (!port && filled.port) port = filled.port;
+      } catch (err) {
+        return res.status(400).json({ error: `Template ${template.name}: ${err.message}` });
+      }
+    }
+
     const plugin = runtimes[runtime];
     if (!plugin) return res.status(400).json({ error: `Unknown runtime: ${runtime}` });
 
