@@ -126,9 +126,14 @@ module.exports = {
     // What guards the agent's dashboard. Undeclared, these were invisible: you
     // could set them, but only if you already knew they existed — and looking in
     // the panel would never tell you.
-    { key: 'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', label: 'Dashboard username', type: 'text', default: 'admin' },
+    { key: 'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', label: 'Dashboard username', type: 'text', default: 'admin',
+      description: 'What you type in the login form, with the password below' },
     { key: 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD', label: 'Dashboard password', type: 'password', required: false,
-      placeholder: 'Generated per agent if left empty' },
+      placeholder: 'Generated per agent if left empty',
+      description: 'Any length. This is the one you log in with' },
+    { key: 'HERMES_DASHBOARD_BASIC_AUTH_SECRET', label: 'Session signing key', type: 'password', required: false,
+      placeholder: 'Generated per agent — change only if you know why',
+      description: 'Signs dashboard sessions and is never typed by anyone. Must be at least 32 bytes; a short value stops the dashboard from starting at all' },
     { key: 'HERMES_TERMINAL_CWD', label: 'Terminal working directory', type: 'text', default: '/opt/data', placeholder: 'Where the agent shell and terminal tools start' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
@@ -200,6 +205,24 @@ module.exports = {
     // Only when there is one. An agent created before this has no secret in its
     // config, and an empty value would be worse than none: hermes treats unset
     // as "generate one", and an empty string as a signing key of nothing.
+    //
+    // Too short is worse still. Hermes then fails to register the auth provider
+    // and refuses to bind the dashboard — reported as "no auth providers are
+    // registered", which sends you looking for a missing plugin rather than at
+    // the field you just edited. Say what is actually wrong, and say it here
+    // rather than in a container that restarts every ten seconds.
+    if (config.HERMES_DASHBOARD_BASIC_AUTH_SECRET) {
+      const secret = String(config.HERMES_DASHBOARD_BASIC_AUTH_SECRET);
+      const bytes = /^[0-9a-fA-F]+$/.test(secret) ? secret.length / 2
+        : /^[A-Za-z0-9+/_-]+={0,2}$/.test(secret) ? Math.floor(secret.length * 3 / 4)
+          : Buffer.byteLength(secret);
+      if (bytes < 32) {
+        throw new Error(
+          `HERMES_DASHBOARD_BASIC_AUTH_SECRET is too short (${secret.length} characters, about ${bytes} bytes). ` +
+          'It signs dashboard sessions and must be at least 32 bytes — leave it empty and the panel generates one. ' +
+          'If you meant to change the login password, that is HERMES_DASHBOARD_BASIC_AUTH_PASSWORD.');
+      }
+    }
     if (config.HERMES_DASHBOARD_BASIC_AUTH_SECRET) {
       env.push(`HERMES_DASHBOARD_BASIC_AUTH_SECRET=${config.HERMES_DASHBOARD_BASIC_AUTH_SECRET}`);
     }

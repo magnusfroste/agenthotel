@@ -309,6 +309,16 @@ function AgentDetail() {
                   <input style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} type={SENSITIVE.test(p.key) ? 'password' : 'text'} value={p.value} placeholder="value" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 )}
                 <button className="btn btn-danger" title="Remove" onClick={() => setEnvPairs(envPairs.filter((_, j) => j !== i))}><X size={15} color="white" /></button>
+                {/* The runtime already says what its own fields mean. Without it
+                    here, two keys a letter apart look interchangeable — and the
+                    one that only signs sessions was edited as if it were the
+                    login password, which stopped the guest from starting. */}
+                {fieldHelp(agent, p.key) && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-0.25rem' }}>
+                    <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fieldHelp(agent, p.key).label}</strong>
+                    {fieldHelp(agent, p.key).description ? ` — ${fieldHelp(agent, p.key).description}` : ''}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -786,6 +796,9 @@ function formatBytes(bytes) {
 // A value worth a box of its own: anything with a line break, or long enough
 // that a single line would hide most of it. COMPOSE_ENV for a Supabase stack is
 // ninety lines; COMPOSE_FILE can be six hundred.
+// What the runtime says about one of its own config keys, if it declared it.
+const fieldHelp = (agent, key) => (agent?.configFields || []).find(f => f.key === key && (f.label || f.description))
+
 const multiline = (v) => typeof v === 'string' && (v.includes('\n') || v.length > 160)
 
 function getCredentials(agent) {
