@@ -123,6 +123,12 @@ module.exports = {
     // SkillHub-specific: any MCP server hermes can reach fits.
     { key: 'MCP_SERVERS', label: 'MCP servers (JSON)', type: 'textarea', required: false,
       placeholder: '{"skillhub": {"url": "https://skillhub.example.com/skillhub", "headers": {"apikey": "…"}}}' },
+    // What guards the agent's dashboard. Undeclared, these were invisible: you
+    // could set them, but only if you already knew they existed — and looking in
+    // the panel would never tell you.
+    { key: 'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', label: 'Dashboard username', type: 'text', default: 'admin' },
+    { key: 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD', label: 'Dashboard password', type: 'password', required: false,
+      placeholder: 'Generated per agent if left empty' },
     { key: 'HERMES_TERMINAL_CWD', label: 'Terminal working directory', type: 'text', default: '/opt/data', placeholder: 'Where the agent shell and terminal tools start' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
@@ -144,6 +150,19 @@ module.exports = {
       }
     }
     if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.6-luna';
+
+    // A generated password per agent, written into the config so it shows up
+    // under Credentials like every other secret the panel owns. buildEnv still
+    // falls back to the old constant, which is what agents created before this
+    // are running on — their login must not stop working because the default
+    // improved. A value set here wins, exactly as SkillHub's DASHBOARD_PASSWORD
+    // does in its own env.
+    if (!autoConfig.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD && !autoConfig.HERMES_DASHBOARD_PASSWORD) {
+      autoConfig.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = require('crypto').randomBytes(12).toString('base64url');
+    }
+    if (!autoConfig.HERMES_DASHBOARD_BASIC_AUTH_USERNAME) {
+      autoConfig.HERMES_DASHBOARD_BASIC_AUTH_USERNAME = 'admin';
+    }
 
     // Deliberately NOT hijacking the OPENAI_* slot for a private provider any
     // more. That worked, but made the private endpoint the ONLY one hermes
