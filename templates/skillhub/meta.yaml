@@ -102,6 +102,36 @@ deploy:
   - key: MINIO_ROOT_PASSWORD
     generate: password
     length: 24
+  - key: MCP_KEY_01
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_02
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_03
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_04
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_05
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_06
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_07
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_08
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_09
+    generate: hex
+    bytes: 24
+  - key: MCP_KEY_10
+    generate: hex
+    bytes: 24
   envFile: '############
 
     # Docker compose override files to layer on top of docker-compose.yml.
@@ -809,25 +839,25 @@ deploy:
 
     ############
 
-    MCP_KEY_01=
+    MCP_KEY_01=${MCP_KEY_01}
 
-    MCP_KEY_02=
+    MCP_KEY_02=${MCP_KEY_02}
 
-    MCP_KEY_03=
+    MCP_KEY_03=${MCP_KEY_03}
 
-    MCP_KEY_04=
+    MCP_KEY_04=${MCP_KEY_04}
 
-    MCP_KEY_05=
+    MCP_KEY_05=${MCP_KEY_05}
 
-    MCP_KEY_06=
+    MCP_KEY_06=${MCP_KEY_06}
 
-    MCP_KEY_07=
+    MCP_KEY_07=${MCP_KEY_07}
 
-    MCP_KEY_08=
+    MCP_KEY_08=${MCP_KEY_08}
 
-    MCP_KEY_09=
+    MCP_KEY_09=${MCP_KEY_09}
 
-    MCP_KEY_10=
+    MCP_KEY_10=${MCP_KEY_10}
 
 
     ############
