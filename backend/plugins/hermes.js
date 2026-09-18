@@ -164,6 +164,15 @@ module.exports = {
       autoConfig.HERMES_DASHBOARD_BASIC_AUTH_USERNAME = 'admin';
     }
 
+    // Dashboard sessions are stateless HMAC-signed tokens. With no secret the
+    // plugin generates a random one per process and says so: "Sessions will not
+    // survive a restart or span multiple workers." Every redeploy then logs
+    // everyone out. A secret that lives in the agent's config outlives the
+    // process, which is the whole point.
+    if (!autoConfig.HERMES_DASHBOARD_BASIC_AUTH_SECRET) {
+      autoConfig.HERMES_DASHBOARD_BASIC_AUTH_SECRET = require('crypto').randomBytes(32).toString('base64');
+    }
+
     // Deliberately NOT hijacking the OPENAI_* slot for a private provider any
     // more. That worked, but made the private endpoint the ONLY one hermes
     // could reach, since it overwrote the real OpenAI credentials. A private
@@ -188,6 +197,13 @@ module.exports = {
       `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${pass}`
     ];
 
+    // Only when there is one. An agent created before this has no secret in its
+    // config, and an empty value would be worse than none: hermes treats unset
+    // as "generate one", and an empty string as a signing key of nothing.
+    if (config.HERMES_DASHBOARD_BASIC_AUTH_SECRET) {
+      env.push(`HERMES_DASHBOARD_BASIC_AUTH_SECRET=${config.HERMES_DASHBOARD_BASIC_AUTH_SECRET}`);
+    }
+
     // HERMES_MODEL must be the BARE model name here (provider routing lives in
     // config.yaml; a prefixed value like "openai/gpt-5.4" triggers "Unknown
     // provider 'openai'" because hermes looks up "openai" as a provider name).
@@ -203,7 +219,13 @@ module.exports = {
     for (const key of keys) {
       if (config[key]) env.push(`${key}=${config[key]}`);
     }
-    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL']);
+    // The dashboard credentials are written above, from config or from the
+    // fallback. Without naming them here the pass-through appends a second copy
+    // of each — harmless while the values agree, but it also defeats the guard
+    // that keeps an empty secret out of the environment.
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL',
+      'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
+      'HERMES_DASHBOARD_BASIC_AUTH_SECRET', 'HERMES_DASHBOARD_PASSWORD']);
     return env;
   },
 
