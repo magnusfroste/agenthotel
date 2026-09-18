@@ -134,6 +134,13 @@ module.exports = {
     { key: 'HERMES_DASHBOARD_BASIC_AUTH_SECRET', label: 'Session signing key', type: 'password', required: false,
       placeholder: 'Generated per agent — change only if you know why',
       description: 'Signs dashboard sessions and is never typed by anyone. Must be at least 32 bytes; a short value stops the dashboard from starting at all' },
+    // Hermes injects SOUL.md into every session. Without this an agent hired as
+    // the hotel's caretaker introduces itself as "an AI assistant" and does not
+    // know what it is responsible for — the tools it was given say what it may
+    // do, not who it is.
+    { key: 'HERMES_SOUL', label: 'Who this agent is', type: 'textarea', required: false,
+      placeholder: 'You are the caretaker of this hotel. You look after the shared data store…',
+      description: "Appended to the agent's SOUL.md, which hermes injects into every session. The stock instructions are kept" },
     { key: 'HERMES_TERMINAL_CWD', label: 'Terminal working directory', type: 'text', default: '/opt/data', placeholder: 'Where the agent shell and terminal tools start' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI-compatible Base URL', type: 'text', required: false, placeholder: 'Only for custom/vLLM/Ollama endpoints' },
@@ -291,10 +298,18 @@ module.exports = {
       if (!spec || typeof spec !== 'object' || !spec.url) continue;
       lines.push(`  ${name}:`);
       lines.push(`    url: ${quote(spec.url)}`);
-      if (spec.headers && typeof spec.headers === 'object') {
+      // Streamable HTTP servers answer 406 unless the request accepts both media
+      // types — Supabase's own MCP server does, and hermes sends only
+      // application/json, then falls back to SSE that may not exist. The failure
+      // is one warning among hundreds and the server simply never connects.
+      // Right for every MCP server, wrong for none, so it is the default rather
+      // than something each operator has to discover.
+      const headers = { Accept: 'application/json, text/event-stream', ...(spec.headers || {}) };
+      if (Object.keys(headers).length) {
         lines.push('    headers:');
-        for (const [h, v] of Object.entries(spec.headers)) lines.push(`      ${h}: ${quote(v)}`);
+        for (const [h, v] of Object.entries(headers)) lines.push(`      ${h}: ${quote(v)}`);
       }
+      if (spec.transport) lines.push(`    transport: ${quote(spec.transport)}`);
       lines.push(`    enabled: ${spec.enabled === false ? 'false' : 'true'}`);
       lines.push(`    timeout: ${parseInt(spec.timeout) || 120}`);
     }

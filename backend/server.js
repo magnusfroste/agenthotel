@@ -1607,11 +1607,43 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const hermesMcpBlock = runtime === 'hermes' && plugin.generateMcpBlock
     ? plugin.generateMcpBlock(config)
     : null;
+  // Who the agent is. SOUL.md is injected into every session, so this is where
+  // "you are the caretaker of this hotel" belongs — the tools an agent was given
+  // say what it may do, not what it is for.
+  const hermesSoul = runtime === 'hermes' ? String(config.HERMES_SOUL || '').trim() : '';
+  if (hermesSoul) {
+    patchHermesSoul(container, hermesSoul).catch(err =>
+      console.error('[Hermes] SOUL.md patch failed:', err.message)
+    );
+  }
   if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock) {
     patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock).catch(err =>
       console.error('[Hermes] config patch failed:', err.message)
     );
   }
+}
+
+// Append the operator's text to SOUL.md, between markers, so a redeploy
+// replaces only what the panel put there. The stock instructions above it are
+// Nous's own and worth keeping — they are about how to answer, not about who
+// this particular agent is.
+async function patchHermesSoul(container, soul) {
+  const b64 = Buffer.from(soul).toString('base64');
+  await new Promise(r => setTimeout(r, 5000));
+  const script = `
+import base64, os, re
+soul = base64.b64decode('${b64}').decode()
+path = '/opt/data/SOUL.md'
+text = open(path).read() if os.path.exists(path) else ''
+block = '<!-- agenthotel:start -->\\n' + soul.strip() + '\\n<!-- agenthotel:end -->'
+pattern = re.compile(r'<!-- agenthotel:start -->.*?<!-- agenthotel:end -->', re.S)
+text = pattern.sub(block, text) if pattern.search(text) else (text.rstrip() + '\\n\\n' + block + '\\n')
+open(path, 'w').write(text)
+`;
+  const exec = await container.exec({ Cmd: ['python3', '-c', script], AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start();
+  await new Promise((resolve) => stream.on('end', resolve));
+  console.log('[Hermes] SOUL.md updated');
 }
 
 async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock) {
