@@ -364,7 +364,7 @@ function System() {
               <GitBranch size={18} className="sysinfo-icon" />
               <div>
                 <div className="sysinfo-label">AgentHotel</div>
-                <div className="sysinfo-value">{systemInfo.agenthotel.branch} ({systemInfo.agenthotel.commit})</div>
+                <div className="sysinfo-value">{systemInfo.agenthotel.branch ? `${systemInfo.agenthotel.branch} (${systemInfo.agenthotel.commit})` : systemInfo.agenthotel.commit}</div>
               </div>
             </div>
           </div>

@@ -2735,12 +2735,11 @@ app.get('/api/system/status', requireAuth, (req, res) => {
     const kernel = execSync('uname -r').toString().trim();
     const os = execSync('cat /etc/os-release | grep PRETTY_NAME | cut -d\\" -f2').toString().trim();
     const dockerVersion = execSync('docker --version').toString().trim();
-    let gitBranch = 'unknown';
-    let gitCommit = 'unknown';
-    try {
-      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: '/app' }).toString().trim();
-      gitCommit = execSync('git rev-parse --short HEAD', { cwd: '/app' }).toString().trim();
-    } catch (e) {}
+    // The image carries no .git, so asking git here always answered "unknown"
+    // — on every installation, forever. The commit is baked in at build time
+    // and /api/system/version already reads it; this is the same source.
+    const gitCommit = currentCommit();
+    const gitBranch = (process.env.GIT_BRANCH || '').trim() || null;
     
     res.json({
       hostname,
