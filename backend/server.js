@@ -100,6 +100,11 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+const sessions = require('./lib/sessions');
+sessions.init(db);
+// Expired sessions cost nothing but rows; sweep hourly.
+setInterval(() => { try { sessions.purgeExpired(db); } catch (e) {} }, 60 * 60 * 1000).unref?.();
+
 // Rate limiting was a setting nothing read: every panel carries
 // rate_limit_enabled = 'false' from a default written before the code existed.
 // Nobody chose it, so it is turned on once at startup rather than left off on
@@ -182,8 +187,9 @@ function requireAuth(req, res, next) {
   const queryToken = req.query?.token;
   const token = headerToken || queryToken;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
-  const stored = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
-  if (!stored || stored.value !== token) return res.status(401).json({ error: 'Invalid token' });
+  // The static panel token (API and MCP clients) or a live browser session.
+  if (!sessions.verify(db, token)) return res.status(401).json({ error: 'Invalid or expired token' });
+  req.authToken = token;
   next();
 }
 
@@ -299,9 +305,16 @@ app.post('/api/login', (req, res) => {
   if (hash !== storedHash.value) return fail();
 
   rateReset('login', ip);
-  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
+  // A session of its own, not the panel's static token. The static one stays
+  // for API and MCP clients and is shown under System, never handed out here.
+  const token = sessions.create(db);
   logEvent('auth.login', null, `Login: ${email}`);
-  res.json({ token: storedToken.value, email });
+  res.json({ token, email, expiresInMinutes: Math.round(sessions.timeoutMs(db) / 60000) });
+});
+
+app.post('/api/logout', requireAuth, (req, res) => {
+  sessions.revoke(db, req.authToken);
+  res.json({ ok: true });
 });
 
 app.get('/api/settings', requireAuth, (req, res) => {
@@ -2224,9 +2237,7 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
 app.ws('/api/agents/:id/terminal', (ws, req) => {
   // Handle authentication manually for WebSocket
   const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
-  
-  if (!token || !storedToken || token !== storedToken.value) {
+  if (!sessions.verify(db, token)) {
     ws.send('Authentication failed\r\n');
     ws.close();
     return;
@@ -2333,9 +2344,7 @@ app.ws('/api/agents/:id/terminal', (ws, req) => {
 // Host terminal with node-pty (real PTY support)
 app.ws('/api/system/host-terminal', (ws, req) => {
   const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
-  
-  if (!token || !storedToken || token !== storedToken.value) {
+  if (!sessions.verify(db, token)) {
     ws.send('Authentication failed\r\n');
     ws.close();
     return;

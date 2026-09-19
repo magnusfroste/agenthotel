@@ -289,6 +289,9 @@ function App() {
   }
 
   function handleLogout() {
+    // Revoke on the server too — clearing localStorage alone would leave the
+    // session valid until it lapses.
+    authFetch('/api/logout', { method: 'POST' }).catch(() => {})
     clearToken()
     setState('login')
   }
