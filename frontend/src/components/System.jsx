@@ -505,6 +505,17 @@ sysctl -w vm.swappiness=10`}</pre>
                 </div>
               </div>
             </div>
+            {tunnelStatus.version && (
+              <div className="sysinfo-item">
+                <div>
+                  <div className="sysinfo-label">cloudflared</div>
+                  {/* Visible because it used to sit still: the image was pulled
+                      once and the tunnel runs with --no-autoupdate. Restarting
+                      it from here now fetches the current release. */}
+                  <div className="sysinfo-value text-mono">{tunnelStatus.version}</div>
+                </div>
+              </div>
+            )}
             <div className="sysinfo-item">
               <div>
                 <div className="sysinfo-label">Point hostnames at</div>

@@ -24,6 +24,30 @@ function panelNetwork(docker) {
     .then(info => Object.keys(info.NetworkSettings.Networks)[0] || 'agenthotel_agenthotel');
 }
 
+// The cloudflared build inside the running container. Parsed from its own
+// `--version`, since the image tag says only "latest".
+async function runningVersion(docker) {
+  try {
+    const exec = await docker.getContainer(CONTAINER).exec({
+      Cmd: ['cloudflared', '--version'], AttachStdout: true, AttachStderr: true
+    });
+    const stream = await exec.start();
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      stream.on('data', c => chunks.push(c));
+      stream.on('end', resolve);
+      stream.on('error', reject);
+      setTimeout(resolve, 5000);
+    });
+    // demuxDockerBuffer returns a Buffer; matching on one never matches.
+    const out = String(require('./demux').demuxDockerBuffer(Buffer.concat(chunks)));
+    const m = out.match(/cloudflared version (\S+)/);
+    return m ? m[1] : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function status(docker) {
   try {
     const info = await docker.getContainer(CONTAINER).inspect();
@@ -32,7 +56,10 @@ async function status(docker) {
       running: !!info.State.Running,
       state: info.State.Status,
       restartCount: info.RestartCount || 0,
-      startedAt: info.State.StartedAt
+      startedAt: info.State.StartedAt,
+      // What is actually running, so an operator can see it has fallen behind
+      // without opening a shell. Restarting the tunnel pulls the current one.
+      version: await runningVersion(docker)
     };
   } catch (err) {
     return { installed: false, running: false, state: 'absent' };
@@ -64,10 +91,20 @@ async function start(docker, token) {
   }
   await remove(docker);
 
-  try { await docker.getImage(IMAGE).inspect(); }
-  catch (e) {
+  // Always ask for the current :latest. Pulling only when the image was
+  // missing froze the tunnel at whatever version was first installed — and it
+  // runs with --no-autoupdate, so nothing else ever moved it. One panel sat on
+  // cloudflared 2026.8.3 for three weeks while :latest was two releases ahead.
+  //
+  // Best effort: a registry that cannot be reached must not leave the panel
+  // without a tunnel, so a failed pull falls back to the image on disk. Only a
+  // missing image is fatal.
+  try {
     const stream = await docker.pull(IMAGE);
     await new Promise((res, rej) => docker.modem.followProgress(stream, err => err ? rej(err) : res()));
+  } catch (err) {
+    console.warn(`[Tunnel] Could not pull ${IMAGE} (${err.message}) — using the image on disk`);
+    await docker.getImage(IMAGE).inspect();
   }
 
   const network = await panelNetwork(docker);
