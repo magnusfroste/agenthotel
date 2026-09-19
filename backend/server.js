@@ -1265,6 +1265,8 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 app.post('/api/agents/import', requireAuth, async (req, res) => {
   const tmpZip = path.join(os.tmpdir(), `import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
   let stagedZip = null;
+  let importedId = null;
+  const createdVolumes = [];
   try {
     await pipeline(req, fs.createWriteStream(tmpZip));
 
@@ -1307,6 +1309,10 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
     `).run(id, a.name, a.runtime, a.domain || null,
       a.image || plugin.defaultImage, a.port || plugin.defaultPort,
       JSON.stringify(a.config || {}));
+    // From here on a failure must take the row and every volume it created
+    // with it. An import that died half way used to leave an agent that could
+    // not be started and a name that could not be reused (review, 2026-09-19).
+    importedId = id;
 
     // Restore volume data, if the export included any. Volume entries carry
     // the OLD agent id in their name — remap to the new id's naming scheme.
@@ -1338,6 +1344,7 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
             ? `${a.config.COMPOSE_PROJECT}_${suffix}`
             : `agenthotel-${id}${prefix.endsWith('_') ? '_' : '-'}${suffix}`;
           await docker.createVolume({ Name: newVol });
+          createdVolumes.push(newVol);
           const [result] = await docker.run(image,
             ['node', '/app/lib/restore-volume.js', stagedZip.replace(/^\/data/, '/staging'), entryName, '/vol'],
             new PassThrough(), {
@@ -1355,6 +1362,13 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
     logEvent('agent.import', id, `Imported agent ${a.name} from zip${volumesRestored ? ` (${volumesRestored} volume(s) restored)` : ''}`);
     res.json({ id, name: a.name, status: 'stopped', volumesRestored });
   } catch (err) {
+    if (importedId) {
+      try { db.prepare('DELETE FROM agents WHERE id = ?').run(importedId); } catch (e) {}
+      for (const name of createdVolumes) {
+        try { await docker.getVolume(name).remove(); } catch (e) {}
+      }
+      logEvent('agent.import', importedId, `Import of ${a?.name || importedId} failed and was rolled back: ${err.message}`);
+    }
     res.status(500).json({ error: err.message });
   } finally {
     fs.unlink(tmpZip, () => {});
@@ -1697,15 +1711,13 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // "you are the caretaker of this hotel" belongs — the tools an agent was given
   // say what it may do, not what it is for.
   const hermesSoul = runtime === 'hermes' ? String(config.HERMES_SOUL || '').trim() : '';
-  if (hermesSoul) {
-    patchHermesSoul(container, hermesSoul).catch(err =>
-      console.error('[Hermes] SOUL.md patch failed:', err.message)
-    );
-  }
+  // Awaited, and each throws on a non-zero exit. Fire-and-forget with a
+  // .catch that only logged meant a deploy reported "running" while the
+  // agent had no model block, no MCP servers or no identity — visible only to
+  // whoever read the backend log (found in review, 2026-09-19).
+  if (hermesSoul) await patchHermesSoul(container, hermesSoul);
   if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock) {
-    patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock).catch(err =>
-      console.error('[Hermes] config patch failed:', err.message)
-    );
+    await patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock);
   }
 }
 
@@ -1728,7 +1740,9 @@ open(path, 'w').write(text)
 `;
   const exec = await container.exec({ Cmd: ['python3', '-c', script], AttachStdout: true, AttachStderr: true });
   const stream = await exec.start();
-  await new Promise((resolve) => stream.on('end', resolve));
+  await new Promise((resolve, reject) => { stream.on('end', resolve); stream.on('error', reject); });
+  const { ExitCode } = await exec.inspect();
+  if (ExitCode !== 0) throw new Error(`SOUL.md patch exited with ${ExitCode}`);
   console.log('[Hermes] SOUL.md updated');
 }
 
@@ -1786,7 +1800,9 @@ open('/opt/data/config.yaml', 'w').write(''.join(out))
 `;
   const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
   const stream = await exec.start();
-  await new Promise((resolve) => stream.on('end', resolve));
+  await new Promise((resolve, reject) => { stream.on('end', resolve); stream.on('error', reject); });
+  const { ExitCode } = await exec.inspect();
+  if (ExitCode !== 0) throw new Error(`config.yaml patch exited with ${ExitCode}`);
   // SIGHUP the supervised gateway process; s6 auto-respawns it with new config.
   const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
   const rs = await killExec.start({ Detach: true });

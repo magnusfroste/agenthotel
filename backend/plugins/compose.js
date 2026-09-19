@@ -50,7 +50,11 @@ module.exports = {
     fs.writeFileSync(composePath, config.COMPOSE_FILE);
 
     if (config.COMPOSE_ENV) {
-      fs.writeFileSync(envPath, config.COMPOSE_ENV);
+      // Read-only to the owner: this file is the stack's API keys and passwords,
+      // and mode on writeFileSync applies only when the file is created — so it
+      // is enforced on overwrite too.
+      fs.writeFileSync(envPath, config.COMPOSE_ENV, { mode: 0o600 });
+      fs.chmodSync(envPath, 0o600);
     }
 
     const projectName = resolveProjectName(id, config);

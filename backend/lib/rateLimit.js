@@ -16,12 +16,15 @@
 // directly, the socket address is the truth and the headers are not, so they are
 // only believed when the peer is on a private network.
 function clientIp(req) {
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && cf.trim()) return cf.trim();
-
   const peer = req.socket?.remoteAddress || '';
   const local = /^(::1|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.))/.test(peer);
+  // Headers are believed only from a local proxy — the tunnel or Caddy on the
+  // panel's own network. Believing cf-connecting-ip from any peer let a caller
+  // reaching the backend directly pick a fresh address per request and walk
+  // straight past the login throttle (found in review, 2026-09-19).
   if (local) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (typeof cf === 'string' && cf.trim()) return cf.trim();
     const fwd = req.headers['x-forwarded-for'];
     if (typeof fwd === 'string' && fwd.trim()) return fwd.split(',')[0].trim();
   }

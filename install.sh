@@ -41,17 +41,25 @@ port_in_use() {
     lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
   else
     echo "Warning: neither ss nor lsof available — cannot check port $port" >&2
-    return 1
+    return 2
   fi
 }
 
+# "In use" and "cannot tell" are different answers. Treating the second as
+# "free" let the check pass silently on exactly the hosts where it could not
+# look — and the failure surfaced later as Caddy refusing to start.
 for port in 80 443; do
-  if port_in_use "$port"; then
-    echo "Error: something is already running on port $port" >&2
-    echo "  AgentHotel needs both 80 and 443 for Caddy and automatic HTTPS." >&2
-    echo "  Find it with: ss -ltnp 'sport = :$port'" >&2
-    exit 1
-  fi
+  port_in_use "$port"
+  case $? in
+    0)
+      echo "Error: something is already running on port $port" >&2
+      echo "  AgentHotel needs both 80 and 443 for Caddy and automatic HTTPS." >&2
+      echo "  Find it with: ss -ltnp 'sport = :$port'" >&2
+      exit 1 ;;
+    2)
+      echo "Error: cannot check whether port $port is free. Install iproute2 (ss) and run again." >&2
+      exit 1 ;;
+  esac
 done
 
 command_exists() {
@@ -69,13 +77,21 @@ else
   apt-get update
   apt-get install -y ca-certificates curl
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  # The README promises Ubuntu and Debian; the repository must match the host,
+  # or apt asks Ubuntu's server for a Debian suite and finds nothing.
+  . /etc/os-release
+  case "$ID" in
+    ubuntu) docker_repo_os=ubuntu; docker_suite="${UBUNTU_CODENAME:-$VERSION_CODENAME}" ;;
+    debian) docker_repo_os=debian; docker_suite="$VERSION_CODENAME" ;;
+    *) echo "Error: unsupported distribution '$ID' — AgentHotel installs on Ubuntu or Debian." >&2; exit 1 ;;
+  esac
+  curl -fsSL "https://download.docker.com/linux/$docker_repo_os/gpg" -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
 
   tee /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+URIs: https://download.docker.com/linux/$docker_repo_os
+Suites: $docker_suite
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF

@@ -212,3 +212,7 @@ kommer från `plugin.configFields` — de divergerande `schema:`-blocken i meta.
 **Framtida:** Template system (4 delar), Agent Traffic Stats
 
 **Senaste uppdatering:** 2026-08-12
+
+## 🔜 Från kodgranskning 2026-09-19
+
+- ⬜ **Blå/grön redeploy** — redeploy river den körande containern innan den nya är frisk (`server.js` ~2073). Ett fel i create/start/route lämnar gästen nere. Rätt form: starta ersättaren under tillfälligt namn, vänta in hälsa, växla rutten, riv den gamla. Kräver att Caddy-rutten kan peka på ett annat containernamn än `agenthotel-<id>` — samma mekanism compose-gäster redan använder.

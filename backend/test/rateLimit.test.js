@@ -28,8 +28,13 @@ test('an expired window starts over', async () => {
   assert.ok(hit('short', ip, 1, 30).allowed, 'the window should have lapsed');
 });
 
-test('cloudflare says who is asking, and is believed', () => {
-  assert.strictEqual(clientIp(req({ 'cf-connecting-ip': '198.51.100.7' })), '198.51.100.7');
+test('cloudflare says who is asking, and is believed — from the tunnel', () => {
+  assert.strictEqual(clientIp(req({ 'cf-connecting-ip': '198.51.100.7' }, '172.18.0.4')), '198.51.100.7');
+});
+
+test('a cloudflare header from a stranger picks nobody a fresh bucket', () => {
+  // Otherwise every failed login could carry a new address and never be counted.
+  assert.strictEqual(clientIp(req({ 'cf-connecting-ip': '198.51.100.7' }, '203.0.113.9')), '203.0.113.9');
 });
 
 test('a forwarded-for header is believed only from a local proxy', () => {
