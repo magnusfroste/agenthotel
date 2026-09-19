@@ -2073,7 +2073,14 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     if (composeManaged(agent.runtime)) {
       // Compose agents are managed via the compose plugin, not dockerode
       // (their image is 'compose' and can't be created as a container).
-      await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
+      // A stop that failed is worth knowing about before the stack is brought
+      // up over it — compose up is idempotent, so this does not abort, but the
+      // reason must not vanish (review hunch, 2026-09-19).
+      const stopped = await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
+      if (stopped && stopped.success === false) {
+        console.warn(`[Deploy] ${agent.name}: stop before redeploy failed: ${stopped.error}`);
+        logEvent('agent.warning', agent.id, `Stop before redeploy failed: ${stopped.error}`);
+      }
       await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
     } else {
       // Build before tearing anything down, so the guest keeps serving while
@@ -2136,7 +2143,13 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
         applied = 'live';
       }
     } catch (e) {
-      // No container (stopped/failed agent) — config is saved, deploy applies it.
+
+      // No container is the normal case for a stopped agent: the limits are
+      // saved and the next deploy applies them. Anything else is a real
+      // failure to apply live, and its reason must not vanish.
+      applied = (e.statusCode === 404 || /no such container/i.test(e.message || ''))
+        ? 'on next deploy'
+        : `on next deploy (live update failed: ${e.message})`;
     }
 
     logEvent('agent.resources', agent.id, `Resource limits set to ${memoryMB} MB / ${cpus} CPU (${applied})`);

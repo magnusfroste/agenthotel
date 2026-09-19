@@ -33,7 +33,14 @@ async function execInAgent(docker, agentId, command, { timeoutMs = 60000, user =
   const limit = Math.min(parseInt(timeoutMs) || 60000, MAX_TIMEOUT_MS);
   const reason = await new Promise((resolve) => {
     const timer = setTimeout(() => { try { stream.destroy(); } catch (_) {} resolve('timeout'); }, limit);
-    stream.on('data', (c) => { if (size < OUTPUT_CAP) { chunks.push(c); size += c.length; } });
+    // The cap applies within a chunk too: a single large write from the
+    // container would otherwise come through whole, cap or no cap.
+    stream.on('data', (c) => {
+      if (size >= OUTPUT_CAP) return;
+      const room = OUTPUT_CAP - size;
+      const part = c.length > room ? c.subarray(0, room) : c;
+      chunks.push(part); size += part.length;
+    });
     stream.on('end', () => { clearTimeout(timer); resolve('end'); });
     stream.on('error', () => { clearTimeout(timer); resolve('error'); });
   });
