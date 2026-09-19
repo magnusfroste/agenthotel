@@ -315,7 +315,6 @@ app.get('/api/settings', requireAuth, (req, res) => {
   
   // Default values for new settings
   if (!settings.caddy_email) settings.caddy_email = '';
-  if (!settings.default_timeout) settings.default_timeout = '30';
   if (!settings.default_network) settings.default_network = 'agenthotel_agenthotel';
   // On by default. The panel is root on its host and reachable from the internet
   // the moment it has a domain; a protection that must be discovered and enabled
@@ -325,9 +324,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   // uptime and the fleet list on top. This is a runaway-script ceiling, not the
   // brute-force defence — that one is on the login route and is much stricter.
   if (!settings.rate_limit_requests) settings.rate_limit_requests = '600';
-  if (!settings.require_https) settings.require_https = 'true';
   if (!settings.session_timeout) settings.session_timeout = '60';
-  if (!settings.container_restart_policy) settings.container_restart_policy = 'unless-stopped';
   if (!settings.default_memory_limit) settings.default_memory_limit = '';
   if (!settings.default_cpu_limit) settings.default_cpu_limit = '';
   if (!settings.theme) settings.theme = 'dark';
