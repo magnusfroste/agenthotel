@@ -1,0 +1,38 @@
+# The panel is root on its host and is installed by people who will never read
+# the code. What breaks silently here — a route that resolves to nothing, a
+# template that deploys an empty image, a signing key too short to register an
+# auth provider — is exactly what these tests cover.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Unit tests
+        working-directory: backend
+        run: npm test
+
+      # A syntax error in a plugin takes the whole panel down on boot, and
+      # plugins are the files most often edited by hand.
+      - name: Parse every backend file
+        working-directory: backend
+        run: find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check
+
+      - name: Build the frontend
+        working-directory: frontend
+        run: npm ci && npm run build
