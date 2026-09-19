@@ -162,6 +162,14 @@ cd "$INSTALL_DIR"
 mkdir -p /var/lib/agenthotel/checkouts
 chmod 700 /var/lib/agenthotel/checkouts
 
+# The panel's own command, so upgrading later is one word rather than four
+# remembered steps — one of which, the GIT_COMMIT build arg, is easy to leave
+# out and leaves the panel reporting its version as "unknown" forever after.
+if [ -f "$INSTALL_DIR/bin/agenthotel" ]; then
+  install -m 755 "$INSTALL_DIR/bin/agenthotel" /usr/local/bin/agenthotel
+  echo "Installed the 'agenthotel' command (try: agenthotel check)"
+fi
+
 echo ""
 echo "Building and starting AgentHotel..."
 # Bake the checked-out commit into the image so the panel reports the version it
@@ -191,8 +199,8 @@ echo "║                                        ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
 echo "Useful commands:"
-echo "  cd $INSTALL_DIR"
-echo "  docker compose logs -f"
-echo "  docker compose restart"
-echo "  docker compose down"
+echo "  agenthotel check       is there a newer version?"
+echo "  agenthotel upgrade     pull, rebuild, restart, verify"
+echo "  agenthotel logs        follow the backend log"
+echo "  agenthotel version     what is installed and running"
 echo ""

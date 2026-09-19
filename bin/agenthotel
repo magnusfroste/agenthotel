@@ -1,0 +1,126 @@
+#!/bin/sh
+# The panel's own command line. One job above all: upgrading without knowing git.
+#
+# `git pull && docker compose build --build-arg GIT_COMMIT=... && docker compose up -d`
+# is four things to remember and one of them is easy to leave out — without the
+# build arg the panel reports its version as "unknown" forever after.
+set -e
+
+DIR="${AGENTHOTEL_DIR:-/opt/agenthotel}"
+SELF="$(basename "$0")"
+
+die() { echo "$SELF: $1" >&2; exit 1; }
+
+[ -d "$DIR" ] || die "no installation at $DIR (set AGENTHOTEL_DIR if it lives elsewhere)"
+cd "$DIR"
+
+current() { git rev-parse --short HEAD 2>/dev/null || echo unknown; }
+
+panel_answers() {
+  # The container serves the API on 8080; going through the domain would test
+  # DNS and a tunnel as well, which is not what an upgrade broke.
+  docker compose exec -T backend node -e '
+    require("http").get({host:"localhost",port:8080,path:"/api/setup"},r=>process.exit(r.statusCode<500?0:1))
+      .on("error",()=>process.exit(1))' >/dev/null 2>&1
+}
+
+cmd_version() {
+  echo "installed at $DIR"
+  echo "commit      $(current)  $(git log -1 --format=%s 2>/dev/null | cut -c1-60)"
+  echo "running     $(docker compose ps --status running --format '{{.Service}}' 2>/dev/null | tr '\n' ' ')"
+}
+
+cmd_check() {
+  git fetch --quiet origin main || die "could not reach the remote"
+  behind=$(git rev-list --count HEAD..origin/main)
+  if [ "$behind" -eq 0 ]; then
+    echo "up to date ($(current))"
+  else
+    echo "$behind commit(s) behind:"
+    git log --oneline HEAD..origin/main | sed 's/^/  /'
+    echo ""
+    echo "run: $SELF upgrade"
+  fi
+}
+
+cmd_upgrade() {
+  # Local edits are how a panel gets debugged at three in the morning. Refuse
+  # rather than throw them away, and say which files are in the way.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "$SELF: $DIR has local changes:" >&2
+    git status --porcelain | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "Commit or discard them first, or run '$SELF upgrade --force' to discard them." >&2
+    [ "$1" = "--force" ] || exit 1
+    git reset --hard --quiet
+  fi
+
+  git fetch --quiet origin main || die "could not reach the remote"
+  before=$(current)
+  behind=$(git rev-list --count HEAD..origin/main)
+  if [ "$behind" -eq 0 ]; then echo "already up to date ($before)"; exit 0; fi
+
+  # The panel's own database, before anything changes. Agent volumes are not
+  # touched by an upgrade; this one is, by every migration.
+  backup="/var/backups/agenthotel"
+  mkdir -p "$backup"
+  stamp=$(date +%Y%m%d-%H%M%S)
+  if docker compose cp backend:/data/agenthotel.db "$backup/agenthotel-$stamp.db" >/dev/null 2>&1; then
+    echo "database backed up to $backup/agenthotel-$stamp.db"
+  else
+    echo "warning: could not back up the database — continuing" >&2
+  fi
+
+  echo "upgrading $before → $(git rev-parse --short origin/main)"
+  git log --oneline HEAD..origin/main | sed 's/^/  /'
+  git merge --ff-only --quiet origin/main || die "the local branch has diverged from origin/main"
+
+  # Baked in so the panel can report the version it is actually running.
+  docker compose build --build-arg GIT_COMMIT="$(current)" backend frontend
+  docker compose up -d
+
+  printf "waiting for the panel"
+  i=0
+  while [ $i -lt 30 ]; do
+    if panel_answers; then
+      echo ""
+      echo "upgraded to $(current) — the panel is answering"
+      exit 0
+    fi
+    printf "."
+    i=$((i + 1))
+    sleep 2
+  done
+  echo ""
+  echo "$SELF: the panel is not answering after the upgrade." >&2
+  echo "  docker compose logs --tail 50 backend" >&2
+  echo "  $SELF rollback $before" >&2
+  exit 1
+}
+
+cmd_rollback() {
+  [ -n "$1" ] || die "usage: $SELF rollback <commit>"
+  git checkout --quiet "$1" || die "no such commit: $1"
+  docker compose build --build-arg GIT_COMMIT="$(current)" backend frontend
+  docker compose up -d
+  echo "rolled back to $(current)"
+}
+
+case "${1:-}" in
+  upgrade)  shift; cmd_upgrade "$@" ;;
+  check)    cmd_check ;;
+  version)  cmd_version ;;
+  rollback) shift; cmd_rollback "$@" ;;
+  logs)     shift; docker compose logs --tail "${1:-50}" -f backend ;;
+  restart)  docker compose restart; echo "restarted" ;;
+  *)
+    echo "AgentHotel — $(current)"
+    echo ""
+    echo "  $SELF check              is there a newer version?"
+    echo "  $SELF upgrade            pull, rebuild, restart, verify"
+    echo "  $SELF rollback <commit>  go back to a known good one"
+    echo "  $SELF version            what is installed and running"
+    echo "  $SELF logs [n]           follow the backend log"
+    echo "  $SELF restart            restart the panel"
+    ;;
+esac
