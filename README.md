@@ -219,6 +219,45 @@ docker compose logs -f backend
 
 See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations), and [BACKLOG.md](BACKLOG.md) for the roadmap.
 
+## Security model
+
+Read this before installing on anything that matters.
+
+**The panel is root on its host.** The backend container runs privileged with the
+Docker socket and the host's PID namespace, so it can build images, create
+containers and run commands on the VPS itself. That is what lets it deploy and
+repair guests without you at a shell. It also means whoever signs in to the panel
+can do anything on that machine. Treat panel access as you would root SSH.
+
+**What stands between the internet and that:**
+
+- One admin account, chosen at first visit. Ten failed logins from an address in
+  fifteen minutes block it for the rest of the window; the block is logged and
+  notified.
+- Browser sessions expire after inactivity (`Session Timeout`, default 60
+  minutes, sliding). Logout revokes the session on the server.
+- API and MCP clients use the static panel token shown under System. It does not
+  expire — an integration cannot re-enter a password — so it must be rotated if it
+  is ever exposed, and it must never be pasted into a chat, a ticket or a log.
+- Every API call is rate-limited per address (`Rate Limit`, on by default).
+- Nothing listens on the host but 80 and 443, served by Caddy with automatic
+  certificates; with a Cloudflare Tunnel, nothing listens inbound at all.
+
+**What is yours to do:**
+
+- Put the panel behind a hostname you control and, ideally, a tunnel. A panel
+  reachable by IP over plain HTTP is a root shell behind one password.
+- Rotate the panel token if it leaks. Rotate provider API keys the same way; they
+  are injected into every agent that needs them and exported in backups in plain
+  text.
+- Agents are guests, not the hotel: each is capped on CPU and memory and cannot
+  reach the Docker socket. But an agent with a shell tool and your API keys can
+  spend your money and read what it is given. Give it the keys it needs, not all
+  of them (`INJECT_PROVIDER_ENV` is opt-in for generic runtimes for this reason).
+- Back up the panel database (`agenthotel upgrade` does, before every upgrade,
+  to `/var/backups/agenthotel/`) and export the instance from Settings before
+  anything you would not want to redo.
+
 ## Troubleshooting
 
 Every entry here is a failure that actually happened, with the check that told us
