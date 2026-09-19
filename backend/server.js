@@ -29,6 +29,38 @@ app.use(cors());
 // docker-compose files) and can be sizeable.
 app.use(express.json({ limit: '10mb' }));
 
+const { clientIp, hit: rateHit, reset: rateReset } = require('./lib/rateLimit');
+
+
+// Ten failures in fifteen minutes, per address. A person who has forgotten which
+// password they chose gets several tries; a script gets nowhere. Deliberately not
+// configurable: an installation that turns this down is one nobody meant to.
+const LOGIN_MAX_FAILURES = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+function rateLimitSetting(key, fallback) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row?.value ?? fallback;
+  } catch (err) {
+    return fallback; // settings table not ready yet (first boot)
+  }
+}
+
+// The general ceiling. Counted per address across the API, skipping the login
+// route, which has its own and stricter rule below.
+app.use('/api', (req, res, next) => {
+  if (rateLimitSetting('rate_limit_enabled', 'true') !== 'true') return next();
+  // Only the login route is exempt, and only because its own rule is stricter.
+  // /setup is an unauthenticated write and belongs under the ceiling like the rest.
+  if (req.path === '/login') return next();
+  const limit = parseInt(rateLimitSetting('rate_limit_requests', '600')) || 600;
+  const result = rateHit('api', clientIp(req), limit, 60 * 1000);
+  if (result.allowed) return next();
+  res.set('Retry-After', String(result.retryAfter));
+  res.status(429).json({ error: `Too many requests — try again in ${result.retryAfter}s` });
+});
+
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
 // WAL: readers (UI polling, MCP) don't block behind writers (uptime checks,
@@ -68,6 +100,23 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+// Rate limiting was a setting nothing read: every panel carries
+// rate_limit_enabled = 'false' from a default written before the code existed.
+// Nobody chose it, so it is turned on once at startup rather than left off on
+// every installation that already exists. Turning it off afterwards is a real
+// choice, and that one is kept.
+try {
+  const migrated = db.prepare("SELECT value FROM settings WHERE key = 'rate_limit_migrated'").get();
+  if (!migrated) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('rate_limit_migrated', '1')").run();
+    const before = db.prepare("SELECT value FROM settings WHERE key = 'rate_limit_enabled'").get()?.value;
+    db.prepare("UPDATE settings SET value = 'true' WHERE key = 'rate_limit_enabled' AND value = 'false'").run();
+    db.prepare("UPDATE settings SET value = '600' WHERE key = 'rate_limit_requests' AND value = '100'").run();
+    if (before === 'false') console.log('[Security] Rate limiting enabled (the setting existed but nothing read it)');
+  }
+} catch (err) {
+  console.error('[Security] Could not enable rate limiting:', err.message);
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS cleanup_logs (
@@ -210,15 +259,46 @@ app.post('/api/setup', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   if (!isSetup()) return res.status(400).json({ error: 'Not configured yet' });
+  const ip = clientIp(req);
+
+  // Counted on failure only, so an open tab refreshing its session never walks
+  // into the wall. The window does not extend on a blocked attempt either —
+  // otherwise an attacker keeping the pressure on would lock the owner out
+  // indefinitely, which is the attack rather than the defence.
+  const seen = rateHit('login-check', ip, LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS);
+  if (!seen.allowed) {
+    res.set('Retry-After', String(seen.retryAfter));
+    return res.status(429).json({ error: `Too many failed attempts — try again in ${Math.ceil(seen.retryAfter / 60)} min` });
+  }
+  rateReset('login-check', ip);
+
   const { email, password } = req.body;
   const storedEmail = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
   const storedHash = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_hash');
   const storedSalt = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_salt');
 
-  if (!storedEmail || storedEmail.value !== email) return res.status(401).json({ error: 'Invalid credentials' });
-  const hash = hashPassword(password, storedSalt.value);
-  if (hash !== storedHash.value) return res.status(401).json({ error: 'Invalid credentials' });
+  const fail = () => {
+    const state = rateHit('login', ip, LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS);
+    // Say it once, when the wall goes up — an operator locked out of their own
+    // panel should be told why, and a burst of failures from an address nobody
+    // recognises is worth seeing in the log even when it fails.
+    if (!state.allowed) {
+      const msg = `Login blocked for ${ip} after ${LOGIN_MAX_FAILURES} failed attempts`;
+      logEvent('auth.blocked', null, msg);
+      sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
+      res.set('Retry-After', String(state.retryAfter));
+      return res.status(429).json({ error: `Too many failed attempts — try again in ${Math.ceil(state.retryAfter / 60)} min` });
+    }
+    return res.status(401).json({ error: 'Invalid credentials' });
+  };
 
+  // Hash whatever was sent even when the address is wrong, so the two answers
+  // take the same time and the panel does not say which half was right.
+  const hash = hashPassword(password || '', storedSalt?.value || '');
+  if (!storedEmail || storedEmail.value !== email) return fail();
+  if (hash !== storedHash.value) return fail();
+
+  rateReset('login', ip);
   const storedToken = db.prepare('SELECT value FROM settings WHERE key = ?').get('auth_token');
   logEvent('auth.login', null, `Login: ${email}`);
   res.json({ token: storedToken.value, email });
@@ -237,8 +317,14 @@ app.get('/api/settings', requireAuth, (req, res) => {
   if (!settings.caddy_email) settings.caddy_email = '';
   if (!settings.default_timeout) settings.default_timeout = '30';
   if (!settings.default_network) settings.default_network = 'agenthotel_agenthotel';
-  if (!settings.rate_limit_enabled) settings.rate_limit_enabled = 'false';
-  if (!settings.rate_limit_requests) settings.rate_limit_requests = '100';
+  // On by default. The panel is root on its host and reachable from the internet
+  // the moment it has a domain; a protection that must be discovered and enabled
+  // protects the installations that needed it least.
+  if (!settings.rate_limit_enabled) settings.rate_limit_enabled = 'true';
+  // Generous, because the dashboard polls: stats every 5s per open agent tab,
+  // uptime and the fleet list on top. This is a runaway-script ceiling, not the
+  // brute-force defence — that one is on the login route and is much stricter.
+  if (!settings.rate_limit_requests) settings.rate_limit_requests = '600';
   if (!settings.require_https) settings.require_https = 'true';
   if (!settings.session_timeout) settings.session_timeout = '60';
   if (!settings.container_restart_policy) settings.container_restart_policy = 'unless-stopped';
