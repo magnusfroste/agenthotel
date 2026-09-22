@@ -30,37 +30,8 @@ fi
 # passed silently. A provider image shipping nginx on port 80 then got past it
 # and surfaced later as a confusing Caddy failure.
 #
-# ss ships with iproute2 and is present on essentially every modern
-# Debian/Ubuntu; lsof is the fallback. If neither exists we say so rather than
-# pretending the port is free.
-port_in_use() {
-  local port="$1"
-  if command -v ss >/dev/null 2>&1; then
-    ss -ltnH "sport = :$port" 2>/dev/null | grep -q .
-  elif command -v lsof >/dev/null 2>&1; then
-    lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
-  else
-    echo "Warning: neither ss nor lsof available — cannot check port $port" >&2
-    return 2
-  fi
-}
-
-# "In use" and "cannot tell" are different answers. Treating the second as
-# "free" let the check pass silently on exactly the hosts where it could not
-# look — and the failure surfaced later as Caddy refusing to start.
-for port in 80 443; do
-  port_in_use "$port"
-  case $? in
-    0)
-      echo "Error: something is already running on port $port" >&2
-      echo "  AgentHotel needs both 80 and 443 for Caddy and automatic HTTPS." >&2
-      echo "  Find it with: ss -ltnp 'sport = :$port'" >&2
-      exit 1 ;;
-    2)
-      echo "Error: cannot check whether port $port is free. Install iproute2 (ss) and run again." >&2
-      exit 1 ;;
-  esac
-done
+. "$(dirname "$0")/scripts/preflight-ports.sh"
+check_ports 80 443 || exit 1
 
 command_exists() {
   command -v "$@" > /dev/null 2>&1
