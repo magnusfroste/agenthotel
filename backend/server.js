@@ -2015,8 +2015,17 @@ app.post('/api/agents/:id/stop', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const container = docker.getContainer(`agenthotel-${req.params.id}`);
-    await container.stop();
+    // A compose guest has no agenthotel-<id> container: its containers are
+    // named by the stack. Stop went looking for one anyway and answered "no
+    // such container" while the stack kept running — the Stop button did
+    // nothing, loudly (review, 2026-09-21).
+    if (composeManaged(agent.runtime)) {
+      const plugin = runtimes[agent.runtime];
+      const result = await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
+      if (result && result.success === false) throw new Error(result.error || 'compose stop failed');
+    } else {
+      await docker.getContainer(`agenthotel-${req.params.id}`).stop();
+    }
 
     db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     logEvent('agent.stop', req.params.id, `Stopped agent ${agent.name}`);
@@ -2031,8 +2040,25 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-    const container = docker.getContainer(`agenthotel-${req.params.id}`);
-    await container.start();
+    // Starting a compose guest means bringing the stack up again, and the
+    // containers that come back are new ones: they join the stack's own
+    // networks only, so the route has to be reattached or the hostname answers
+    // 502 over a route that looks perfectly correct.
+    if (composeManaged(agent.runtime)) {
+      const plugin = runtimes[agent.runtime];
+      const config = JSON.parse(agent.config || '{}');
+      await plugin.deploy(agent.id, agent.name, config, plugin);
+      if (agent.domain) {
+        try {
+          await attachComposeRoute(agent, plugin, config, agent.domain);
+        } catch (err) {
+          console.error(`[Start] ${agent.name}: the stack is up but its route is not: ${err.message}`);
+          logEvent('agent.warning', agent.id, `Started, but the route was not attached: ${err.message}`);
+        }
+      }
+    } else {
+      await docker.getContainer(`agenthotel-${req.params.id}`).start();
+    }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     logEvent('agent.start', req.params.id, `Started agent ${agent.name}`);
