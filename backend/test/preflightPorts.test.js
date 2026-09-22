@@ -25,9 +25,10 @@ function run(ports, { tools = 'ss' } = {}) {
   }
   const script = `set -e\n. ${SCRIPT}\ncheck_ports ${ports.join(' ')}\necho REACHED_THE_END\n`;
   try {
-    // With no tool stubbed, the PATH holds only the empty stub directory —
-    // otherwise the host's own ss is found and the case cannot be tested.
-    const PATH = tools === 'none' ? bin : `${bin}:/usr/bin:/bin`;
+    // Only the stub directory, always. The script prefers ss, and on a host
+    // that has a real one — every CI runner does — the lsof branch would never
+    // be reached and the case would silently test nothing.
+    const PATH = bin;
     // /bin/sh by absolute path: with only the stub directory on PATH, node
     // would not find the shell itself and the failure would look like the
     // script's.
