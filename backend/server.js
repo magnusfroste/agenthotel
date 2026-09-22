@@ -400,7 +400,17 @@ app.put('/api/settings', requireAuth, async (req, res) => {
 async function pruneDocker() {
   const results = {};
 
-  const containersPrune = await docker.pruneContainers();
+  // Never the guests. An unfiltered prune removes every stopped container,
+  // and an agent you stopped on purpose is a stopped container: it vanished
+  // overnight and came back as "failed: container not found", with its volumes
+  // intact but its identity gone. The label filter excludes anything carrying
+  // agenthotel.agent, so only the panel's own leftovers are reclaimed.
+  // Docker spells exclusion as its own filter key: label! with the value to
+  // exclude. Writing label: ['agenthotel.agent!=true'] instead looks right and
+  // matches nothing, which quietly prunes no containers at all.
+  const containersPrune = await docker.pruneContainers({
+    filters: { 'label!': ['agenthotel.agent=true'] }
+  });
   results.containers = containersPrune.ContainersDeleted || [];
   results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
 
@@ -3592,6 +3602,10 @@ async function runHealthChecks() {
     // not found" for the whole build — alarming, and wrong: nothing had failed.
     // Deploy owns the status until it hands over.
     if (agent.status === 'creating' || agent.status === 'redeploying') continue;
+    // A guest stopped on purpose is not a patient. Judging it anyway turned a
+    // deliberate stop into "failed: container not found" as soon as anything
+    // reclaimed the stopped container — which the daily cleanup used to do.
+    if (agent.status === 'stopped') continue;
 
     const plugin = runtimes[agent.runtime];
     // A compose guest has no container of the panel's making, so looking for
