@@ -16,6 +16,13 @@ const SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'preflight-ports.sh')
 // non-zero return would abort before the echo ever runs.
 function run(ports, { tools = 'ss' } = {}) {
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-'));
+  // The stub directory is the whole PATH, so that the host's own ss cannot be
+  // found when the lsof or the no-tool case is under test. grep is linked in
+  // because the ss branch pipes through it — it is not what is being stubbed.
+  for (const dir of ['/bin', '/usr/bin']) {
+    const real = path.join(dir, 'grep');
+    if (fs.existsSync(real)) { fs.symlinkSync(real, path.join(bin, 'grep')); break; }
+  }
   // Stub whichever tool the script should find. "busy" ports are the ones the
   // stub reports as listening.
   if (tools === 'ss') {
@@ -25,9 +32,6 @@ function run(ports, { tools = 'ss' } = {}) {
   }
   const script = `set -e\n. ${SCRIPT}\ncheck_ports ${ports.join(' ')}\necho REACHED_THE_END\n`;
   try {
-    // Only the stub directory, always. The script prefers ss, and on a host
-    // that has a real one — every CI runner does — the lsof branch would never
-    // be reached and the case would silently test nothing.
     const PATH = bin;
     // /bin/sh by absolute path: with only the stub directory on PATH, node
     // would not find the shell itself and the failure would look like the
