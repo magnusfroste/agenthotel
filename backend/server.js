@@ -1745,6 +1745,27 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
 // replaces only what the panel put there. The stock instructions above it are
 // Nous's own and worth keeping — they are about how to answer, not about who
 // this particular agent is.
+// Wait for an exec to finish, but never for ever. These were fire-and-forget
+// until they were awaited so their failures would show — and an awaited exec
+// with no deadline does not fail, it hangs, holding the deploy queue behind it.
+// A timeout is a failure to confirm rather than a failure to apply, so it warns
+// and lets the deploy finish; a non-zero exit is still an error.
+async function execAndWait(container, cmd, what, timeoutMs = 30000) {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start();
+  const timedOut = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(true), timeoutMs);
+    stream.on('end', () => { clearTimeout(timer); resolve(false); });
+    stream.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+  if (timedOut) {
+    console.warn(`[Hermes] ${what} did not finish within ${timeoutMs / 1000}s — continuing without confirming it`);
+    return;
+  }
+  const { ExitCode } = await exec.inspect();
+  if (ExitCode !== 0) throw new Error(`${what} exited with ${ExitCode}`);
+}
+
 async function patchHermesSoul(container, soul) {
   const b64 = Buffer.from(soul).toString('base64');
   await new Promise(r => setTimeout(r, 5000));
@@ -1758,11 +1779,7 @@ pattern = re.compile(r'<!-- agenthotel:start -->.*?<!-- agenthotel:end -->', re.
 text = pattern.sub(block, text) if pattern.search(text) else (text.rstrip() + '\\n\\n' + block + '\\n')
 open(path, 'w').write(text)
 `;
-  const exec = await container.exec({ Cmd: ['python3', '-c', script], AttachStdout: true, AttachStderr: true });
-  const stream = await exec.start();
-  await new Promise((resolve, reject) => { stream.on('end', resolve); stream.on('error', reject); });
-  const { ExitCode } = await exec.inspect();
-  if (ExitCode !== 0) throw new Error(`SOUL.md patch exited with ${ExitCode}`);
+  await execAndWait(container, ['python3', '-c', script], 'SOUL.md patch');
   console.log('[Hermes] SOUL.md updated');
 }
 
@@ -1818,11 +1835,7 @@ if cwd:
 
 open('/opt/data/config.yaml', 'w').write(''.join(out))
 `;
-  const exec = await container.exec({ Cmd: ['python3', '-c', patchScript], AttachStdout: true, AttachStderr: true });
-  const stream = await exec.start();
-  await new Promise((resolve, reject) => { stream.on('end', resolve); stream.on('error', reject); });
-  const { ExitCode } = await exec.inspect();
-  if (ExitCode !== 0) throw new Error(`config.yaml patch exited with ${ExitCode}`);
+  await execAndWait(container, ['python3', '-c', patchScript], 'config.yaml patch');
   // SIGHUP the supervised gateway process; s6 auto-respawns it with new config.
   const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
   const rs = await killExec.start({ Detach: true });
@@ -2249,6 +2262,17 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     logEvent('agent.redeploy', req.params.id, `Redeployed agent ${agent.name}`);
     res.json({ redeployed: true });
   } catch (err) {
+    // Otherwise the guest stays labelled 'redeploying' for good: the health
+    // sweep skips that status on purpose, so nothing corrects it and the panel
+    // shows a spinner over an agent that is running fine.
+    try {
+      const info = await docker.getContainer(containerNameFor(runtimes, agent)).inspect();
+      db.prepare('UPDATE agents SET status = ? WHERE id = ?')
+        .run(info.State.Running ? 'running' : 'stopped', req.params.id);
+    } catch (e) {
+      db.prepare("UPDATE agents SET status = 'failed' WHERE id = ?").run(req.params.id);
+    }
+    logEvent('agent.error', req.params.id, `Redeploy failed: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -3594,14 +3618,21 @@ async function runHealthChecks() {
   const fetch = require('node-fetch');
   // config comes along because a generic guest declares its own criterion
   // there (HEALTHCHECK_PATH) — without it the health check silently saw none.
-  const agents = db.prepare('SELECT id, name, runtime, port, status, config FROM agents').all();
+  const agents = db.prepare('SELECT id, name, runtime, port, status, config, updated_at FROM agents').all();
 
   for (const agent of agents) {
     // An agent mid-deploy has a row but no container yet, and a template image
     // can take minutes to build. Judging it then reported "failed: container
     // not found" for the whole build — alarming, and wrong: nothing had failed.
     // Deploy owns the status until it hands over.
-    if (agent.status === 'creating' || agent.status === 'redeploying') continue;
+    // Deploy owns the status while it works — but not for ever. A deploy that
+    // died without writing one left the guest mid-flight permanently, exempt
+    // from the very check that would have noticed.
+    if (agent.status === 'creating' || agent.status === 'redeploying') {
+      const startedAt = new Date(String(agent.updated_at || '').replace(' ', 'T') + 'Z').getTime();
+      if (!(Number.isFinite(startedAt) && Date.now() - startedAt > 15 * 60 * 1000)) continue;
+      console.warn(`[Health] ${agent.name} has been '${agent.status}' for over 15 minutes — judging it anyway`);
+    }
     // A guest stopped on purpose is not a patient. Judging it anyway turned a
     // deliberate stop into "failed: container not found" as soon as anything
     // reclaimed the stopped container — which the daily cleanup used to do.
