@@ -54,9 +54,28 @@ const PROVIDER_REGISTRY_NAME = {
 // The operator's own model list for that provider settles it: prefer whichever
 // candidate actually appears in <SLUG>_MODELS. With no list to consult, fall
 // back to stripping one segment, which is right for canonical providers.
+// Who serves a model named without a prefix. The panel already knows: each
+// provider's own model list is injected as <SLUG>_MODELS. Assuming openai
+// instead sent "glm-5.3-flash" to api.openai.com, and hermes — which reads the
+// glm- family as Z.ai — then asked for a Z.ai key for a model running on the
+// operator's own hardware. The name was right; nothing had said whose it was.
+//
+// Only an unambiguous answer counts. Two providers listing the same id is a
+// question the operator has to settle with a prefix.
+function providerListing(model, config) {
+  const owners = [];
+  for (const [key, value] of Object.entries(config || {})) {
+    const m = /^([A-Z0-9]+)_MODELS$/.exec(key);
+    if (!m) continue;
+    const listed = String(value || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (listed.includes(model)) owners.push(m[1].toLowerCase());
+  }
+  return owners.length === 1 ? owners[0] : null;
+}
+
 function splitModel(value, config) {
   const raw = (value || '').trim();
-  if (!raw.includes('/')) return { providerIn: 'openai', model: raw };
+  if (!raw.includes('/')) return { providerIn: providerListing(raw, config) || 'openai', model: raw };
 
   const providerIn = raw.slice(0, raw.indexOf('/'));
   const stripped = raw.slice(raw.indexOf('/') + 1);

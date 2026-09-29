@@ -72,3 +72,41 @@ test('the model reaches the container bare, with routing left to config.yaml', (
   // A prefixed value makes hermes look up "openai" as a provider name and fail.
   assert.strictEqual(envOf({ HERMES_MODEL: 'openai/gpt-5.6-luna' }).HERMES_MODEL, 'gpt-5.6-luna');
 });
+
+// A model named without a prefix. This sent a GLM model running on the
+// operator's own hardware to api.openai.com, and hermes — which reads the glm-
+// family as Z.ai — asked for a Z.ai key for it.
+const PROVIDERS = {
+  DGXSPARK_BASE_URL: 'https://glm.example/v1', DGXSPARK_API_KEY: 'sk-spark', DGXSPARK_MODELS: 'glm-5.3-flash',
+  OPENAI_BASE_URL: 'https://api.openai.com/v1', OPENAI_API_KEY: 'sk-proj', OPENAI_MODELS: 'gpt-4,gpt-5.6-luna',
+};
+const providerOf = (model, extra = {}) => {
+  const block = hermes.generateConfig({ ...PROVIDERS, ...extra, HERMES_MODEL: model });
+  return block ? (/provider: (\S+)/.exec(block) || [])[1] : null;
+};
+
+test('a bare model name goes to whichever provider lists it', () => {
+  assert.strictEqual(providerOf('glm-5.3-flash'), 'dgxspark');
+  const block = hermes.generateConfig({ ...PROVIDERS, HERMES_MODEL: 'glm-5.3-flash' });
+  assert.match(block, /base_url: https:\/\/glm\.example\/v1/, 'and to that provider\'s endpoint');
+  assert.match(block, /key_env: DGXSPARK_API_KEY/, 'with that provider\'s key');
+});
+
+test('a prefix and a listing agree', () => {
+  assert.strictEqual(providerOf('dgxspark/glm-5.3-flash'), 'dgxspark');
+});
+
+test("a provider's own model still routes to it", () => {
+  assert.strictEqual(providerOf('gpt-5.6-luna'), 'openai-api');
+});
+
+test('an unknown model keeps the old assumption', () => {
+  // Nothing claims it, so the OpenAI-compatible default is as good a guess as
+  // any — and the operator gets a "model not found" that names the endpoint.
+  assert.strictEqual(providerOf('something-nobody-lists'), 'openai-api');
+});
+
+test('two providers listing one id is not guessed at', () => {
+  // Ambiguity is the operator's to settle with a prefix.
+  assert.strictEqual(providerOf('glm-5.3-flash', { OPENAI_MODELS: 'glm-5.3-flash' }), 'openai-api');
+});
