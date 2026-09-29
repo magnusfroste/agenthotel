@@ -74,14 +74,16 @@ except Exception:
   terminalUser: 'node',
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
-    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3' },
+    { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3', placeholder: 'provider/model', format: 'provider/model',
+      description: 'provider/model, with the provider as it is named under Providers — copy it from there. The prefix is what says which endpoint serves the model.' },
     { key: 'OPENAI_API_KEY', label: 'OpenAI Key', type: 'password', required: false },
     { key: 'OPENAI_BASE_URL', label: 'OpenAI Base URL', type: 'text', required: false },
     { key: 'ANTHROPIC_API_KEY', label: 'Anthropic Key', type: 'password', required: false },
     { key: 'OPENROUTER_API_KEY', label: 'OpenRouter Key', type: 'password', required: false },
     { key: 'ZAI_API_KEY', label: 'Z.ai Key', type: 'password', required: false },
     { key: 'OPENCLAW_ZAI_BASE_URL', label: 'Z.ai Base URL Override', type: 'text', required: false },
-    { key: 'OPENCLAW_MODEL_FALLBACKS', label: 'Fallback Models (comma-sep)', type: 'text', required: false }
+    { key: 'OPENCLAW_MODEL_FALLBACKS', label: 'Fallback Models (comma-sep)', type: 'text', required: false, placeholder: 'provider/model, provider/model', format: 'provider/model',
+      description: 'Tried in order when the primary fails. Same form as the primary: provider/model.' }
   ],
 
   buildConfig({ name, domain, image, port, config }) {

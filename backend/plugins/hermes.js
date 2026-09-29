@@ -129,7 +129,8 @@ module.exports = {
   dispatch: (message) => ['hermes', '-z', message],
   fallbackModel: 'gpt-5.6-luna',
   configFields: [
-    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.6-luna', placeholder: 'provider/model (e.g. openai/gpt-5.6-luna, openrouter/anthropic/claude-3.5-sonnet)' },
+    { key: 'HERMES_MODEL', label: 'Model', type: 'text', default: 'openai/gpt-5.6-luna', placeholder: 'provider/model — e.g. dgxspark/glm-5.3-flash', format: 'provider/model',
+      description: 'Write provider/model, with the provider as it is named under Providers — copy it from there. Without a prefix hermes guesses the vendor from the name: glm-5.3-flash is read as Z.ai\'s even when it runs on your own hardware.' },
     // hermes warns on every start when TERMINAL_CWD is in the environment and
     // terminal.cwd is left at the non-explicit default ("." / "auto" / ""), so
     // an explicit path silences it — see hermes_cli/config.py. /opt/data is

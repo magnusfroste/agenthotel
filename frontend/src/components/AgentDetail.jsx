@@ -319,6 +319,15 @@ function AgentDetail() {
                     {fieldHelp(agent, p.key).description ? ` — ${fieldHelp(agent, p.key).description}` : ''}
                   </div>
                 )}
+                {/* A model with no provider prefix is the value that cost an
+                    afternoon: hermes read glm-5.3-flash as Z.ai's and asked for a
+                    key it did not need. Say so beside the value, not after the
+                    agent has failed to start. */}
+                {bareModel(agent, p) && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: '0.75rem', color: 'var(--accent-yellow, #f59e0b)', marginTop: '-0.25rem' }}>
+                    ⚠ No provider prefix. Write it as provider/model — copy the exact id from Providers — or the agent may guess the wrong vendor from the name.
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -798,6 +807,15 @@ function formatBytes(bytes) {
 // ninety lines; COMPOSE_FILE can be six hundred.
 // What the runtime says about one of its own config keys, if it declared it.
 const fieldHelp = (agent, key) => (agent?.configFields || []).find(f => f.key === key && (f.label || f.description))
+
+// A value in a provider/model field that names no provider — each entry, for a
+// comma-separated list of fallbacks.
+const bareModel = (agent, pair) => {
+  const field = (agent?.configFields || []).find(f => f.key === pair.key)
+  if (!field || field.format !== 'provider/model') return false
+  const parts = String(pair.value || '').split(',').map(x => x.trim()).filter(Boolean)
+  return parts.length > 0 && parts.some(x => !x.includes('/'))
+}
 
 const multiline = (v) => typeof v === 'string' && (v.includes('\n') || v.length > 160)
 

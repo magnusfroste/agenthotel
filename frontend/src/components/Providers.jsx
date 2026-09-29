@@ -3,6 +3,11 @@ import { authFetch, authFetchOk } from '../lib/auth';
 import { useToast } from './Toast';
 import { Plus, Edit, Trash2, CheckCircle, XCircle, Code } from 'lucide-react';
 
+// The prefix an agent's model field expects, derived exactly as the backend
+// derives the <SLUG>_API_KEY / _BASE_URL / _MODELS it injects: lowercase, letters
+// and digits only. "DGX Spark" and "dgxspark" are the same provider.
+const providerSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
 function Providers() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -420,9 +425,37 @@ function Providers() {
                   <strong>API Key:</strong> •••••{provider.apiKey.slice(-4)}
                 </div>
               )}
-              {provider.models && provider.models.length > 0 && (
+              {Array.isArray(provider.models) && provider.models.length > 0 && (
+                // Shown as an agent must write them: provider/model. A bare name
+                // is a guess — hermes reads glm-5.3-flash as Z.ai's, whatever
+                // endpoint actually serves it — and the prefix is what settles
+                // it. Click one to copy it into an agent's model field.
                 <div>
-                  <strong>Models:</strong> {Array.isArray(provider.models) ? provider.models.join(', ') : provider.models}
+                  <div style={{ marginBottom: '0.35rem' }}>
+                    <strong>Models</strong>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
+                      use in an agent as — click to copy
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                    {provider.models.map((model) => {
+                      const qualified = `${providerSlug(provider.name)}/${model}`
+                      return (
+                        <button
+                          key={model}
+                          type="button"
+                          title={`Copy ${qualified}`}
+                          onClick={() => navigator.clipboard.writeText(qualified)
+                            .then(() => toast.success(`${qualified} copied`))
+                            .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))}
+                          style={{ fontFamily: 'monospace', fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '0.35rem',
+                            border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                        >
+                          {qualified}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </div>
