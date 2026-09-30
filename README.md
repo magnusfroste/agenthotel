@@ -40,6 +40,8 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **SkillHub** — self-hosted Supabase as a shared data layer for the hotel's agents: Postgres with pgvector, storage, edge functions and Studio, with every secret generated per deployment
 
 ### Agents That Reach Your Tools
+- **Connect to SkillHub in one click** — the card on a Hermes agent picks a free agent key, wires the MCP server, names the agent in the shared store and asks SkillHub who it thinks the agent is, so you see the identity it will write under. The administrator door is a separate, warned opt-in
+- **Test an agent** — one message through the agent the way its own chat sends it, with the answer or the agent's own error on screen. A missing provider key shows up in twenty seconds instead of a first failed conversation
 - **MCP servers as configuration** — point a Hermes agent at an MCP server from the panel and the block is written into its config on deploy. A new agent is born able to reach the organisation's tools, several agents follow one edit, and an agent recreated from its config comes back whole
 - **Identity per agent** — a shared data store like SkillHub derives *who is writing* from the key in the header, so each agent gets its own. Sharing one key would make the store unable to tell whose work is whose
 - **The panel owns what guards a guest** — dashboard credentials and session-signing keys are generated per agent and shown under Credentials, never a constant baked into a runtime
@@ -55,6 +57,7 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Cloudflare Tunnel (optional)** — no open ports, no DNS record pointing here and no local certificate; works behind NAT. One origin for every hostname, since Caddy still routes on the Host header ([manual](docs/MANUAL.md#cloudflare-tunnel))
 
 ### Providers & Models
+- **Add your own model** — paste the address of a vLLM, llama.cpp, Ollama or LM Studio server; the panel lists what it serves with each model's context window, flags those too small for Hermes, and shows the exact `provider/model` an agent should write. Local-server context windows are read correctly, including vLLM's `max_model_len`
 - **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
 - **Provider testing** — list available models and test them per provider, right from the UI
 - **Private models** — point the whole fleet at your own hardware with one setting; the panel probes each provider's models, declines any too small for a runtime to run, and says so rather than falling back to a hosted API without telling you
