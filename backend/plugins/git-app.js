@@ -114,19 +114,22 @@ module.exports = {
     const repoDir = path.join(BUILD_ROOT, id);
     const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'pipe', timeout: 300000 });
 
+    // One path for a first checkout and a redeploy alike. `clone --branch`
+    // takes a branch or a tag but not a commit, so a guest pinned to a sha
+    // could be redeployed but never deployed fresh: "Remote branch <sha> not
+    // found" (review, 2026-09-30). init + fetch <ref> + reset accepts all three.
     if (!fs.existsSync(path.join(repoDir, '.git'))) {
       fs.rmSync(repoDir, { recursive: true, force: true });
-      fs.mkdirSync(BUILD_ROOT, { recursive: true });
-      git(['clone', '--depth', '1', '--branch', ref, '--', repo, repoDir]);
-    } else {
-      // Redeploy picks up new commits. Fetching the ref explicitly (rather
-      // than pulling) keeps this working for a tag or a bare sha too, and
-      // the hard reset discards anything a build left in the tree.
-      git(['remote', 'set-url', 'origin', repo], repoDir);
-      git(['fetch', '--depth', '1', 'origin', ref], repoDir);
-      git(['reset', '--hard', 'FETCH_HEAD'], repoDir);
-      git(['clean', '-fd'], repoDir);
+      fs.mkdirSync(repoDir, { recursive: true });
+      git(['init', '-q'], repoDir);
+      git(['remote', 'add', 'origin', repo], repoDir);
     }
+    // The hard reset and clean discard anything a previous run left in the tree.
+    git(['remote', 'set-url', 'origin', repo], repoDir);
+    git(['fetch', '--depth', '1', 'origin', ref], repoDir);
+    git(['reset', '--hard', 'FETCH_HEAD'], repoDir);
+    git(['clean', '-fd'], repoDir);
+
 
     const contextDir = resolveContext(repoDir, config.GIT_SUBDIR);
     // A repository may keep several, e.g. Dockerfile.prod. The name is

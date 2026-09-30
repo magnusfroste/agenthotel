@@ -89,8 +89,6 @@ async function start(docker, token) {
   if (!token || typeof token !== 'string' || token.length < 20) {
     throw new Error('A Cloudflare tunnel token is required');
   }
-  await remove(docker);
-
   // Always ask for the current :latest. Pulling only when the image was
   // missing froze the tunnel at whatever version was first installed — and it
   // runs with --no-autoupdate, so nothing else ever moved it. One panel sat on
@@ -106,6 +104,12 @@ async function start(docker, token) {
     console.warn(`[Tunnel] Could not pull ${IMAGE} (${err.message}) — using the image on disk`);
     await docker.getImage(IMAGE).inspect();
   }
+
+  // Only now, with an image known to be there, does the running tunnel go.
+  // Removing it first — as this did until a review on 2026-09-30 — meant a
+  // failed pull on a host without the image left no tunnel at all, which is
+  // exactly what the comment above promised could not happen.
+  await remove(docker);
 
   const network = await panelNetwork(docker);
   // The token is passed as an argument rather than TUNNEL_TOKEN so that a

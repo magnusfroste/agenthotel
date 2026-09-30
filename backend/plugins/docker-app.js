@@ -24,6 +24,9 @@ module.exports = {
       result.volumes = result.VOLUMES.split('\n')
         .map(l => l.trim())
         .filter(l => l && l.includes(':'));
+      // Refused when saved, so the operator sees why on the form rather than
+      // in a deploy log.
+      require('../lib/volumes').assertSafeVolumes(result.volumes);
     }
     return result;
   },

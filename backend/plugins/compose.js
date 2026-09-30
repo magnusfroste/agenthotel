@@ -49,11 +49,13 @@ module.exports = {
 
     fs.writeFileSync(composePath, config.COMPOSE_FILE);
 
-    if (config.COMPOSE_ENV) {
+    // COMPOSE_ENV plus, if the guest opted in, the provider keys it lacks.
+    const envText = require('../lib/composeEnv').buildComposeEnv(config);
+    if (envText) {
       // Read-only to the owner: this file is the stack's API keys and passwords,
       // and mode on writeFileSync applies only when the file is created — so it
       // is enforced on overwrite too.
-      fs.writeFileSync(envPath, config.COMPOSE_ENV, { mode: 0o600 });
+      fs.writeFileSync(envPath, envText, { mode: 0o600 });
       fs.chmodSync(envPath, 0o600);
     }
 

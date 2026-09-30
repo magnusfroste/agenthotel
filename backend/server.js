@@ -1594,6 +1594,9 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   }
   
   if (config.volumes && Array.isArray(config.volumes)) {
+    // Again at deploy, because a config saved before the check existed would
+    // otherwise still mount whatever it named.
+    require('./lib/volumes').assertSafeVolumes(config.volumes);
     config.volumes.forEach(vol => {
       if (typeof vol === 'string' && vol.includes(':')) {
         if (vol.startsWith('/')) {
@@ -1999,7 +2002,12 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
       // Compose agents have no single container — tear the project down.
       const plugin = runtimes[agent.runtime];
       const config = JSON.parse(agent.config || '{}');
-      await plugin.remove(agent.id, config);
+      const removed = await plugin.remove(agent.id, config);
+      // A teardown that failed must not become a deleted row: the stack would
+      // keep running with nothing in the panel left to stop it.
+      if (removed && removed.success === false) {
+        return res.status(500).json({ error: removed.error || 'Could not tear the stack down' });
+      }
     } else {
       const container = docker.getContainer(`agenthotel-${req.params.id}`);
       // force removes a running OR stopped container in one call. Stopping
@@ -2107,7 +2115,44 @@ async function removeAgentRoutes(agent) {
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
-  await fetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' });
+  const res = await fetch(`${caddyApiUrl}/id/agent-${encodeURIComponent(domain)}`, { method: 'DELETE' });
+  // A route that is already gone is the outcome we wanted. Anything else is a
+  // failure the caller should hear about — it used to be ignored, and the
+  // route outlived its agent.
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Caddy refused to remove the route for ${domain}: ${res.status} ${(await res.text()).slice(0, 160)}`);
+  }
+}
+
+// The other direction of reconciliation: agent routes nobody owns any more.
+// A delete that ran while Caddy was unreachable left its route behind, and the
+// forward pass could never find it — it only walks agents that exist.
+async function removeUnownedRoutes() {
+  const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+  const fetch = require('node-fetch');
+  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+  if (!res.ok) return 0;
+  const routes = await res.json();
+
+  const owned = [];
+  for (const a of db.prepare("SELECT domain, config FROM agents WHERE domain IS NOT NULL AND domain != ''").all()) {
+    let config = {};
+    try { config = JSON.parse(a.config || '{}'); } catch (e) {}
+    owned.push(a.domain, ...parseDomainAliases(config, a.domain));
+  }
+  const panel = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
+  if (panel) owned.push(panel);
+
+  let removed = 0;
+  for (const { id, hosts } of require('./lib/routeOwnership').unownedRoutes(routes, owned)) {
+    const del = await fetch(`${caddyApiUrl}/id/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (del.ok || del.status === 404) {
+      removed++;
+      console.log(`[Caddy] Removed route ${id} — no agent owns ${hosts.join(', ')}`);
+      logEvent('route.orphan', null, `Removed a route no agent owns: ${hosts.join(', ')}`);
+    }
+  }
+  return removed;
 }
 
 app.put('/api/agents/:id', requireAuth, async (req, res) => {
@@ -3828,6 +3873,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     // nothing. Checking each minute costs one request and closes that window.
     reconcileAgentRoutes({ onlyMissing: true })
       .then(n => { if (n) console.log(`[Caddy] Restored ${n} route(s) that had gone missing`); })
+      .then(() => removeUnownedRoutes())
       .catch(err => console.error('[Caddy] Reconcile failed:', err.message));
   }, 60 * 1000);
   runHealthChecks().catch(() => {}); // reconcile immediately, don't wait a minute

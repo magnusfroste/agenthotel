@@ -1,7 +1,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { checkout, SHARED_ROOT } = require('../lib/gitCheckout');
+const { checkout, SHARED_ROOT, resolveContext } = require('../lib/gitCheckout');
 
 // A compose stack that lives in a repository.
 //
@@ -11,6 +11,15 @@ const { checkout, SHARED_ROOT } = require('../lib/gitCheckout');
 // the store, the MCP server's source. Pasted as text, every one of those paths
 // points at nothing. So this runtime checks the repository out and runs compose
 // inside it.
+
+// Where this guest's stack lives: the checkout, then GIT_SUBDIR inside it.
+// deploy() got this from checkout() and everything else rebuilt it as the
+// checkout root — so a monorepo whose compose file sits in a subdirectory
+// deployed fine and then could not be routed, stopped or removed (review,
+// 2026-09-30). No clone here: stopping a guest must not fetch its repository.
+function stackDir(id, config) {
+  return resolveContext(path.join(SHARED_ROOT, id), config.GIT_SUBDIR);
+}
 
 function projectName(id, config) {
   const name = config?.COMPOSE_PROJECT || `agenthotel-${id}`;
@@ -130,7 +139,7 @@ module.exports = {
     const service = (config.ROUTE_SERVICE || '').trim();
     if (!service) return null;
     if (!/^[A-Za-z0-9_-]+$/.test(service)) throw new Error(`Invalid ROUTE_SERVICE "${service}"`);
-    const dir = path.join(SHARED_ROOT, id);
+    const dir = stackDir(id, config);
     const file = composeFile(dir, config);
     const out = execFileSync('docker',
       ['compose', '-p', projectName(id, config), '-f', file, 'ps', '-q', service],
@@ -151,9 +160,12 @@ module.exports = {
     // The .env goes beside the compose file, where compose looks for it, and
     // is written with the checkout so a redeploy cannot leave a stale one.
     let envFile = null;
-    if (config.COMPOSE_ENV) {
+    // COMPOSE_ENV plus, if the guest opted in, the provider keys it lacks.
+    const envText = require('../lib/composeEnv').buildComposeEnv(config);
+    if (envText) {
       envFile = path.join(co.dir, '.env');
-      fs.writeFileSync(envFile, config.COMPOSE_ENV, { mode: 0o600 });
+      fs.writeFileSync(envFile, envText, { mode: 0o600 });
+      fs.chmodSync(envFile, 0o600);
     }
 
     const madeNetworks = ensureExternalNetworks(file);
@@ -165,7 +177,7 @@ module.exports = {
 
   async stop(id, config) {
     try {
-      const dir = path.join(SHARED_ROOT, id);
+      const dir = stackDir(id, config);
       const file = composeFile(dir, config);
       compose(['-p', projectName(id, config), '-f', file, 'stop'], dir,
         fs.existsSync(path.join(dir, '.env')) ? path.join(dir, '.env') : null);
@@ -176,13 +188,23 @@ module.exports = {
   },
 
   async remove(id, config) {
-    const dir = path.join(SHARED_ROOT, id);
-    try {
-      const file = composeFile(dir, config);
-      compose(['-p', projectName(id, config), '-f', file, 'down', '--volumes', '--remove-orphans'], dir,
-        fs.existsSync(path.join(dir, '.env')) ? path.join(dir, '.env') : null);
-    } catch (err) { /* a stack that never came up has nothing to tear down */ }
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+    const checkoutDir = path.join(SHARED_ROOT, id);
+    let dir;
+    try { dir = stackDir(id, config); } catch (e) { dir = checkoutDir; }
+    let file = null;
+    try { file = composeFile(dir, config); } catch (e) { /* no compose file: nothing ever came up */ }
+
+    if (file && fs.existsSync(file)) {
+      try {
+        compose(['-p', projectName(id, config), '-f', file, 'down', '--volumes', '--remove-orphans'], dir,
+          fs.existsSync(path.join(dir, '.env')) ? path.join(dir, '.env') : null);
+      } catch (err) {
+        // Keep the checkout. Deleting it after a failed teardown left running
+        // containers with nothing left to manage them by, and reported success.
+        return { success: false, error: `compose down failed, the stack may still be running: ${err.message}` };
+      }
+    }
+    try { fs.rmSync(checkoutDir, { recursive: true, force: true }); } catch (e) {}
     return { success: true };
   }
 };

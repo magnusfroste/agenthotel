@@ -51,6 +51,13 @@ module.exports = {
       label: 'Approve waiting browser',
       hint: 'OpenClaw pairs each browser once. Open the agent, then approve here.',
       // --latest only *shows* the pending request; approving needs its id.
+      // Verified against the CLI itself (OpenClaw 2026.9.3, `openclaw devices
+      // approve --help`): "--latest  Show the most recent pending request to
+      // approve explicitly". A review on 2026-09-30 read this status command as
+      // approving the newest browser on every poll; it does not. It does lean on
+      // a flag of a command named `approve` staying read-only, though —
+      // `devices list --json` is the sturdier source once its output has been
+      // seen against a live gateway (BACKLOG).
       status: `openclaw devices approve --latest --json 2>/dev/null | python3 -c "
 import sys, json
 try:
