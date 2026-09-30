@@ -252,6 +252,7 @@ function AgentDetail() {
               <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
+          {agent.canSelfTest && <AgentSelfTest agentId={id} running={agent.status === 'running'} />}
           <AgentActions agentId={id} status={agent.status} />
           <AgentSource agent={agent} onSaved={fetchAgent} />
           <AgentStats agentId={id} />
@@ -502,6 +503,68 @@ function AgentActions({ agentId, status }) {
 // Environment tab as raw variables asks the operator to know which keys mean
 // "source". The commit underneath is read from the checkout, so it reports
 // what is running rather than what was requested.
+// One real turn through the agent — init, provider resolution, the model — on
+// demand. The failure that cost an afternoon ("No usable credentials found for
+// provider 'zai'") would have been on this screen in twenty seconds. A timer
+// runs while it waits: a reasoning model can take half a minute, and a button
+// that looks stuck gets pressed again.
+function AgentSelfTest({ agentId, running }) {
+  const [state, setState] = useState(null)   // null | { running, started } | result
+  const [elapsed, setElapsed] = useState(0)
+  const [showOutput, setShowOutput] = useState(false)
+
+  useEffect(() => {
+    if (!state?.running) return
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - state.started) / 1000)), 500)
+    return () => clearInterval(t)
+  }, [state])
+
+  async function run() {
+    setState({ running: true, started: Date.now() }); setElapsed(0); setShowOutput(false)
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/selftest`, { method: 'POST' })
+      const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))
+      setState(data)
+    } catch (e) {
+      setState({ ok: false, error: e.message })
+    }
+  }
+
+  const box = { background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' }
+  return (
+    <div style={box}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>Test this agent</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Sends one message through the agent and its model, the way its own chat does.</div>
+        </div>
+        <button className="btn btn-primary" onClick={run} disabled={!running || state?.running}>
+          {state?.running ? `Waiting for the model… ${elapsed}s` : 'Test'}
+        </button>
+      </div>
+      {!running && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Start the agent to test it.</div>}
+      {state && !state.running && (
+        <div style={{ marginTop: '0.85rem', padding: '0.75rem', borderRadius: '0.4rem', fontSize: '0.85rem',
+          background: state.ok ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+          border: `1px solid ${state.ok ? '#10b981' : '#ef4444'}`, color: state.ok ? '#10b981' : '#ef4444' }}>
+          {state.ok
+            ? <>✓ The model answered in {(state.durationMs / 1000).toFixed(1)}s. Chat will work.</>
+            : <>✗ {state.error}</>}
+          {state.output && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <button type="button" onClick={() => setShowOutput(v => !v)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, fontSize: '0.75rem', textDecoration: 'underline' }}>
+                {showOutput ? 'Hide' : 'Show'} what the agent printed
+              </button>
+              {showOutput && <pre style={{ marginTop: '0.4rem', whiteSpace: 'pre-wrap', fontSize: '0.75rem', color: 'var(--text-primary)', maxHeight: '240px', overflow: 'auto' }}>{state.output}</pre>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Where the guest's code comes from — repository, ref, which compose file,
 // which service the domain points at. Easypanel keeps this apart from the
 // environment and it is the right split: GIT_REF is not a variable the app

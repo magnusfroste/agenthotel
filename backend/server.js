@@ -1058,7 +1058,7 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
   // code comes from belongs with the source, not in a list of environment
   // variables. Sending the declaration rather than a list of key names keeps
   // that decision with the plugin that owns the field.
-  res.json({ ...agent, config, source, configFields: plugin?.configFields || [] });
+  res.json({ ...agent, config, source, configFields: plugin?.configFields || [], canSelfTest: typeof plugin?.selfTest === 'function' });
 });
 
 // Per-service export (Easypanel-style): the agent's full configuration as a
@@ -2769,6 +2769,98 @@ app.delete('/api/providers/:id', requireAuth, (req, res) => {
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Find what an endpoint offers before it becomes a provider — the first step of
+// adding your own model. The backend asks rather than the browser: the endpoint
+// may be on a private network the browser cannot see, and it keeps the key off
+// the page. Answers in words an operator can act on, because a raw ECONNREFUSED
+// against a URL they pasted from their laptop says nothing about why.
+app.post('/api/providers/probe', requireAuth, async (req, res) => {
+  const { fetchProviderModels } = require('./lib/modelSelect');
+  const raw = String(req.body?.baseUrl || '').trim().replace(/\/+$/, '').replace(/\/models$/, '');
+  const apiKey = String(req.body?.apiKey || '').trim();
+  if (!/^https?:\/\//.test(raw)) return res.status(400).json({ error: 'The base URL must start with http:// or https://' });
+
+  let host = '';
+  try { host = new URL(raw).hostname; } catch (e) { return res.status(400).json({ error: 'That is not a URL' }); }
+  // localhost is the panel's own container from where this runs, not the
+  // machine the operator pasted it from.
+  const localHint = /^(localhost|127\.|0\.0\.0\.0|::1$)/.test(host)
+    ? ` ${host} here means the AgentHotel server itself, not your computer — use the address the server can reach, such as the machine's LAN IP or a public hostname.`
+    : '';
+
+  // Most local servers want /v1 on the end and many people leave it off.
+  const candidates = /\/v\d+$/.test(raw) ? [raw] : [raw, raw + '/v1'];
+  let lastError = null;
+  for (const baseUrl of candidates) {
+    try {
+      const models = await fetchProviderModels({ baseUrl, apiKey });
+      const floor = runtimes.hermes?.minContextTokens || null;
+      return res.json({
+        baseUrl,
+        adjusted: baseUrl !== raw,
+        models: models.map(m => ({
+          id: m.id,
+          contextLength: m.contextLength,
+          // Absent is not small: a server mid-load reports nothing.
+          tooSmallForHermes: floor && Number.isFinite(m.contextLength) ? m.contextLength < floor : false
+        })),
+        hermesMinContext: floor
+      });
+    } catch (err) {
+      lastError = err;
+      if (/HTTP 40[13]/.test(err.message)) break;   // a refused key is not a wrong path
+    }
+  }
+
+  const msg = String(lastError?.message || 'unknown error');
+  // node-fetch puts the socket error in .code and often leaves the message's
+  // "reason:" empty — reading only the message called a refused connection "an
+  // endpoint that answered".
+  const code = String(lastError?.code || lastError?.errno || (msg.match(/\bE[A-Z_]{3,}\b/) || [])[0] || '');
+  let error;
+  if (/HTTP 40[13]/.test(msg)) error = 'The server refused the key. Check it, or leave it empty if the endpoint needs none.';
+  else if (/HTTP 404/.test(msg)) error = `Nothing answers /models at ${raw}${candidates.length > 1 ? ' or ' + raw + '/v1' : ''}. Is the base URL right?`;
+  else if (/HTTP \d{3}/.test(msg)) error = `The server answered ${msg.match(/HTTP \d{3}/)[0]} for /models. It may not be OpenAI-compatible, or not at this path.`;
+  else if (/timeout/i.test(msg) || code === 'ETIMEDOUT') error = `No answer from ${host} within 25 seconds.` + localHint;
+  else if (code === 'ECONNREFUSED') error = `${host} refused the connection — nothing is listening on that port.` + localHint;
+  else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') error = `${host} does not resolve. Check the spelling, or use an IP address.` + localHint;
+  else if (code) error = `Could not reach ${host} (${code}).` + localHint;
+  else if (/json/i.test(msg)) error = `${host} answered, but not with an OpenAI-compatible model list.`;
+  else error = `Could not read models from ${host}: ${msg}` + localHint;
+  res.status(422).json({ error });
+});
+
+// One real turn through a guest, on demand. The failure that cost an afternoon
+// — "No usable credentials found for provider 'zai'" — would have been on the
+// screen in twenty seconds.
+app.post('/api/agents/:id/selftest', requireAuth, async (req, res) => {
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const plugin = runtimes[agent.runtime];
+  if (typeof plugin?.selfTest !== 'function') return res.status(400).json({ error: `${plugin?.name || agent.runtime} has no self-test` });
+
+  const nonce = 'ok-' + crypto.randomBytes(3).toString('hex');
+  const started = Date.now();
+  try {
+    // Under the proxy's 100-second limit, so a slow model reports as slow
+    // rather than as a Cloudflare error page.
+    const result = await execInAgent(docker, agent.id, plugin.selfTest(nonce), {
+      timeoutMs: 85000, container: containerNameFor(runtimes, agent)
+    });
+    const output = String(result.output || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+    const ok = output.includes(nonce);
+    const lines = output.split('\n').map(l => l.trim()).filter(Boolean);
+    const error = ok ? null
+      : result.timedOut ? 'No reply within 85 seconds. The model may be loading, or overloaded.'
+      : (lines.filter(l => /error|fail|denied|refused|not found|does not exist|no usable|invalid|\b4\d\d\b|\b5\d\d\b/i.test(l)).pop() || lines.pop() || 'No reply at all');
+    const durationMs = Date.now() - started;
+    logEvent('agent.selftest', agent.id, ok ? `Self-test passed in ${(durationMs / 1000).toFixed(1)}s` : `Self-test failed: ${error}`);
+    res.json({ ok, error, durationMs, timedOut: !!result.timedOut, output: output.slice(-1500) });
+  } catch (err) {
+    res.json({ ok: false, error: err.message, durationMs: Date.now() - started, output: '' });
   }
 });
 

@@ -300,6 +300,14 @@ module.exports = {
   // Malformed JSON returns null rather than throwing: a typo in one field must
   // not take down a deploy that is otherwise fine. It shows up as an agent
   // without its tools, which is visible, instead of a failed redeploy.
+  // One real turn through the agent, the way its own chat makes one: agent
+  // init, provider resolution, the model call. `hermes -z` exits 0 even when it
+  // fails and prints the error as if it were the reply, so success is judged by
+  // whether the model repeated a word it could not have guessed.
+  selfTest(nonce) {
+    return `cd /opt/data && hermes -z "Reply with exactly this word and nothing else: ${nonce}" 2>&1`;
+  },
+
   generateMcpBlock(config) {
     const raw = String(config.MCP_SERVERS || '').trim();
     if (!raw) return null;

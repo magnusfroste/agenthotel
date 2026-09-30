@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { authFetch, authFetchOk } from '../lib/auth';
 import { useToast } from './Toast';
-import { Plus, Edit, Trash2, CheckCircle, XCircle, Code } from 'lucide-react';
+import OwnModelWizard from './OwnModelWizard';
+import { Plus, Edit, Trash2, CheckCircle, XCircle, Code, Cpu } from 'lucide-react';
 
 // The prefix an agent's model field expects, derived exactly as the backend
 // derives the <SLUG>_API_KEY / _BASE_URL / _MODELS it injects: lowercase, letters
@@ -12,6 +13,7 @@ function Providers() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [showOwn, setShowOwn] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
   const [rawOpen, setRawOpen] = useState(false)
   const [rawText, setRawText] = useState('')
@@ -237,7 +239,11 @@ function Providers() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Providers</h1>
-        <button onClick={handleAdd} className="btn btn-primary">
+        <button onClick={() => { setShowOwn(true); setShowForm(false); }} className="btn btn-primary">
+          <Cpu size={18} />
+          Add your own model
+        </button>
+        <button onClick={handleAdd} className="btn btn-secondary">
           <Plus size={18} />
           Add Provider
         </button>
@@ -246,6 +252,12 @@ function Providers() {
           {rawOpen ? "Close raw" : "Raw"}
         </button>
       </div>
+
+      {showOwn && (
+        <OwnModelWizard existing={providers}
+          onDone={() => { setShowOwn(false); fetchProviders(); }}
+          onCancel={() => setShowOwn(false)} />
+      )}
 
       {rawOpen && (
         <div className="settings-section">

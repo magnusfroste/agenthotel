@@ -188,7 +188,10 @@ async function fetchProviderModels(provider) {
   return (Array.isArray(items) ? items : []).map(m => {
     const id = typeof m === 'string' ? m : (m.id || m.name || '');
     const ctx = typeof m === 'object'
-      ? (m.context_length ?? m.max_context_length ?? m.n_ctx ?? (m.meta && m.meta.n_ctx))
+      // vLLM says max_model_len — the most common local server, and the one
+      // that was being read as "context unknown", so the 64k gate never fired
+      // for it.
+      ? (m.context_length ?? m.max_context_length ?? m.max_model_len ?? m.n_ctx ?? (m.meta && m.meta.n_ctx))
       : undefined;
     return {
       id,
