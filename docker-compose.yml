@@ -29,9 +29,13 @@ services:
       - PORT=8080
       - DB_PATH=/data/agenthotel.db
       - CADDY_API_URL=http://caddy:2019
+      # Caddy's admin API, reachable only through this socket. Guests share
+      # Caddy's network, so the admin API must not listen on it.
+      - CADDY_ADMIN_SOCKET=/run/caddy-admin/admin.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agenthotel-data:/data
+      - caddy-admin:/run/caddy-admin
       - ./templates:/templates
       # Checkouts for compose guests, mounted at the SAME path inside and out.
       #
@@ -58,12 +62,20 @@ services:
     cpu_shares: 2048
     oom_score_adj: -500
     command: caddy run --config /etc/caddy/caddy.json
+    # Published on every interface by default, because Caddy answers the ACME
+    # challenge and serves guests here. Behind a Cloudflare Tunnel neither is
+    # needed — cloudflared reaches Caddy over the Docker network — and left
+    # open they let anyone skip Cloudflare by using the server's IP. Set
+    # AGENTHOTEL_HTTP=127.0.0.1:80 and AGENTHOTEL_HTTPS=127.0.0.1:443 in .env
+    # to close them. A host firewall cannot: Docker's port rules bypass ufw.
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${AGENTHOTEL_HTTP:-80}:80"
+      - "${AGENTHOTEL_HTTPS:-443}:443"
+      - "${AGENTHOTEL_HTTPS:-443}:443/udp"
     volumes:
       - ./docker/caddy.json:/etc/caddy/caddy.json:ro
+      # The admin socket. Mounted by Caddy and the backend, and nothing else.
+      - caddy-admin:/run/caddy-admin
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -84,6 +96,7 @@ services:
 
 volumes:
   agenthotel-data:
+  caddy-admin:
   caddy-data:
   caddy-config:
 

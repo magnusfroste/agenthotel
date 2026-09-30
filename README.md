@@ -242,22 +242,44 @@ can do anything on that machine. Treat panel access as you would root SSH.
 
 **What stands between the internet and that:**
 
-- One admin account, chosen at first visit. Ten failed logins from an address in
-  fifteen minutes block it for the rest of the window; the block is logged and
-  notified.
+- One admin account, created with a one-time setup code that `install.sh` prints
+  (lost it: `agenthotel setup-code`). Without the code, the first stranger to find
+  a fresh panel on port 80 would have been its admin.
+- Ten failed logins from an address in fifteen minutes block it for the rest of
+  the window; the block is logged and notified. The address is the one Caddy saw,
+  or the one Cloudflare reports when the request came through your tunnel — a
+  forged `CF-Connecting-IP` or `X-Forwarded-For` picks nobody a fresh bucket.
 - Browser sessions expire after inactivity (`Session Timeout`, default 60
   minutes, sliding). Logout revokes the session on the server.
 - API and MCP clients use the static panel token shown under System. It does not
   expire — an integration cannot re-enter a password — so it must be rotated if it
   is ever exposed, and it must never be pasted into a chat, a ticket or a log.
 - Every API call is rate-limited per address (`Rate Limit`, on by default).
-- Nothing listens on the host but 80 and 443, served by Caddy with automatic
-  certificates; with a Cloudflare Tunnel, nothing listens inbound at all.
+- The panel cannot be framed by another site (`X-Frame-Options`,
+  `frame-ancestors 'none'`), and sends `nosniff` and a same-origin referrer.
+- Guests share Caddy's network, so Caddy's admin API — which rewrites every
+  route — listens only on a Unix socket that Caddy and the backend mount. A guest
+  cannot repoint the panel's domain.
+- AgentHotel publishes 80 and 443 and nothing else, served by Caddy with
+  automatic certificates. **A Cloudflare Tunnel does not close them** — see below.
 
 **What is yours to do:**
 
 - Put the panel behind a hostname you control and, ideally, a tunnel. A panel
   reachable by IP over plain HTTP is a root shell behind one password.
+- With a tunnel, stop publishing 80 and 443. The tunnel reaches Caddy over the
+  Docker network, so it needs neither, and left open they let anyone skip
+  Cloudflare — and whatever you set up there — by using the server's IP. In
+  `/opt/agenthotel/.env`:
+
+  ```bash
+  AGENTHOTEL_HTTP=127.0.0.1:80
+  AGENTHOTEL_HTTPS=127.0.0.1:443
+  ```
+
+  then `docker compose up -d caddy`. A host firewall is not enough: Docker's rules
+  for published ports go around `ufw`. Check from another machine that
+  `curl -m 5 http://<server-ip>` no longer answers.
 - Rotate the panel token if it leaks. Rotate provider API keys the same way; they
   are injected into every agent that needs them and exported in backups in plain
   text.

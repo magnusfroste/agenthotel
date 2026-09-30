@@ -171,19 +171,36 @@ sleep 10
 
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
+# Creating the admin needs this code, so the first stranger to find the
+# panel on port 80 cannot claim it. The backend writes it at first boot.
+SETUP_CODE=""
+for _ in $(seq 1 30); do
+  SETUP_CODE="$(docker exec agenthotel-backend cat /data/setup-code 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$SETUP_CODE" ] && break
+  sleep 2
+done
+
 echo ""
 echo "╔════════════════════════════════════════╗"
 echo "║     Installation Complete!             ║"
 echo "╠════════════════════════════════════════╣"
 echo "║                                        ║"
-echo "║  Open in browser:                      ║"
-echo "║  http://$SERVER_IP                     ║"
+echo "║  Create your admin account at the link ║"
+echo "║  below. It carries a one-time setup    ║"
+echo "║  code, so keep it to yourself.         ║"
 echo "║                                        ║"
-echo "║  Create your admin account on first    ║"
-echo "║  visit. You can configure a domain     ║"
-echo "║  later in Settings.                    ║"
-echo "║                                        ║"
+echo "║  Configure a domain later in Settings. ║"
 echo "╚════════════════════════════════════════╝"
+echo ""
+if [ -n "$SETUP_CODE" ]; then
+  echo "  http://$SERVER_IP/?setup=$SETUP_CODE"
+  echo ""
+  echo "  (Lost it? agenthotel setup-code)"
+else
+  echo "  http://$SERVER_IP"
+  echo ""
+  echo "  Setup code: run 'agenthotel setup-code' once the panel is up."
+fi
 echo ""
 echo "Useful commands:"
 echo "  agenthotel check       is there a newer version?"

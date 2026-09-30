@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { setToken } from '../lib/auth'
 
 function Setup({ onDone }) {
+  // install.sh prints a link carrying the code, so the usual path is to
+  // arrive with it already filled in.
+  const [code, setCode] = useState(() => new URLSearchParams(window.location.search).get('setup') || '')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -22,7 +25,7 @@ function Setup({ onDone }) {
       const res = await fetch('/api/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, setupCode: code })
       })
 
       if (!res.ok) {
@@ -31,6 +34,8 @@ function Setup({ onDone }) {
       }
 
       const data = await res.json()
+      // The code is spent; keep it out of the address bar and the history.
+      window.history.replaceState(null, '', window.location.pathname)
       setToken(data.token)
       onDone()
     } catch (err) {
@@ -49,6 +54,23 @@ function Setup({ onDone }) {
         {error && <div className="error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>Setup code</label>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Printed at the end of install"
+              autoComplete="off"
+              spellCheck="false"
+              required
+              style={{ fontFamily: 'monospace' }}
+            />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+              Only whoever installed the panel can create its admin. Lost it? Run <code>agenthotel setup-code</code> on the server.
+            </div>
+          </div>
+
           <div className="form-group">
             <label>Email</label>
             <input

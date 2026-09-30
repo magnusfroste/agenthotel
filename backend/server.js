@@ -19,6 +19,7 @@ const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
+const { caddyFetch } = require('./lib/caddyAdmin');
 const { evaluateHealth } = require('./lib/agentHealth');
 const { execFile, execFileSync, spawn } = require('child_process');
 
@@ -29,7 +30,11 @@ app.use(cors());
 // docker-compose files) and can be sizeable.
 app.use(express.json({ limit: '10mb' }));
 
-const { clientIp, hit: rateHit, reset: rateReset } = require('./lib/rateLimit');
+const { clientIp, hit: rateHit, reset: rateReset, refreshProxies } = require('./lib/rateLimit');
+// Which peers are Caddy and the tunnel, so their forwarding headers — and only
+// theirs — are believed. Containers get new addresses when recreated.
+refreshProxies().catch(() => {});
+setInterval(() => refreshProxies().catch(() => {}), 60 * 1000).unref();
 
 
 // Ten failures in fifteen minutes, per address. A person who has forgotten which
@@ -123,6 +128,7 @@ try {
   console.error('[Security] Could not enable rate limiting:', err.message);
 }
 
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS cleanup_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +173,29 @@ function logEvent(type, agentId, message) {
   } catch (err) {
     console.error('Failed to log event:', err.message);
   }
+}
+
+// A Hermes agent created before per-agent passwords serves its dashboard — a
+// chat with an agent that runs shell commands — on a public domain, behind
+// admin / agenthotel: a password printed in this repository. Give each one
+// its own, in its config where Credentials shows it. The running container
+// keeps the old one until its next redeploy, and the event log says so,
+// because restarting someone's agents unasked is not the panel's call.
+try {
+  const stale = db.prepare("SELECT id, name, config FROM agents WHERE runtime = 'hermes'").all()
+    .filter(a => {
+      const c = JSON.parse(a.config || '{}');
+      return !c.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD && !c.HERMES_DASHBOARD_PASSWORD;
+    });
+  for (const a of stale) {
+    const c = JSON.parse(a.config || '{}');
+    c.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = crypto.randomBytes(12).toString('base64url');
+    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(c), a.id);
+    logEvent('security.password', a.id, `${a.name}: its dashboard used the default password. A new one is under Credentials — redeploy the agent to apply it.`);
+    console.log(`[Security] ${a.name}: generated a dashboard password to replace the default; redeploy to apply`);
+  }
+} catch (err) {
+  console.error('[Security] Could not replace default dashboard passwords:', err.message);
 }
 
 function hashPassword(password, salt) {
@@ -241,13 +270,27 @@ function hostShell() {
   return hostShellChecked;
 }
 
+const setupCode = require('./lib/setupCode');
+const SETUP_CODE_FILE = path.join(path.dirname(process.env.DB_PATH || '/data/agenthotel.db'), 'setup-code');
+
 app.get('/api/setup', (req, res) => {
-  res.json({ configured: isSetup() });
+  res.json({ configured: isSetup(), codeRequired: !isSetup() });
 });
 
 app.post('/api/setup', (req, res) => {
   if (isSetup()) return res.status(400).json({ error: 'Already configured' });
+  // The code has ~98 bits and cannot be guessed, but a wall costs nothing and
+  // keeps a scanner from spending the night trying.
+  const ip = clientIp(req);
+  const attempt = rateHit('setup', ip, LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS);
+  if (!attempt.allowed) {
+    res.set('Retry-After', String(attempt.retryAfter));
+    return res.status(429).json({ error: `Too many attempts — try again in ${Math.ceil(attempt.retryAfter / 60)} min` });
+  }
   const { email, password } = req.body;
+  if (!setupCode.matches(db, req.body?.setupCode)) {
+    return res.status(403).json({ error: 'Wrong setup code. Run `agenthotel setup-code` on the server to see it.' });
+  }
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
@@ -259,6 +302,9 @@ app.post('/api/setup', (req, res) => {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('admin_password_hash', hash);
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('admin_password_salt', salt);
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('auth_token', token);
+  setupCode.clear(db, SETUP_CODE_FILE);
+  rateReset('setup', ip);
+  logEvent('auth.setup', null, `Admin account created from ${ip}`);
 
   res.json({ token, email });
 });
@@ -803,10 +849,24 @@ app.get('/api/system/capacity', requireAuth, (req, res) => {
 
 // Build the panel route: host-matched when a panel domain is configured,
 // otherwise the original catch-all (no matcher) so the panel stays reachable.
+// Sent with every panel response, page and API alike. The panel had none: any
+// site could frame it and steer a logged-in operator's clicks — on a page with
+// a root console (security sweep, 2026-09-30). HSTS is left out on purpose: a
+// panel reached by plain IP, as every fresh install is, must keep working.
+const PANEL_SECURITY_HEADERS = {
+  'X-Frame-Options': ['DENY'],
+  'Content-Security-Policy': ["frame-ancestors 'none'"],
+  'X-Content-Type-Options': ['nosniff'],
+  'Referrer-Policy': ['same-origin']
+};
+
 function buildPanelRoute(domain) {
   const route = {
     '@id': 'panel-route',
     handle: [{
+      handler: 'headers',
+      response: { set: PANEL_SECURITY_HEADERS }
+    }, {
       handler: 'subroute',
       routes: [
         {
@@ -843,12 +903,12 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
   // Always remove the existing route first — POSTing another route with the
   // same @id 'panel-route' would leave a duplicate id in Caddy's config.
   try {
-    await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+    await caddyFetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
   } catch (e) { /* ignore — route may not exist */ }
 
   // Recreate the route: host-matched for the new domain, or the catch-all
   // when the domain was cleared.
-  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
+  const res = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildPanelRoute(newDomain))
@@ -861,7 +921,7 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
 
   if (newDomain) {
     // Check if TLS policy already exists for this domain
-    const existingPoliciesRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
+    const existingPoliciesRes = await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
     if (existingPoliciesRes.ok) {
       const existingPolicies = await existingPoliciesRes.json();
       const policyExists = existingPolicies.some(policy => 
@@ -869,7 +929,7 @@ async function updatePanelCaddyRoute(oldDomain, newDomain) {
       );
       
       if (!policyExists) {
-        const tlsRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
+        const tlsRes = await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -899,7 +959,7 @@ async function updateCaddyEmail() {
   try {
     // Remove previously added global (subject-less) policies with a different
     // contact email — POST appends, so old ones would otherwise accumulate.
-    const listRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
+    const listRes = await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies`);
     if (listRes.ok) {
       const policies = await listRes.json();
       for (let i = (policies || []).length - 1; i >= 0; i--) {
@@ -907,14 +967,14 @@ async function updateCaddyEmail() {
         if (p && !p.subjects) {
           const contact = p.issuers?.[0]?.contact || [];
           if (!contact.includes(`mailto:${email}`)) {
-            await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies/${i}`, { method: 'DELETE' })
+            await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies/${i}`, { method: 'DELETE' })
               .catch(() => {});
           }
         }
       }
     }
 
-    const res = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
+    const res = await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1938,7 +1998,7 @@ async function addCaddyRoute(domain, containerName, port) {
   // failure that had already torn down the old container — the agent ended up
   // deleted and marked failed. Drop any existing route first; a 404 here just
   // means there was nothing to replace.
-  await fetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' }).catch(() => {});
+  await caddyFetch(`${caddyApiUrl}/id/agent-${domain}`, { method: 'DELETE' }).catch(() => {});
 
   // Caddy takes the first route that matches, so a wildcard must never sit
   // ahead of a specific host or it swallows every guest added after it. New
@@ -1951,7 +2011,7 @@ async function addCaddyRoute(domain, containerName, port) {
     ? `${caddyApiUrl}/config/apps/http/servers/srv0/routes`
     : `${caddyApiUrl}/config/apps/http/servers/srv0/routes/0`;
 
-  const res = await fetch(endpoint, {
+  const res = await caddyFetch(endpoint, {
     method: isWildcard ? 'POST' : 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(route)
@@ -2115,7 +2175,7 @@ async function removeAgentRoutes(agent) {
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
-  const res = await fetch(`${caddyApiUrl}/id/agent-${encodeURIComponent(domain)}`, { method: 'DELETE' });
+  const res = await caddyFetch(`${caddyApiUrl}/id/agent-${encodeURIComponent(domain)}`, { method: 'DELETE' });
   // A route that is already gone is the outcome we wanted. Anything else is a
   // failure the caller should hear about — it used to be ignored, and the
   // route outlived its agent.
@@ -2130,7 +2190,7 @@ async function removeCaddyRoute(domain) {
 async function removeUnownedRoutes() {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
-  const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+  const res = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
   if (!res.ok) return 0;
   const routes = await res.json();
 
@@ -2145,7 +2205,7 @@ async function removeUnownedRoutes() {
 
   let removed = 0;
   for (const { id, hosts } of require('./lib/routeOwnership').unownedRoutes(routes, owned)) {
-    const del = await fetch(`${caddyApiUrl}/id/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const del = await caddyFetch(`${caddyApiUrl}/id/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (del.ok || del.status === 404) {
       removed++;
       console.log(`[Caddy] Removed route ${id} — no agent owns ${hosts.join(', ')}`);
@@ -3559,7 +3619,7 @@ app.get('/api/domains', requireAuth, async (req, res) => {
     const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
     const fetch = require('node-fetch');
 
-    const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+    const routesRes = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
     const routes = await routesRes.json();
 
     // Index running agent containers once for O(1) lookups + live status.
@@ -3620,7 +3680,7 @@ app.delete('/api/domains/:id', requireAuth, async (req, res) => {
     if (!id.startsWith('agent-')) return res.status(400).json({ error: 'Can only remove agent routes' });
     const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
     const fetch = require('node-fetch');
-    const del = await fetch(`${caddyApiUrl}/id/${id}`, { method: 'DELETE' });
+    const del = await caddyFetch(`${caddyApiUrl}/id/${id}`, { method: 'DELETE' });
     if (!del.ok) return res.status(502).json({ error: `Caddy responded ${del.status}` });
     res.json({ deleted: true, id });
   } catch (err) {
@@ -4140,6 +4200,10 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`AgentHotel backend running on port ${PORT}`);
   hostExecAvailable(); // probe + log host exec availability at startup
+  if (!isSetup()) {
+    const code = setupCode.ensure(db, SETUP_CODE_FILE);
+    console.log(`[Setup] No admin yet. Setup code: ${code} — or run \`agenthotel setup-code\` on the server`);
+  }
   await initPanelRoute();
   // After the panel's own route, so a half-configured Caddy never leaves the
   // panel unreachable — that is the one route you need to fix the rest.
@@ -4154,7 +4218,10 @@ app.listen(PORT, '0.0.0.0', async () => {
     // failure is invisible to a status check: with no matching route Caddy
     // answers an empty 200, so every hostname looks healthy while serving
     // nothing. Checking each minute costs one request and closes that window.
-    reconcileAgentRoutes({ onlyMissing: true })
+    // The panel's own route first: the same restart drops it, and until the
+    // backend itself restarted nobody could reach the panel to find out why.
+    initPanelRoute({ quiet: true })
+      .then(() => reconcileAgentRoutes({ onlyMissing: true }))
       .then(n => { if (n) console.log(`[Caddy] Restored ${n} route(s) that had gone missing`); })
       .then(() => removeUnownedRoutes())
       .catch(err => console.error('[Caddy] Reconcile failed:', err.message));
@@ -4192,7 +4259,7 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
     try {
       const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
       const fetch = require('node-fetch');
-      const res = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+      const res = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
       if (!res.ok) return;
       const routes = await res.json();
       present = new Set((routes || []).flatMap(r => (r.match || []).flatMap(m => m.host || [])));
@@ -4257,7 +4324,7 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
   return restored;
 }
 
-async function initPanelRoute() {
+async function initPanelRoute({ quiet = false } = {}) {
   try {
     const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
     const fetch = require('node-fetch');
@@ -4265,7 +4332,7 @@ async function initPanelRoute() {
     const panelDomain = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain');
     
     // Check if panel-route already exists with correct domain
-    const routesRes = await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
+    const routesRes = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`);
     if (routesRes.ok) {
       const routes = await routesRes.json();
       const panelRoute = routes.find(r => r['@id'] === 'panel-route');
@@ -4274,15 +4341,18 @@ async function initPanelRoute() {
         const existingDomain = panelRoute.match?.[0]?.host?.[0];
         const expectedDomain = panelDomain?.value || null;
         
-        if (existingDomain === expectedDomain) {
-          console.log(`Panel route already exists for ${existingDomain || 'catch-all'}`);
+        // A route from before the security headers is replaced like a changed
+        // domain would be — otherwise an upgrade never delivers them.
+        const current = JSON.stringify(panelRoute).includes('frame-ancestors');
+        if (existingDomain === expectedDomain && current) {
+          if (!quiet) console.log(`Panel route already exists for ${existingDomain || 'catch-all'}`);
           return;
         }
         
         // Domain changed, remove old route
         console.log(`Panel domain changed from ${existingDomain} to ${expectedDomain}, updating...`);
         try {
-          await fetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
+          await caddyFetch(`${caddyApiUrl}/id/panel-route`, { method: 'DELETE' });
         } catch (e) { /* ignore */ }
       }
     }
@@ -4291,7 +4361,7 @@ async function initPanelRoute() {
       await updatePanelCaddyRoute(null, panelDomain.value);
       console.log(`Panel route created for ${panelDomain.value}`);
     } else {
-      await fetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
+      await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/routes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildPanelRoute(null))

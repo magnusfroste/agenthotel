@@ -41,6 +41,7 @@ video, where it cannot be taken back.
 - The **Credentials** tab of any agent.
 - The **MCP token** on the System page.
 - A terminal showing `.env`, `auth.json`, or `docker inspect`.
+- The setup link from shot 1, until the admin account exists.
 
 ---
 
@@ -58,7 +59,11 @@ git clone https://github.com/magnusfroste/agenthotel.git && cd agenthotel && ./i
 ```
 
 *(cut — about 10 minutes: Docker, the images, the panel)* → the banner
-`Installation Complete!` → the browser on the panel's login.
+`Installation Complete!` and the setup link under it → the browser on the
+panel's setup page, the code already filled in.
+
+The link's code is spent the moment the admin is created, but blur it anyway:
+until then it is the one thing that makes the panel yours.
 
 **Voice:** "One command on a fresh server. That's the whole install."
 

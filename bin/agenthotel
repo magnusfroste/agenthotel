@@ -113,6 +113,11 @@ case "${1:-}" in
   rollback) shift; cmd_rollback "$@" ;;
   logs)     shift; docker compose logs --tail "${1:-50}" -f backend ;;
   restart)  docker compose restart; echo "restarted" ;;
+  setup-code)
+    code="$(docker exec agenthotel-backend cat /data/setup-code 2>/dev/null)" \
+      || die "no setup code — the admin account already exists, or the panel is not running"
+    echo "$code"
+    ;;
   *)
     echo "AgentHotel — $(current)"
     echo ""
@@ -122,5 +127,6 @@ case "${1:-}" in
     echo "  $SELF version            what is installed and running"
     echo "  $SELF logs [n]           follow the backend log"
     echo "  $SELF restart            restart the panel"
+    echo "  $SELF setup-code         the code that creates the first admin"
     ;;
 esac
