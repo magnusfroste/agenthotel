@@ -253,6 +253,7 @@ function AgentDetail() {
             </div>
           )}
           {agent.canSelfTest && <AgentSelfTest agentId={id} running={agent.status === 'running'} />}
+          <AgentSkillhub agentId={id} onChanged={fetchAgent} />
           <AgentActions agentId={id} status={agent.status} />
           <AgentSource agent={agent} onSaved={fetchAgent} />
           <AgentStats agentId={id} />
@@ -503,6 +504,93 @@ function AgentActions({ agentId, status }) {
 // Environment tab as raw variables asks the operator to know which keys mean
 // "source". The commit underneath is read from the checkout, so it reports
 // what is running rather than what was requested.
+// The dining room: this agent's seat at a SkillHub on the same panel. One
+// button where there were five steps — a free key, MCP_SERVERS by hand, the
+// Accept header, naming the row, a redeploy.
+function AgentSkillhub({ agentId, onChanged }) {
+  const toast = useToast()
+  const [info, setInfo] = useState(null)
+  const [busy, setBusy] = useState(null)       // 'connect' | 'disconnect' | 'keys'
+  const [caretaker, setCaretaker] = useState(false)
+  const [result, setResult] = useState(null)
+
+  async function load() {
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/skillhub`)
+      if (res.ok) setInfo(await res.json())
+    } catch (e) { /* the panel keeps working without this card */ }
+  }
+  useEffect(() => { load() }, [agentId])
+
+  if (!info || !info.supported) return null
+  const hub = info.hubs.find(h => h.id === info.connection?.hubId) || info.hubs[0]
+
+  async function act(kind, request) {
+    setBusy(kind); setResult(null)
+    try {
+      const res = await request()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setResult({ kind, ...data })
+      await load(); onChanged && onChanged()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+  const connect = () => act('connect', () => authFetch(`/api/agents/${agentId}/skillhub`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hubId: hub.id, caretaker }) }))
+  const disconnect = () => act('disconnect', () => authFetch(`/api/agents/${agentId}/skillhub`, { method: 'DELETE' }))
+  const makeKeys = () => act('keys', () => authFetch(`/api/skillhubs/${hub.id}/keys`, { method: 'POST' }))
+
+  const box = { background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' }
+  const muted = { fontSize: '0.8rem', color: 'var(--text-secondary)' }
+  const c = info.connection
+
+  return (
+    <div style={box}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>Shared memory — SkillHub</div>
+          <div style={muted}>
+            {!hub ? 'No SkillHub on this panel yet.'
+              : c ? <>Connected to <strong>{c.hubName}</strong>{c.slot ? <> as <code>{c.slot}</code></> : ''}{c.caretaker ? ' — with the administrator door' : ''}.</>
+              : hub.needsKeys ? <>{hub.name} has no agent keys yet — it was deployed before the template made them.</>
+              : <>{hub.name} at {hub.domain} — {hub.free} of {hub.keys} agent keys free.</>}
+          </div>
+        </div>
+        {hub && (c
+          ? <button className="btn btn-secondary" onClick={disconnect} disabled={!!busy}>{busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}</button>
+          : hub.needsKeys
+            ? <button className="btn btn-secondary" onClick={makeKeys} disabled={!!busy}>{busy === 'keys' ? 'Generating…' : 'Generate agent keys'}</button>
+            : <button className="btn btn-primary" onClick={connect} disabled={!!busy || hub.free === 0}>{busy === 'connect' ? 'Connecting…' : 'Connect'}</button>)}
+      </div>
+
+      {!hub && <div style={{ ...muted, marginTop: '0.5rem' }}>Deploy SkillHub from <a href="/templates/skillhub" style={{ color: 'var(--accent-blue, #3b82f6)' }}>Templates</a> to give your agents a store they share — notes, skills and search by meaning.</div>}
+      {hub?.needsKeys && !c && <div style={{ ...muted, marginTop: '0.5rem' }}>Generating them restarts {hub.name} for about a minute. Data is kept.</div>}
+
+      {hub && !c && !hub.needsKeys && (
+        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginTop: '0.75rem', fontSize: '0.8rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={caretaker} onChange={e => setCaretaker(e.target.checked)} style={{ width: 'auto', marginTop: '0.15rem' }} />
+          <span>Make it the caretaker — also give it the administrator door: raw SQL, migrations, <strong>and every private note</strong>. One agent at most, and not one that does everyday work.</span>
+        </label>
+      )}
+
+      {result?.kind === 'connect' && (
+        <div style={{ marginTop: '0.75rem', padding: '0.65rem', borderRadius: '0.4rem', fontSize: '0.8rem', background: 'rgba(16,185,129,0.1)', border: '1px solid #10b981' }}>
+          ✓ Connected as <code>{result.slot}</code>{result.named ? ', and named in the store' : ' — its row kept the name someone gave it'}. The agent is restarting to pick it up.
+          {result.whoami && <div style={{ marginTop: '0.35rem', color: 'var(--text-secondary)' }}>SkillHub says: <em>{result.whoami}</em></div>}
+          {result.whoamiError && <div style={{ marginTop: '0.35rem', color: '#f59e0b' }}>Could not confirm the key: {result.whoamiError}</div>}
+        </div>
+      )}
+      {result?.kind === 'keys' && (
+        <div style={{ ...muted, marginTop: '0.75rem' }}>{result.filled} keys generated. {hub?.name} is restarting — connect in about a minute.</div>
+      )}
+    </div>
+  )
+}
+
 // One real turn through the agent — init, provider resolution, the model — on
 // demand. The failure that cost an afternoon ("No usable credentials found for
 // provider 'zai'") would have been on this screen in twenty seconds. A timer

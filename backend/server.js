@@ -2263,23 +2263,21 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
+// The one way an agent is redeployed — the Redeploy button, and anything that
+// changes an agent's config behind the scenes, such as connecting it to
+// SkillHub. Kept in one place so the status handling below applies to all.
+async function redeployAgent(agentId, { rebuildImage = false } = {}) {
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+  if (!agent) { const e = new Error('Agent not found'); e.status = 404; throw e; }
   try {
-    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
-
     // Re-inject provider env on redeploy: providers added after the agent was
     // created would otherwise never reach it. Injection only fills missing
     // keys, so manual env edits are never clobbered.
     const plugin = runtimes[agent.runtime];
     const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
-    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), req.params.id);
-    // Opt-in: rebuild the runtime's template image first, so edits to
-    // templates/<runtime>/Dockerfile actually reach the agent. Off by default
-    // because a rebuild is slow and pulls a fresh base image.
-    const rebuildImage = req.body?.rebuild === true;
+    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), agentId);
 
-    db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
 
     await enqueueDeploy(async () => {
       if (composeManaged(agent.runtime)) {
@@ -2290,10 +2288,10 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
         try {
           await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, { rebuildImage });
         } catch (err) {
-          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
           throw new Error(`Build failed, the agent was left running: ${err.message}`);
         }
-        const container = docker.getContainer(`agenthotel-${req.params.id}`);
+        const container = docker.getContainer(`agenthotel-${agentId}`);
         try { await container.stop(); await container.remove(); } catch (e) {}
 
         await removeAgentRoutes(agent);
@@ -2303,22 +2301,34 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
       }
     });
 
-    db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
-    logEvent('agent.redeploy', req.params.id, `Redeployed agent ${agent.name}`);
-    res.json({ redeployed: true });
+    db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
+    logEvent('agent.redeploy', agentId, `Redeployed agent ${agent.name}`);
   } catch (err) {
     // Otherwise the guest stays labelled 'redeploying' for good: the health
-    // sweep skips that status on purpose, so nothing corrects it and the panel
-    // shows a spinner over an agent that is running fine.
+    // sweep skips that status on purpose, so nothing corrects it. Read what
+    // the container actually says. (This used to reference an `agent` declared
+    // inside the try, so it threw here and every failed redeploy was marked
+    // 'failed' — even over a container running fine.)
     try {
       const info = await docker.getContainer(containerNameFor(runtimes, agent)).inspect();
-      db.prepare('UPDATE agents SET status = ? WHERE id = ?')
-        .run(info.State.Running ? 'running' : 'stopped', req.params.id);
+      db.prepare('UPDATE agents SET status = ? WHERE id = ?').run(info.State.Running ? 'running' : 'stopped', agentId);
     } catch (e) {
-      db.prepare("UPDATE agents SET status = 'failed' WHERE id = ?").run(req.params.id);
+      db.prepare("UPDATE agents SET status = 'failed' WHERE id = ?").run(agentId);
     }
-    logEvent('agent.error', req.params.id, `Redeploy failed: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    logEvent('agent.error', agentId, `Redeploy failed: ${err.message}`);
+    throw err;
+  }
+}
+
+app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
+  try {
+    // Opt-in: rebuild the runtime's template image first, so edits to
+    // templates/<runtime>/Dockerfile actually reach the agent. Off by default
+    // because a rebuild is slow and pulls a fresh base image.
+    await redeployAgent(req.params.id, { rebuildImage: req.body?.rebuild === true });
+    res.json({ redeployed: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -2769,6 +2779,187 @@ app.delete('/api/providers/:id', requireAuth, (req, res) => {
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- SkillHub: connecting an agent to the shared store in one click ----------
+//
+// By hand: pick a free MCP_KEY_NN, write MCP_SERVERS as JSON, name the row in
+// SkillHub's own agents table, redeploy. The logic is in lib/skillhubLink.js and
+// tested; this is the I/O. SkillHub is reached on the panel network through its
+// Kong, not through its public hostname, so connecting does not depend on DNS or
+// a tunnel being right — the agents themselves use the public URL.
+
+const SH = require('./lib/skillhubLink');
+
+function skillhubContext(hub) {
+  const config = JSON.parse(hub.config || '{}');
+  const env = SH.parseEnv(config.COMPOSE_ENV);
+  if (!hub.domain) { const e = new Error(`${hub.name} has no domain — agents reach SkillHub by hostname, so give it one first`); e.status = 409; throw e; }
+  const target = runtimes['git-compose'].routeTarget(hub.id, config);
+  if (!target) { const e = new Error(`${hub.name} is not running`); e.status = 409; throw e; }
+  return {
+    hub, env,
+    keySlots: SH.slots(env),
+    url: `https://${hub.domain}`,
+    internal: `http://${target.container}:${target.port}`,
+    serviceKey: env.SERVICE_ROLE_KEY
+  };
+}
+
+async function skillhubRest(ctx, method, path, body) {
+  const fetch = require('node-fetch');
+  const res = await fetch(`${ctx.internal}/rest/v1/${path}`, {
+    method, timeout: 20000,
+    headers: { apikey: ctx.serviceKey, Authorization: `Bearer ${ctx.serviceKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`SkillHub answered ${res.status}: ${text.slice(0, 160)}`);
+  return text ? JSON.parse(text) : null;
+}
+
+// Ask SkillHub who a key is — proof the key works and the identity is right,
+// rather than trusting that writing it down was enough.
+async function skillhubWhoami(ctx, key) {
+  const fetch = require('node-fetch');
+  const res = await fetch(`${ctx.internal}/skillhub`, {
+    method: 'POST', timeout: 30000,
+    headers: { apikey: key, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'skillhub_whoami', arguments: {} } })
+  });
+  if (!res.ok) throw new Error(`the key was refused (${res.status})`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'whoami failed');
+  return (data.result?.content || []).map(c => c.text || '').join(' ').trim().slice(0, 300);
+}
+
+function findSkillhubs(exceptId) {
+  return db.prepare('SELECT * FROM agents').all().filter(a => a.id !== exceptId && SH.isSkillhub(a));
+}
+
+app.get('/api/agents/:id/skillhub', requireAuth, (req, res) => {
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const supported = typeof runtimes[agent.runtime]?.generateMcpBlock === 'function';
+  const everyone = db.prepare('SELECT id, runtime, config FROM agents').all();
+  const hubs = [];
+  let connection = null;
+  for (const hub of findSkillhubs(agent.id)) {
+    const env = SH.parseEnv(JSON.parse(hub.config || '{}').COMPOSE_ENV);
+    const keySlots = SH.slots(env);
+    const held = SH.holders(everyone, keySlots);
+    hubs.push({ id: hub.id, name: hub.name, domain: hub.domain, status: hub.status, keys: keySlots.length,
+      free: keySlots.filter(k => !held.has(k.key)).length, needsKeys: keySlots.length === 0 });
+    const c = hub.domain ? SH.connectionOf(agent, `https://${hub.domain}`, keySlots) : null;
+    if (c) connection = { hubId: hub.id, hubName: hub.name, slot: c.slot?.id || null, caretaker: c.caretaker };
+  }
+  res.json({ supported, hubs, connection });
+});
+
+app.post('/api/agents/:id/skillhub', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    if (typeof runtimes[agent.runtime]?.generateMcpBlock !== 'function') {
+      return res.status(400).json({ error: `${runtimes[agent.runtime]?.name || agent.runtime} cannot be given MCP servers from the panel yet` });
+    }
+    const hub = findSkillhubs(agent.id).find(h => h.id === req.body?.hubId) || findSkillhubs(agent.id)[0];
+    if (!hub) return res.status(404).json({ error: 'No SkillHub on this panel — deploy one from Templates first' });
+    const ctx = skillhubContext(hub);
+    if (!ctx.keySlots.length) return res.status(409).json({ error: `${hub.name} has no agent keys yet`, needsKeys: true });
+
+    const config = JSON.parse(agent.config || '{}');
+    const everyone = db.prepare('SELECT id, runtime, config FROM agents').all();
+    // Connecting twice keeps the same slot: identity is the key, and a new
+    // key would make SkillHub see a stranger where a colleague was.
+    const existing = SH.connectionOf(agent, ctx.url, ctx.keySlots);
+    const slot = existing?.slot || SH.freeSlot(ctx.keySlots, SH.holders(everyone, ctx.keySlots));
+    if (!slot) return res.status(409).json({ error: `All ${ctx.keySlots.length} agent keys on ${hub.name} are in use` });
+
+    const caretaker = req.body?.caretaker === true;
+    config.MCP_SERVERS = SH.withSkillhub(config.MCP_SERVERS, ctx.url, slot.key, caretaker ? ctx.serviceKey : null);
+    db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), agent.id);
+
+    // Name the row so colleagues see who agent_NN is — unless an operator
+    // already named it, in which case their name stands.
+    let named = false;
+    try {
+      const [row] = await skillhubRest(ctx, 'GET', `agents?id=eq.${slot.id}&select=id,name,role`) || [];
+      if (SH.mayName(row)) {
+        await skillhubRest(ctx, 'PATCH', `agents?id=eq.${slot.id}`,
+          { name: agent.name, role: `${SH.ROLE_PREFIX} — ${agent.domain || agent.name}${caretaker ? ' (caretaker)' : ''}` });
+        named = true;
+      }
+    } catch (err) {
+      console.warn(`[SkillHub] Could not name ${slot.id}: ${err.message}`);
+    }
+
+    let whoami = null, whoamiError = null;
+    try { whoami = await skillhubWhoami(ctx, slot.key); } catch (err) { whoamiError = err.message; }
+
+    logEvent('agent.skillhub', agent.id, `Connected to ${hub.name} as ${slot.id}${caretaker ? ' with the administrator door' : ''}`);
+    // The agent picks MCP_SERVERS up on redeploy. In the background: it takes
+    // longer than the proxy in front of the panel waits for an answer.
+    redeployAgent(agent.id).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after connecting failed: ${err.message}`));
+    res.json({ connected: true, hub: hub.name, slot: slot.id, caretaker, named, whoami, whoamiError, redeploying: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id/skillhub', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const config = JSON.parse(agent.config || '{}');
+    let released = null;
+    for (const hub of findSkillhubs(agent.id)) {
+      if (!hub.domain) continue;
+      const url = `https://${hub.domain}`;
+      const env = SH.parseEnv(JSON.parse(hub.config || '{}').COMPOSE_ENV);
+      const c = SH.connectionOf(agent, url, SH.slots(env));
+      if (!c) continue;
+      config.MCP_SERVERS = SH.withoutSkillhub(config.MCP_SERVERS, url);
+      // Clear the row only if the panel wrote it.
+      if (c.slot) {
+        try {
+          const ctx = skillhubContext(hub);
+          const [row] = await skillhubRest(ctx, 'GET', `agents?id=eq.${c.slot.id}&select=id,name,role`) || [];
+          if (row && String(row.role || '').startsWith(SH.ROLE_PREFIX)) {
+            await skillhubRest(ctx, 'PATCH', `agents?id=eq.${c.slot.id}`, { name: null, role: null });
+          }
+        } catch (err) { console.warn(`[SkillHub] Could not clear ${c.slot.id}: ${err.message}`); }
+      }
+      released = { hub: hub.name, slot: c.slot?.id || null };
+    }
+    if (!released) return res.status(404).json({ error: 'This agent is not connected to a SkillHub' });
+    db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), agent.id);
+    logEvent('agent.skillhub', agent.id, `Disconnected from ${released.hub}${released.slot ? ', freeing ' + released.slot : ''}`);
+    redeployAgent(agent.id).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after disconnecting failed: ${err.message}`));
+    res.json({ disconnected: true, ...released, redeploying: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// A SkillHub deployed before the template generated agent keys has ten empty
+// slots, so nothing can connect. Filling them restarts it — Kong reads its
+// consumers at start — which is why this is a button and not a side effect.
+app.post('/api/skillhubs/:id/keys', requireAuth, async (req, res) => {
+  try {
+    const hub = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!hub || !SH.isSkillhub(hub)) return res.status(404).json({ error: 'Not a SkillHub' });
+    const config = JSON.parse(hub.config || '{}');
+    const { text, filled } = SH.withGeneratedKeys(config.COMPOSE_ENV);
+    if (!filled) return res.json({ filled: 0, redeploying: false });
+    config.COMPOSE_ENV = text;
+    db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), hub.id);
+    logEvent('agent.skillhub', hub.id, `Generated ${filled} agent key(s) for ${hub.name}`);
+    redeployAgent(hub.id).catch(err => console.error(`[SkillHub] Redeploy of ${hub.name} after generating keys failed: ${err.message}`));
+    res.json({ filled, redeploying: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
