@@ -35,7 +35,7 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Browsable library** — every deployable runtime as a card with its category, tags, default image and port, filtered by search, category or tag
 - **Template detail page** — what the template is, what to do after deployment, benefits, features, upstream links, changelog, and the exact config fields the deploy form will ask for
 - **Data-driven** — presentation lives in `templates/<id>/meta.yaml`, so a new template needs no frontend change; edits are picked up without restarting the backend
-- **Templates are deployable** — a template can be a recipe rather than a runtime: an image, a compose file, or a repository whose compose file it runs. Deploying one fills in the form a person would otherwise fill in, then creates an ordinary agent on the runtime it names
+- **Templates are deployable** — a template can be a recipe rather than a runtime: an image, a compose file, or a repository — built from its Dockerfile, or run with its compose file. Deploying one fills in the form a person would otherwise fill in, then creates an ordinary agent on the runtime it names
 - **Declared secrets** — a template says what is secret and how to make it (`hex`, `password`, or a JWT signed with another generated secret), and the panel generates it at deploy. No template ever carries a credential, and two deployments never share one
 - **SkillHub** — self-hosted Supabase as a shared data layer for the hotel's agents: Postgres with pgvector, storage, edge functions and Studio, with every secret generated per deployment
 
@@ -137,6 +137,14 @@ The built-in observability (per-agent stats, uptime checks, activity log) is int
 | **Git App** | Build straight from a Git repository — for apps that ship a Dockerfile but no image, including the MCP tools your agents call |
 | **Git Compose** | Run a whole stack from a repository. For a compose file that mounts its own files — init SQL, a gateway config, edge functions — the repository is the deployable unit; the file alone is not |
 | **Compose** | Full `docker-compose.yml` deployments |
+
+Ready-made templates on top of those runtimes, each deployed from one form with its keys generated:
+
+| Template | What it is |
+| --- | --- |
+| **SkillHub** | A shared memory for your agents — self-hosted Supabase with search by meaning |
+| **Reel-studio** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
+| **Lobby** | A web hotel for landing pages — one markdown file per site, written by agents over MCP |
 
 ## MCP Integration
 

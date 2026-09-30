@@ -62,3 +62,29 @@ test('what the panel knows about a deployment is substituted, not configured', (
   assert.strictEqual(config.AGENT_NAME, undefined);
   assert.strictEqual(config.DOMAIN, undefined);
 });
+
+test('a git-app template builds from the repository, with its env as config keys', () => {
+  // One Dockerfile, no image published — how most MCP tools ship.
+  const deploy = normalizeDeploy({
+    runtime: 'git-app', repo: 'https://example.com/tool', port: 8000, healthcheck: '/health',
+    envFile: 'TOOL_TOKEN=${TOOL_TOKEN}\nPUBLIC_URL=https://${DOMAIN}\n# a comment\n',
+    secrets: [{ key: 'TOOL_TOKEN', generate: 'hex', bytes: 32 }],
+    env: [{ key: 'VOICE', default: 'edge' }],
+  });
+  assert.strictEqual(deploy.runtime, 'git-app');
+  const { runtime, port, config } = materializeDeploy(deploy, { DOMAIN: 'tool.example.com', AGENT_NAME: 'tool' });
+  assert.strictEqual(runtime, 'git-app');
+  assert.strictEqual(port, 8000, 'the port is a column, as for docker-app');
+  assert.strictEqual(config.GIT_REPO, 'https://example.com/tool');
+  assert.strictEqual(config.GIT_REF, 'main');
+  assert.strictEqual(config.HEALTHCHECK_PATH, '/health');
+  assert.match(config.TOOL_TOKEN, /^[0-9a-f]{64}$/, 'generated, and a key of its own so Credentials finds it');
+  assert.strictEqual(config.PUBLIC_URL, 'https://tool.example.com');
+  assert.strictEqual(config.VOICE, 'edge', 'a form field the env file did not mention still reaches the container');
+  assert.strictEqual(config.DOMAIN, undefined, 'what the panel knows is substituted, not configured');
+  assert.strictEqual(config.AGENT_NAME, undefined);
+});
+
+test('a git-app template needs a repository', () => {
+  assert.strictEqual(normalizeDeploy({ runtime: 'git-app' }), null);
+});

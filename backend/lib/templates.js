@@ -111,12 +111,13 @@ function summarize(id, plugin) {
 
 // A custom template carries its own deploy recipe instead of being backed by a
 // plugin. `deploy.runtime` names the EXISTING runtime that performs the work —
-// docker-app for a single image, compose for a stack — so nothing here can
+// docker-app for a single image, compose for a stack, git-app and git-compose
+// for the same built from a repository — so nothing here can
 // deploy in a way the panel could not already.
 function normalizeDeploy(deploy) {
   if (!deploy || typeof deploy !== 'object') return null;
   const runtime = text(deploy.runtime);
-  if (runtime !== 'docker-app' && runtime !== 'compose' && runtime !== 'git-compose') return null;
+  if (!['docker-app', 'compose', 'git-compose', 'git-app'].includes(runtime)) return null;
 
   const env = list(deploy.env)
     .filter(f => f && typeof f === 'object' && text(f.key))
@@ -158,6 +159,27 @@ function normalizeDeploy(deploy) {
       env
     };
   }
+  // One service built from its own Dockerfile. Most MCP tools ship exactly
+  // this and no image — and their own compose file, when there is one, is
+  // written for somebody else's host: a published port, a bind mount into
+  // that host's paths. The Dockerfile is the part that travels.
+  if (runtime === 'git-app') {
+    const repo = text(deploy.repo);
+    if (!repo) return null;
+    return {
+      runtime,
+      repo,
+      ref: text(deploy.ref) || 'main',
+      subdir: text(deploy.subdir) || '',
+      dockerfile: text(deploy.dockerfile) || '',
+      port: parseInt(deploy.port) || 8000,
+      healthcheck: text(deploy.healthcheck) || '',
+      envFile: typeof deploy.envFile === 'string' ? deploy.envFile : '',
+      secrets: normalizeSecrets(deploy.secrets),
+      env
+    };
+  }
+
   const image = text(deploy.image);
   if (!image) return null;
   return { runtime, image, port: parseInt(deploy.port) || 80, env };
@@ -205,6 +227,30 @@ function materializeDeploy(deploy, provided = {}) {
   }
 
   const values = { ...generateSecrets(deploy.secrets || [], supplied), ...context };
+
+  if (deploy.runtime === 'git-app') {
+    const config = { GIT_REPO: deploy.repo, GIT_REF: deploy.ref, PORT: String(deploy.port) };
+    if (deploy.subdir) config.GIT_SUBDIR = deploy.subdir;
+    if (deploy.dockerfile) config.GIT_DOCKERFILE = deploy.dockerfile;
+    if (deploy.healthcheck) config.HEALTHCHECK_PATH = deploy.healthcheck;
+    // A single container has no .env: its environment is its config. Every
+    // line of the env file becomes a key of its own, so the Environment tab
+    // can edit it and the Credentials tab finds the generated ones.
+    for (const line of renderEnvFile(deploy.envFile, values).split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const at = t.indexOf('=');
+      if (at > 0) config[t.slice(0, at).trim()] = t.slice(at + 1).trim();
+    }
+    // Generated secrets and form fields the env file did not mention are
+    // still environment — the container has no other way to receive them.
+    for (const [key, value] of Object.entries(values)) {
+      if (key in context || config[key] !== undefined) continue;
+      config[key] = value;
+    }
+    return { runtime: 'git-app', port: deploy.port, config };
+  }
+
   const config = {
     GIT_REPO: deploy.repo,
     GIT_REF: deploy.ref,
@@ -339,7 +385,7 @@ function saveTemplate(spec, runtimes, source = 'custom') {
 
   const deploy = normalizeDeploy(spec.deploy);
   if (!deploy) {
-    throw new Error('deploy must set runtime to "docker-app" (with image) or "compose" (with compose)');
+    throw new Error('deploy must set runtime to "docker-app" (with image), "compose" (with compose), or "git-app" / "git-compose" (with repo)');
   }
 
   const doc = {

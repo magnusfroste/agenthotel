@@ -1,0 +1,61 @@
+name: Reel-studio
+category: MCP Tool
+icon: film
+color: '#e11d48'
+source: builtin
+description: 'Hand the camera to an agent. Reel-studio drives a real browser, records the screen and puts narration on the beat — the agent decides what to click and what to say, and walks away with a finished MP4 and a public link.
+
+  '
+instructions: 'Give it a domain: the MCP address becomes https://<domain>/mcp, and finished videos are served from the same host. The API token is generated and shown under Credentials. An agent sends it as `Authorization: Bearer <token>`.
+
+
+  Connect an agent by adding the MCP server in its settings, with the URL exactly as above. No trailing slash: `/mcp/` answers with a redirect that looks like a hang. The `Accept: application/json, text/event-stream` header is required.
+
+
+  The first deploy builds an image with Chromium, Xvfb and ffmpeg. It takes a few minutes and about 2 GB of disk. Give the guest at least 2 GB of RAM, because a browser recording at 1080p is not small.
+
+
+  Narration uses the free Edge voices. Add an ElevenLabs key to use your own voices.
+
+  '
+tags:
+- mcp
+- video
+- screen recording
+- narration
+- playwright
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/reel-studio
+benefits:
+- title: The agent directs
+  description: It observes the page, decides the shot and writes the narration. You describe the video, you do not record it
+- title: No editing suite
+  description: Gaps between steps are cut, narration lands where the content is on screen, and a line can be rewritten without a reshoot
+- title: Yours to host
+  description: Recordings of your own product stay on your own server, behind your own token
+features:
+- title: Shots with a quality gate
+  description: begin_shot and verify_shot, and finish refuses to publish until every shot is verified
+- title: Secret scan
+  description: review_session checks URLs and storyboard text for tokens before a video goes public
+- title: Theater
+  description: Every finished film gets a public page at /theater, with its storyboard
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/reel-studio
+  ref: main
+  port: 8000
+  healthcheck: /health
+  envFile: |
+    REEL_API_TOKEN=${REEL_API_TOKEN}
+    REEL_PUBLIC_BASE_URL=https://${DOMAIN}
+  env:
+  - key: ELEVENLABS_API_KEY
+    label: ElevenLabs API key
+    type: password
+    description: Optional. Without it narration uses the free Edge voices
+  secrets:
+  - key: REEL_API_TOKEN
+    generate: hex
+    bytes: 32

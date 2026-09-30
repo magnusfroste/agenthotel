@@ -10,6 +10,7 @@ import {
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
+import { toEnvText, mergeTextEdit, isMultiline } from '../lib/envText'
 
 const SENSITIVE = /key|token|password|secret/i
 
@@ -32,6 +33,11 @@ function AgentDetail() {
   // What the editor was handed, so a save can say which keys the user removed.
   const envLoadedKeys = useRef([])
   const [envSaving, setEnvSaving] = useState(false)
+  // Rows or one block of text. Rows are the default: they mask secrets, and
+  // the text view shows every key in the clear.
+  const [envMode, setEnvMode] = useState('rows')
+  const [envText, setEnvText] = useState('')
+  const [envProblems, setEnvProblems] = useState({ errors: [], warnings: [] })
   const [settings, setSettings] = useState({ domain: '', image: '', port: '' })
   const [settingsSaving, setSettingsSaving] = useState(false)
   const toast = useToast()
@@ -55,6 +61,8 @@ function AgentDetail() {
         .map(([k, v]) => ({ key: k, value: String(v) }))
       envLoadedKeys.current = pairs.map(p => p.key)
       setEnvPairs(pairs)
+      setEnvText(toEnvText(pairs))
+      setEnvProblems({ errors: [], warnings: [] })
       setSettings({ domain: data.domain || '', image: data.image || '', port: data.port || '' })
     } catch (err) { console.error('Failed to fetch agent:', err) }
   }
@@ -118,11 +126,34 @@ function AgentDetail() {
     } catch (err) { notify('error', 'Export failed: ' + err.message) }
   }
 
+  // Text back to pairs. A line that does not parse keeps you in the text view
+  // with the line number, rather than dropping the variable on the way out.
+  function envFromText() {
+    const result = mergeTextEdit(envText, envPairs)
+    setEnvProblems({ errors: result.errors, warnings: result.warnings })
+    return result.errors.length ? null : result.pairs
+  }
+
+  function switchEnvMode(mode) {
+    if (mode === envMode) return
+    if (mode === 'text') {
+      setEnvText(toEnvText(envPairs))
+      setEnvProblems({ errors: [], warnings: [] })
+    } else {
+      const pairs = envFromText()
+      if (!pairs) return
+      setEnvPairs(pairs)
+    }
+    setEnvMode(mode)
+  }
+
   async function saveEnv() {
+    const pairs = envMode === 'text' ? envFromText() : envPairs
+    if (!pairs) return
     setEnvSaving(true)
     try {
       const config = {}
-      for (const p of envPairs) { const k = p.key.trim(); if (k) config[k] = p.value }
+      for (const p of pairs) { const k = p.key.trim(); if (k) config[k] = p.value }
       // A PUT merges, so dropping a key from the payload keeps it. Name the
       // ones that are gone, or Remove does nothing but look like it worked.
       const removeKeys = envLoadedKeys.current.filter(k => !(k in config))
@@ -289,11 +320,41 @@ function AgentDetail() {
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>Saving redeploys the agent with the new configuration.</div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setEnvPairs([...envPairs, { key: '', value: '' }])}><Plus size={15} color="currentColor" /> Add</button>
+              <div role="group" aria-label="Edit as" style={{ display: 'flex' }}>
+                {['rows', 'text'].map(m => (
+                  <button key={m} className={`btn ${envMode === m ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ borderRadius: m === 'rows' ? '6px 0 0 6px' : '0 6px 6px 0' }}
+                    aria-pressed={envMode === m} onClick={() => switchEnvMode(m)}>{m === 'rows' ? 'Rows' : 'Text'}</button>
+                ))}
+              </div>
+              {envMode === 'rows' && <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => setEnvPairs([...envPairs, { key: '', value: '' }])}><Plus size={15} color="currentColor" /> Add</button>}
               <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} disabled={envSaving} onClick={saveEnv}><Save size={15} color="white" /> {envSaving ? 'Saving…' : 'Save & Deploy'}</button>
             </div>
           </div>
-          <div style={{ display: 'grid', gap: '0.5rem' }}>
+          {envMode === 'text' && (
+            <div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                One <code>KEY=value</code> per line — paste a whole <code>.env</code>. Comments, <code>export</code> and quotes are understood.
+                {' '}<strong style={{ color: 'var(--accent-yellow, #f59e0b)' }}>Every value is shown in the clear, keys included</strong> — mind a shared screen.
+              </div>
+              <textarea
+                aria-label="Environment variables as text"
+                style={{ fontFamily: 'monospace', fontSize: '0.85rem', minHeight: '320px', lineHeight: 1.5, resize: 'vertical', width: '100%' }}
+                spellCheck="false" autoComplete="off"
+                value={envText}
+                placeholder={'OPENAI_API_KEY=sk-...\nLOG_LEVEL=info'}
+                onChange={(e) => { setEnvText(e.target.value); if (envProblems.errors.length) setEnvProblems({ errors: [], warnings: [] }) }} />
+              {envProblems.errors.map(e => <div key={e} style={{ fontSize: '0.8rem', color: 'var(--accent-red, #ef4444)', marginTop: '0.25rem' }}>✗ {e}</div>)}
+              {envProblems.warnings.map(w => <div key={w} style={{ fontSize: '0.8rem', color: 'var(--accent-yellow, #f59e0b)', marginTop: '0.25rem' }}>⚠ {w}</div>)}
+              {/* Never drop what the text cannot show: these are kept as they are. */}
+              {envPairs.some(p => p.key.trim() && isMultiline(p.value)) && (
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                  Kept unchanged, edit them in Rows — they span several lines: {envPairs.filter(p => p.key.trim() && isMultiline(p.value)).map(p => <code key={p.key} style={{ marginRight: '0.4rem' }}>{p.key}</code>)}
+                </div>
+              )}
+            </div>
+          )}
+          {envMode === 'rows' && <div style={{ display: 'grid', gap: '0.5rem' }}>
             {envPairs.length === 0 && <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '1rem' }}>No environment variables.</div>}
             {envPairs.map((p, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) 2fr auto', gap: '0.5rem', alignItems: multiline(p.value) ? 'start' : 'center' }}>
@@ -332,7 +393,7 @@ function AgentDetail() {
                 )}
               </div>
             ))}
-          </div>
+          </div>}
         </div>
       )}
 

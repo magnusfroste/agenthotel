@@ -1,0 +1,66 @@
+name: Lobby
+category: Web
+icon: globe
+color: '#0ea5e9'
+source: builtin
+description: 'A web hotel for landing pages. One container serves many domains, and each site is a single markdown file, so an agent can write a whole page with one call and a person can edit it in the browser.
+
+  '
+instructions: 'A site is named after its hostname: `shop.example.com` is served from the file `shop.example.com.md`. An unknown hostname gets a 404 on purpose, so behind a wildcard a mistyped link never renders someone else''s page. Visiting the domain before any site exists shows that 404.
+
+
+  To create the first site, open https://<domain>/admin, log in with the admin user and the generated password under Credentials, and create a site named after the domain.
+
+
+  Agents use https://<domain>/mcp with the generated API token as `Authorization: Bearer <token>`. The tools are list_sites, read_site, write_site, delete_site and list_themes.
+
+
+  More sites on the same Lobby: add each hostname under Extra domains. With a wildcard route, a new site is one write_site call and needs no DNS change.
+
+  '
+tags:
+- landing pages
+- markdown
+- cms
+- mcp
+- web hosting
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/lobby
+benefits:
+- title: The file is the site
+  description: Plain markdown on a volume. Edit it with any tool, keep it in git, back it up with cp
+- title: Agents can publish
+  description: A page is one write_site call over MCP, and it shows up in the admin at once
+- title: Read by machines
+  description: Server-rendered with no client JavaScript, so crawlers and language models read the whole page
+features:
+- title: Many domains, one container
+  description: The hostname picks the file
+- title: Safe concurrent edits
+  description: Atomic writes with a content version, so a stale save is refused instead of silently winning
+- title: Themes and blocks
+  description: '::directive{attr} blocks for hero, features, FAQ and more'
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/lobby
+  ref: main
+  port: 8080
+  healthcheck: /healthz
+  env:
+  - key: LOBBY_ADMIN_USER
+    label: Admin username
+    type: text
+    default: admin
+    description: The password is generated and shown under Credentials
+  - key: DEFAULT_SITE
+    label: Fallback site
+    type: text
+    description: Optional. A site name to show for any unknown hostname. Empty keeps unknown hostnames a 404
+  secrets:
+  - key: LOBBY_API_TOKEN
+    generate: hex
+    bytes: 32
+  - key: LOBBY_ADMIN_PASSWORD
+    generate: password
+    length: 24
