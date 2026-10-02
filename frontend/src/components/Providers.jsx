@@ -19,6 +19,9 @@ function Providers() {
   const [rawText, setRawText] = useState('')
   const [liveModels, setLiveModels] = useState(null)
   const [runtimeFloor, setRuntimeFloor] = useState(0)
+  // What a new agent gets when its deploy form leaves the model empty.
+  // '' means the panel chooses, which used to be the only option.
+  const [defaultModel, setDefaultModel] = useState('')
   const [formData, setFormData] = useState({
     name: '',
     type: 'openai',
@@ -33,7 +36,25 @@ function Providers() {
 
   useEffect(() => {
     fetchProviders();
+    authFetch('/api/settings').then(r => r.json())
+      .then(s => setDefaultModel(s.default_model || ''))
+      .catch(() => {});
   }, []);
+
+  async function saveDefaultModel(value) {
+    const before = defaultModel
+    setDefaultModel(value)
+    try {
+      await authFetchOk('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_model: value })
+      })
+      toast.success(value ? `New agents will use ${value}` : 'New agents get a model chosen by the panel')
+    } catch (err) {
+      setDefaultModel(before)
+      toast.error('Could not save the default model: ' + err.message)
+    }
+  }
 
   async function fetchProviders() {
     try {
@@ -252,6 +273,27 @@ function Providers() {
           {rawOpen ? "Close raw" : "Raw"}
         </button>
       </div>
+
+      {providers.some(p => Array.isArray(p.models) && p.models.length) && (() => {
+        const ids = providers.flatMap(p => (Array.isArray(p.models) ? p.models : []).map(m => `${providerSlug(p.name)}/${m}`))
+        const missing = defaultModel && !ids.includes(defaultModel)
+        return (
+          <div className="settings-section">
+            <h2>Default model for new agents</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: 0 }}>
+              Used when an agent is deployed with its model field left empty. An agent's own setting always wins,
+              and changing this does not touch agents that already exist.
+            </p>
+            <select className="form-select" style={{ fontFamily: 'monospace', maxWidth: '32rem' }}
+              aria-label="Default model for new agents"
+              value={defaultModel} onChange={e => saveDefaultModel(e.target.value)}>
+              <option value="">Automatic — the panel picks one that works</option>
+              {missing && <option value={defaultModel}>{defaultModel} (provider missing — automatic is used)</option>}
+              {ids.map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
+          </div>
+        )
+      })()}
 
       {showOwn && (
         <OwnModelWizard existing={providers}

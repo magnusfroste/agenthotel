@@ -20,6 +20,33 @@ const slugify = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // Returns a new config object with provider env vars and default models
 // injected. Never mutates the input.
+// The operator's pick for new agents, when it can be honoured.
+//
+// default_provider only chose the provider; the model under it was still
+// whichever passed the probe first, in list order. With gpt-4 listed first
+// under OpenAI, every new agent got gpt-4 — the operator had no way to say
+// "dgxspark/glm-5.3-flash" short of typing it into each deploy form
+// (2026-10-02). A whole id names both, so it is taken as written: no probe,
+// because choosing it was the operator's test.
+//
+// Honoured only when its provider is configured with a key, since an id whose
+// prefix names nothing deploys an agent that cannot start. Then the reason is
+// returned instead, for the caller to log.
+function pinnedDefaultModel(value, providers) {
+  const id = String(value || '').trim();
+  if (!id) return { model: null, reason: null };
+  const at = id.indexOf('/');
+  if (at < 1 || at === id.length - 1) {
+    return { model: null, reason: `Default model "${id}" is not written as provider/model` };
+  }
+  const prefix = id.slice(0, at);
+  const owner = (providers || []).find(p => slugify(p.name) === prefix && p.apiKey);
+  if (!owner) {
+    return { model: null, reason: `Default model "${id}" names provider "${prefix}", which has no configured key` };
+  }
+  return { model: id, reason: null };
+}
+
 async function injectProviderEnv(db, config, plugin) {
   const finalConfig = { ...(config || {}) };
 
@@ -92,6 +119,22 @@ async function injectProviderEnv(db, config, plugin) {
   // those parameters, caching each verdict. Runtimes with no declaration
   // (odysseus, docker-app, compose) never reach this and are unaffected.
   const modelKey = plugin && plugin.modelConfigKey;
+  if (modelKey && !finalConfig[modelKey]) {
+    let pinned = '';
+    try {
+      pinned = db.prepare("SELECT value FROM settings WHERE key = 'default_model'").get()?.value || '';
+    } catch (_) { /* settings table not ready: choose automatically */ }
+    const { model, reason } = pinnedDefaultModel(pinned, providers);
+    if (model) finalConfig[modelKey] = model;
+    if (reason) {
+      // Falling back is never silent: the operator chose a model on purpose.
+      console.warn(`[ProviderEnv] ${reason} — choosing automatically`);
+      try {
+        db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)')
+          .run('provider.fallback', null, `${reason} — choosing automatically`);
+      } catch (_) { /* event log is best-effort */ }
+    }
+  }
   if (modelKey && !finalConfig[modelKey]) {
     const { selectModel } = require('./modelSelect');
 
@@ -167,4 +210,4 @@ async function injectProviderEnv(db, config, plugin) {
   return finalConfig;
 }
 
-module.exports = { injectProviderEnv, PROVIDER_ENV_MAP };
+module.exports = { injectProviderEnv, pinnedDefaultModel, PROVIDER_ENV_MAP };
