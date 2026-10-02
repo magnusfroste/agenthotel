@@ -32,7 +32,7 @@ If no model is configured, agents default to `openai/gpt-5.3` (OpenClaw) / `open
 1. Add the provider in the panel: base URL `https://inference.hetzner.com/api/v1`, your API key, fetch the model list.
 2. Redeploy the agent (or create a new one) — `HERTZNER_API_KEY`, `HERTZNER_BASE_URL`, `HERTZNER_MODELS` are injected.
 3. **OpenClaw**: pick a Hetzner model in the UI, or set `OPENCLAW_MODEL_PRIMARY=hertzner/<model>` on the Environment tab and redeploy.
-4. **Hermes**: nothing to do by hand — set `default_provider` in Settings, or set `HERMES_MODEL=hertzner/<model>` on the Environment tab, and the endpoint is written into `custom_providers` for you.
+4. **Hermes**: nothing to do by hand — pick `hertzner/<model>` as **Default model for new agents** on the Providers page, or set `HERMES_MODEL=hertzner/<model>` on the Environment tab, and the endpoint is written into `custom_providers` for you.
 5. **Odysseus / generic apps**: point the agent at Hetzner with `OPENAI_API_KEY=<hetzner key>` and `OPENAI_BASE_URL=https://inference.hetzner.com/api/v1` on the Environment tab, then choose a model.
 
 ### Notes
@@ -59,9 +59,17 @@ still cheap.
 
 ### Making it the fleet default
 
-Set `default_provider` in Settings to the provider's name. New agents then pick
-their model from it before any hosted provider, and each runtime is configured
-for it automatically:
+On the Providers page, pick the model under **Default model for new agents** —
+for example `dgxspark/glm-5.3-flash`. Every agent deployed with its model field
+left empty then gets exactly that, and each runtime is configured for it
+automatically. If its provider is later removed, new agents fall back to an
+automatic choice and the event log says so.
+
+(The older `default_provider` setting still works through the settings API: it
+picks the provider, and the panel then chooses that provider's first model that
+passes its checks. The model setting wins when both are set.)
+
+Either way:
 
 - **Hermes** gets a `custom_providers` entry in its `config.yaml`, keyed to the
   env var the panel injects. The endpoint appears under its own name in `/model`
