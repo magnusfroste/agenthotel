@@ -1034,7 +1034,14 @@ const multiline = (v) => typeof v === 'string' && (v.includes('\n') || v.length 
 function getCredentials(agent) {
   const c = agent.config || {}
   const creds = []
-  if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
+  // Keys a runtime rule has already turned into a credential. The generic
+  // sweep below must skip them, or the Hermes login showed up twice: once as
+  // "Dashboard Password" and again under its raw variable name.
+  const USED = new Set()
+  if (agent.runtime === 'openclaw' && c.OPENCLAW_GATEWAY_TOKEN) {
+    creds.push({ label: 'Gateway Token', value: c.OPENCLAW_GATEWAY_TOKEN })
+    USED.add('OPENCLAW_GATEWAY_TOKEN')
+  }
   if (agent.runtime === 'hermes') {
     // Mirror the precedence in plugins/hermes.js buildEnv — reading only
     // HERMES_DASHBOARD_PASSWORD showed the default to anyone who had set
@@ -1044,8 +1051,12 @@ function getCredentials(agent) {
       label: 'Dashboard Password',
       value: c.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD || c.HERMES_DASHBOARD_PASSWORD || 'agenthotel'
     })
+    // The secret only signs sessions; nobody types it anywhere, so it is not
+    // a credential to show — it stays on the Environment tab.
+    for (const k of ['HERMES_DASHBOARD_BASIC_AUTH_USERNAME', 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD', 'HERMES_DASHBOARD_PASSWORD', 'HERMES_DASHBOARD_BASIC_AUTH_SECRET']) USED.add(k)
   }
   if (agent.runtime === 'odysseus') {
+    USED.add('ODYSSEUS_ADMIN_USER'); USED.add('ODYSSEUS_ADMIN_PASSWORD')
     creds.push({ label: 'Admin Username', value: c.ODYSSEUS_ADMIN_USER || 'admin' })
     if (c.ODYSSEUS_ADMIN_PASSWORD) {
       creds.push({ label: 'Admin Password', value: c.ODYSSEUS_ADMIN_PASSWORD })
@@ -1076,6 +1087,7 @@ function getCredentials(agent) {
   }
 
   for (const [key, value] of pairs) {
+    if (USED.has(key)) continue
     // Names that mean "this is a credential". MCP_KEY_NN is matched by prefix
     // because a stack hands one to each agent, and DASHBOARD_USERNAME comes
     // along so the password it belongs to is not shown without its user.
