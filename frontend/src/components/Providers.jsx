@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { authFetch, authFetchOk } from '../lib/auth';
 import { useToast } from './Toast';
 import OwnModelWizard from './OwnModelWizard';
+import ModelSearch from './ModelSearch';
 import { Plus, Edit, Trash2, CheckCircle, XCircle, Code, Cpu } from 'lucide-react';
 
 // The prefix an agent's model field expects, derived exactly as the backend
@@ -326,17 +327,19 @@ function Providers() {
               Used when an agent is deployed with its model field left empty. An agent's own setting always wins,
               and changing this does not touch agents that already exist.
             </p>
-            <select className="form-select" style={{ fontFamily: 'monospace', maxWidth: '32rem' }}
-              aria-label="Default model for new agents"
-              value={defaultModel} onChange={e => saveDefaultModel(e.target.value)}>
-              <option value="">Automatic — the panel picks one that works</option>
-              {missing && <option value={defaultModel}>{defaultModel} (provider missing — automatic is used)</option>}
-              {groups.map(g => (
-                <optgroup key={g.name} label={g.name}>
-                  {g.ids.map(id => <option key={id} value={id}>{id}</option>)}
-                </optgroup>
-              ))}
-            </select>
+            <ModelSearch
+              label="Default model for new agents"
+              placeholder="Search, e.g. luna, sol 6.1, glm…"
+              value={defaultModel}
+              onChange={id => { if (id !== defaultModel) saveDefaultModel(id) }}
+              options={groups.flatMap(g => g.ids.map(id => ({ id, group: g.name })))}
+              extra={[{ id: '', label: 'Automatic — the panel picks one that works' }]}
+            />
+            {missing && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-yellow, #f59e0b)', marginTop: '0.4rem' }}>
+                {defaultModel} is no longer offered by any provider here, so new agents get an automatic choice.
+              </div>
+            )}
           </div>
         )
       })()}
@@ -567,7 +570,16 @@ function Providers() {
                   <strong>API Key:</strong> •••••{provider.apiKey.slice(-4)}
                 </div>
               )}
-              {Array.isArray(provider.models) && provider.models.length > 0 && (
+              {provider.builtin && Array.isArray(provider.models) && (
+                // Hundreds of ids are not something to read on a card. They are
+                // searched where a model is picked — the default above, Test
+                // below — and Hermes and OpenClaw list them in their own pickers.
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {provider.models.filter(isChatModel).length} chat models — search them under Default model or Test.
+                  Agents write them as <code>{providerSlug(provider.name)}/model</code>.
+                </div>
+              )}
+              {!provider.builtin && Array.isArray(provider.models) && provider.models.length > 0 && (
                 // Shown as an agent must write them: provider/model. A bare name
                 // is a guess — hermes reads glm-5.3-flash as Z.ai's, whatever
                 // endpoint actually serves it — and the prefix is what settles
@@ -604,17 +616,14 @@ function Providers() {
 
             <div className="provider-card-test">
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <select
+                <ModelSearch
+                  compact
+                  label={`Model to test on ${provider.name}`}
+                  placeholder="Search a model to test…"
                   value={testModels[provider.id] || ''}
-                  onChange={(e) => setTestModels(prev => ({ ...prev, [provider.id]: e.target.value }))}
-                  className="form-select"
-                  style={{ flex: 1, padding: '0.4rem', fontSize: '0.8rem' }}
-                >
-                  <option value="">Select model to test...</option>
-                  {provider.models && Array.isArray(provider.models) && provider.models.map((model) => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
+                  onChange={(id) => setTestModels(prev => ({ ...prev, [provider.id]: id }))}
+                  options={(Array.isArray(provider.models) ? provider.models : []).filter(isChatModel).map(id => ({ id }))}
+                />
                 <button
                   onClick={() => handleTest(provider)}
                   disabled={testingProviders[provider.id] || !testModels[provider.id]}
