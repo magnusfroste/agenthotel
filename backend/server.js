@@ -192,6 +192,25 @@ try {
   console.error('[Providers] Could not normalise built-in providers:', err.message);
 }
 
+// Agents deployed before built-ins handed over only their key still carry
+// OPENAI_MODELS and friends in their config — rows nothing reads, shown on the
+// Environment tab as if they meant something. Drop them once. The running
+// container keeps its environment until the next redeploy, which is fine: the
+// values were never used there either.
+try {
+  const { builtinLeftovers } = require('./lib/providerEnv');
+  for (const a of db.prepare('SELECT id, name, config FROM agents').all()) {
+    const config = JSON.parse(a.config || '{}');
+    const gone = builtinLeftovers(config);
+    if (!gone.length) continue;
+    for (const k of gone) delete config[k];
+    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), a.id);
+    logEvent('providers.cleanup', a.id, `${a.name}: removed ${gone.join(', ')} — values a built-in provider no longer hands out, and nothing read`);
+  }
+} catch (err) {
+  console.error('[Providers] Could not remove built-in leftovers:', err.message);
+}
+
 // A Hermes agent created before per-agent passwords serves its dashboard — a
 // chat with an agent that runs shell commands — on a public domain, behind
 // admin / agenthotel: a password printed in this repository. Give each one

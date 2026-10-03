@@ -211,4 +211,21 @@ async function injectProviderEnv(db, config, plugin) {
   return finalConfig;
 }
 
-module.exports = { injectProviderEnv, pinnedDefaultModel, PROVIDER_ENV_MAP };
+// Rows a built-in used to leave in an agent's config and nothing reads:
+// <SLUG>_MODELS always, and <SLUG>_BASE_URL when it is just the provider's
+// own address. A base URL that differs is an operator's proxy and stays.
+// Returns the keys to drop; the caller decides what to do about them.
+function builtinLeftovers(config) {
+  const out = [];
+  for (const [key, value] of Object.entries(config || {})) {
+    const m = /^([A-Z0-9]+)_(MODELS|BASE_URL)$/.exec(key);
+    if (!m) continue;
+    const entry = BUILTIN[m[1].toLowerCase()];
+    if (!entry) continue;
+    if (m[2] === 'MODELS') out.push(key);
+    else if (String(value || '').trim().replace(/\/+$/, '') === entry.baseUrl) out.push(key);
+  }
+  return out;
+}
+
+module.exports = { injectProviderEnv, pinnedDefaultModel, builtinLeftovers, PROVIDER_ENV_MAP };

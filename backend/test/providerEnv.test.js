@@ -43,3 +43,15 @@ test('what the operator set on the agent is never overwritten', async () => {
   assert.strictEqual(env.OPENAI_API_KEY, 'mine');
   assert.strictEqual(env.OPENAI_BASE_URL, 'https://proxy.example/v1');
 });
+
+test('leftover rows from a built-in are named for removal; an operator\'s proxy is not', async () => {
+  const { builtinLeftovers } = require('../lib/providerEnv');
+  const gone = builtinLeftovers({
+    OPENAI_API_KEY: 'sk', OPENAI_MODELS: 'gpt-4,gpt-5.6-luna', OPENAI_BASE_URL: 'https://api.openai.com/v1/',
+    OPENROUTER_MODELS: 'x', OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+    DGXSPARK_BASE_URL: 'https://glm.example.se/v1', DGXSPARK_MODELS: 'glm-5.3-flash',
+    HERMES_MODEL: 'openai/gpt-5.6-luna'
+  });
+  assert.deepStrictEqual(gone.sort(), ['OPENAI_BASE_URL', 'OPENAI_MODELS', 'OPENROUTER_BASE_URL', 'OPENROUTER_MODELS']);
+  assert.deepStrictEqual(builtinLeftovers({ OPENAI_BASE_URL: 'https://proxy.example/v1', OPENAI_API_KEY: 'sk' }), []);
+});
