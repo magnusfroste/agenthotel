@@ -177,7 +177,7 @@ async function injectProviderEnv(db, config, plugin) {
       const prefix = slugify(row.name) || (row.name || '').toLowerCase();
       let chosen = null;
       try {
-        chosen = await selectModel(db, row, plugin.name || modelKey, plugin.modelRequirements, plugin.minContextTokens);
+        chosen = await selectModel(db, row, plugin.name || modelKey, plugin.modelRequirements, plugin.minContextTokens, plugin.fallbackModel);
       } catch (err) {
         console.warn(`[ProviderEnv] Model selection failed for ${row.name}: ${err.message}`);
       }

@@ -9,6 +9,10 @@ import { Plus, Edit, Trash2, CheckCircle, XCircle, Code, Cpu } from 'lucide-reac
 // and digits only. "DGX Spark" and "dgxspark" are the same provider.
 const providerSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+// Mirrors backend/lib/builtinProviders.js isChatModel — keep the two in step.
+const NOT_CHAT = /(^|[\/-])(tts|transcribe|whisper|embed(ding)?s?|dall-e|moderation|sora|davinci|babbage)([\/-]|$)|text-embedding|omni-moderation|-image(-|$)|^gpt-image|-audio(-|$)|^gpt-audio|-realtime(-|$)|^gpt-realtime/i;
+const isChatModel = (id) => !NOT_CHAT.test(String(id || ''));
+
 function Providers() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -310,7 +314,9 @@ function Providers() {
       {providers.some(p => Array.isArray(p.models) && p.models.length) && (() => {
         const groups = providers
           .filter(p => Array.isArray(p.models) && p.models.length)
-          .map(p => ({ name: p.name, ids: p.models.map(m => `${providerSlug(p.name)}/${m}`) }))
+          // Lists stored before chat-only filtering still carry tts and image
+          // models; an agent cannot run on those, so they are not offered.
+          .map(p => ({ name: p.name, ids: p.models.filter(isChatModel).map(m => `${providerSlug(p.name)}/${m}`).sort() }))
         const ids = groups.flatMap(g => g.ids)
         const missing = defaultModel && !ids.includes(defaultModel)
         return (

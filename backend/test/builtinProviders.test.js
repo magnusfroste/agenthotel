@@ -43,3 +43,14 @@ test('the slug is the prefix an agent writes and the stem of its env vars', () =
   assert.strictEqual(slugify('DGX Spark'), 'dgxspark');
   assert.strictEqual(`${slugify('DGX Spark').toUpperCase()}_API_KEY`, 'DGXSPARK_API_KEY');
 });
+
+test('only models an agent can chat with count; an unfamiliar id does', () => {
+  const { isChatModel } = require('../lib/builtinProviders');
+  for (const id of ['gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-5.2-codex', 'gpt-3.5-turbo-1106', 'openai/gpt-6.1-sol-pro',
+                    'anthropic/claude-sonnet-5.5', 'glm-5.3-flash', 'unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q2_K_XL', 'gpt-4o-search-preview'])
+    assert.ok(isChatModel(id), `${id} should count as chat`);
+  for (const id of ['gpt-4o-mini-tts-2025-03-20', 'gpt-audio-mini', 'gpt-4o-transcribe', 'gpt-image-2.5-flare', 'whisper-1',
+                    'text-embedding-3-small', 'omni-moderation-latest', 'dall-e-3', 'gpt-realtime', 'sora-2',
+                    'google/gemini-3.1-flash-image', 'openai/gpt-5.4-image-2', 'davinci-002'])
+    assert.ok(!isChatModel(id), `${id} should not count as chat`);
+});

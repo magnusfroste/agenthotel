@@ -1,5 +1,5 @@
 const fetch = require('node-fetch');
-const { effectiveBaseUrl, modelsRequest, normalizeModelId } = require('./builtinProviders');
+const { effectiveBaseUrl, modelsRequest, normalizeModelId, isChatModel } = require('./builtinProviders');
 
 // Picking a model that EXISTS is not the same as picking one that WORKS.
 //
@@ -107,15 +107,24 @@ function lookupContext(byModel, model) {
  * Return the first model from the provider's configured list that accepts the
  * runtime's declared request parameters, or null when none does.
  */
-async function selectModel(db, provider, runtime, requirements, minContextTokens) {
+async function selectModel(db, provider, runtime, requirements, minContextTokens, preferred) {
   ensureSchema(db);
 
   let candidates = [];
   try {
     const parsed = JSON.parse(provider.models || '[]');
-    if (Array.isArray(parsed)) candidates = parsed.filter(m => typeof m === 'string' && m);
+    if (Array.isArray(parsed)) candidates = parsed.filter(m => typeof m === 'string' && m && isChatModel(m));
   } catch (_) { /* unparseable list — nothing to choose from */ }
   if (!candidates.length || !provider.apiKey) return null;
+
+  // The runtime's own recommendation goes first when this provider has it.
+  // A fetched list is in whatever order the API returns — OpenAI's started
+  // with gpt-5.2-codex and gpt-5-nano — and list order is a poor way to choose
+  // a model a fleet will run on.
+  if (preferred) {
+    const at = candidates.indexOf(preferred);
+    if (at > 0) candidates = [preferred, ...candidates.slice(0, at), ...candidates.slice(at + 1)];
+  }
 
   // A runtime may need a minimum context window. hermes states its own floor
   // in its refusal ("below the minimum 64,000 required"), and providers report

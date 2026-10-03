@@ -61,8 +61,20 @@ function normalizeModelId(providerName, id) {
   return value;
 }
 
+// Whether a model id can be an agent's model. A provider's listing mixes in
+// speech, transcription, image, embedding and moderation models: OpenAI's
+// had 60 of 141 (2026-10-03), and the default-model list offered
+// gpt-4o-transcribe as if an agent could chat with it. Judged by name — no
+// listing says "chat" — and conservative: an unfamiliar id counts as chat,
+// because hiding a usable model is worse than showing one that fails Test.
+const NOT_CHAT = /(^|[\/-])(tts|transcribe|whisper|embed(ding)?s?|dall-e|moderation|sora|davinci|babbage)([\/-]|$)|text-embedding|omni-moderation|-image(-|$)|^gpt-image|-audio(-|$)|^gpt-audio|-realtime(-|$)|^gpt-realtime/i;
+
+function isChatModel(id) {
+  return !NOT_CHAT.test(String(id || ''));
+}
+
 function listBuiltin() {
   return Object.entries(BUILTIN).map(([slug, e]) => ({ slug, name: e.name, baseUrl: e.baseUrl, keyEnv: e.keyEnv }));
 }
 
-module.exports = { BUILTIN, slugify, builtinFor, effectiveBaseUrl, modelsRequest, normalizeModelId, listBuiltin };
+module.exports = { BUILTIN, slugify, builtinFor, effectiveBaseUrl, modelsRequest, normalizeModelId, isChatModel, listBuiltin };

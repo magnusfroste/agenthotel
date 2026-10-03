@@ -2816,7 +2816,9 @@ app.get('/api/providers/builtin', requireAuth, (req, res) => {
 async function refreshProviderModels(row) {
   const { fetchProviderModels } = require('./lib/modelSelect');
   const listed = await fetchProviderModels(row);
-  const ids = listed.map(m => m.id).filter(Boolean);
+  // Only what an agent can talk to: the default-model list and Automatic both
+  // read this, and neither has a use for a transcription model.
+  const ids = listed.map(m => m.id).filter(Boolean).filter(builtinProviders.isChatModel);
   if (ids.length) db.prepare('UPDATE providers SET models = ? WHERE id = ?').run(JSON.stringify(ids), row.id);
   return ids;
 }
