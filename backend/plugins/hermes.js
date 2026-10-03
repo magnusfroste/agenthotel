@@ -1,8 +1,14 @@
 const Database = require('better-sqlite3');
 const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
+const { BUILTIN, slugify, effectiveBaseUrl } = require('../lib/builtinProviders');
 
+// By slug, so "Open AI" and "openai" are the same provider — the same rule
+// that names the env vars a guest receives. Built-ins answer at their fixed
+// address whatever the row stored.
 function getProvider(name) {
-  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
+  const want = slugify(name);
+  const row = db.prepare('SELECT name, apiKey, baseUrl FROM providers').all().find(p => slugify(p.name) === want);
+  return row ? { apiKey: row.apiKey, baseUrl: effectiveBaseUrl(row) } : undefined;
 }
 
 // Provider name → base_url. Hermes auto-detects the provider from the base_url
@@ -10,27 +16,11 @@ function getProvider(name) {
 // the correct API mode. We therefore ONLY set provider: auto + base_url + the
 // bare model — no api_mode and no custom_providers (those triggered
 // "Context length exceeded" / "session_id" bugs in v0.19.0).
-const PROVIDER_BASE_URL = {
-  openai: 'https://api.openai.com/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  deepseek: 'https://api.deepseek.com/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  mistral: 'https://api.mistral.ai/v1'
-};
+const PROVIDER_BASE_URL = Object.fromEntries(Object.entries(BUILTIN).map(([slug, e]) => [slug, e.baseUrl]));
 
 // API key env var per canonical provider name.
-const PROVIDER_KEYS = {
-  openai: { keyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
-  openrouter: { keyEnv: 'OPENROUTER_API_KEY' },
-  anthropic: { keyEnv: 'ANTHROPIC_API_KEY' },
-  gemini: { keyEnv: 'GEMINI_API_KEY' },
-  deepseek: { keyEnv: 'DEEPSEEK_API_KEY' },
-  groq: { keyEnv: 'GROQ_API_KEY' },
-  xai: { keyEnv: 'XAI_API_KEY' },
-  mistral: { keyEnv: 'MISTRAL_API_KEY' }
-};
+const PROVIDER_KEYS = Object.fromEntries(Object.entries(BUILTIN).map(([slug, e]) =>
+  [slug, { keyEnv: e.keyEnv, ...(e.baseUrlEnv ? { baseUrlEnv: e.baseUrlEnv } : {}) }]));
 
 // Model-prefix → valid auth registry provider (auth.py PROVIDER_REGISTRY +
 // provider plugins in v0.19.0). Anything unmapped falls back to `custom`

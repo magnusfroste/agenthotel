@@ -58,6 +58,7 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 
 ### Providers & Models
 - **Add your own model** — paste the address of a vLLM, llama.cpp, Ollama or LM Studio server; the panel lists what it serves with each model's context window, flags those too small for Hermes, and shows the exact `provider/model` an agent should write. Local-server context windows are read correctly, including vLLM's `max_model_len`
+- **Built-in providers need only a key** — OpenAI, OpenRouter, Anthropic, Gemini, DeepSeek, Groq, xAI, Mistral and Z.ai are known by name: pick one, paste the key, and the panel fetches what it serves. Only your own endpoints take an address
 - **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
 - **Provider testing** — list available models and test them per provider, right from the UI
 - **Default model for new agents** — pick one `provider/model` on the Providers page and every agent deployed without a model gets it; leave it on Automatic and the panel chooses one that works

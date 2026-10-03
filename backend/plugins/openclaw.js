@@ -1,8 +1,15 @@
 const Database = require('better-sqlite3');
 const db = new Database(process.env.DB_PATH || '/data/agenthotel.db');
 
+// By slug, so "Open AI" and "openai" are the same provider — the same rule
+// that names the env vars a guest receives. Built-ins answer at their fixed
+// address whatever the row stored.
+const { slugify, effectiveBaseUrl } = require('../lib/builtinProviders');
+
 function getProvider(name) {
-  return db.prepare('SELECT apiKey, baseUrl FROM providers WHERE LOWER(name) = LOWER(?)').get(name);
+  const want = slugify(name);
+  const row = db.prepare('SELECT name, apiKey, baseUrl FROM providers').all().find(p => slugify(p.name) === want);
+  return row ? { apiKey: row.apiKey, baseUrl: effectiveBaseUrl(row) } : undefined;
 }
 
 module.exports = {

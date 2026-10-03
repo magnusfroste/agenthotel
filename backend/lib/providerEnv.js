@@ -5,18 +5,12 @@
 // would make OpenRouter's key clobber OpenAI's. Each canonical provider
 // maps to its own env var; custom OpenAI-compatible providers (unknown
 // name) fall back to the OPENAI_API_KEY/OPENAI_BASE_URL slots.
-const PROVIDER_ENV_MAP = {
-  openai: { key: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
-  openrouter: { key: 'OPENROUTER_API_KEY' },
-  anthropic: { key: 'ANTHROPIC_API_KEY' },
-  gemini: { key: 'GEMINI_API_KEY' },
-  deepseek: { key: 'DEEPSEEK_API_KEY' },
-  groq: { key: 'GROQ_API_KEY' },
-  xai: { key: 'XAI_API_KEY' },
-  mistral: { key: 'MISTRAL_API_KEY' }
-};
+const { BUILTIN, slugify, effectiveBaseUrl } = require('./builtinProviders');
 
-const slugify = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// The canonical env slot per built-in provider, derived from the one registry
+// so a provider added there is injected here without a second edit.
+const PROVIDER_ENV_MAP = Object.fromEntries(Object.entries(BUILTIN).map(([slug, e]) =>
+  [slug, { key: e.keyEnv, ...(e.baseUrlEnv ? { baseUrl: e.baseUrlEnv } : {}) }]));
 
 // Returns a new config object with provider env vars and default models
 // injected. Never mutates the input.
@@ -82,8 +76,8 @@ async function injectProviderEnv(db, config, plugin) {
       if (!finalConfig[`${slugUpper}_API_KEY`] && provider.apiKey) {
         finalConfig[`${slugUpper}_API_KEY`] = provider.apiKey;
       }
-      if (!finalConfig[`${slugUpper}_BASE_URL`] && provider.baseUrl) {
-        finalConfig[`${slugUpper}_BASE_URL`] = provider.baseUrl;
+      if (!finalConfig[`${slugUpper}_BASE_URL`] && effectiveBaseUrl(provider)) {
+        finalConfig[`${slugUpper}_BASE_URL`] = effectiveBaseUrl(provider);
       }
       if (!finalConfig[`${slugUpper}_MODELS`] && provider.models) {
         try {
@@ -95,14 +89,14 @@ async function injectProviderEnv(db, config, plugin) {
     const mapping = PROVIDER_ENV_MAP[slug];
     if (mapping) {
       if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
-      if (mapping.baseUrl && !finalConfig[mapping.baseUrl] && provider.baseUrl) {
-        finalConfig[mapping.baseUrl] = provider.baseUrl;
+      if (mapping.baseUrl && !finalConfig[mapping.baseUrl]) {
+        finalConfig[mapping.baseUrl] = effectiveBaseUrl(provider);
       }
     } else if (provider.type === 'openai' && provider.apiKey) {
       // Custom OpenAI-compatible provider (e.g. self-hosted vLLM, DGX1).
       // Use the OPENAI slots only if a real OpenAI provider hasn't claimed them.
       if (!finalConfig.OPENAI_API_KEY) finalConfig.OPENAI_API_KEY = provider.apiKey;
-      if (!finalConfig.OPENAI_BASE_URL && provider.baseUrl) finalConfig.OPENAI_BASE_URL = provider.baseUrl;
+      if (!finalConfig.OPENAI_BASE_URL && effectiveBaseUrl(provider)) finalConfig.OPENAI_BASE_URL = effectiveBaseUrl(provider);
     }
   }
 

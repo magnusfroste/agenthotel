@@ -22,6 +22,9 @@ function Providers() {
   // What a new agent gets when its deploy form leaves the model empty.
   // '' means the panel chooses, which used to be the only option.
   const [defaultModel, setDefaultModel] = useState('')
+  // The built-in providers the panel knows, with the ones already added marked.
+  const [builtinList, setBuiltinList] = useState([])
+  const [refreshing, setRefreshing] = useState({})
   const [formData, setFormData] = useState({
     name: '',
     type: 'openai',
@@ -36,6 +39,7 @@ function Providers() {
 
   useEffect(() => {
     fetchProviders();
+    authFetch('/api/providers/builtin').then(r => r.json()).then(setBuiltinList).catch(() => {})
     authFetch('/api/settings').then(r => r.json())
       .then(s => setDefaultModel(s.default_model || ''))
       .catch(() => {});
@@ -70,9 +74,11 @@ function Providers() {
 
   function handleEdit(provider) {
     setEditingProvider(provider);
+    setLiveModels(null);
     setFormData({
+      kind: provider.builtin ? 'builtin' : 'own',
+      slug: provider.builtin ? providerSlug(provider.name) : '',
       name: provider.name,
-      type: provider.type,
       baseUrl: provider.baseUrl || '',
       apiKey: provider.apiKey || '',
       models: Array.isArray(provider.models) ? provider.models.join(', ') : ''
@@ -82,9 +88,12 @@ function Providers() {
 
   function handleAdd() {
     setEditingProvider(null);
+    setLiveModels(null);
+    const free = builtinList.find(b => !b.configured)
     setFormData({
+      kind: 'builtin',
+      slug: free ? free.slug : '',
       name: '',
-      type: 'openai',
       baseUrl: '',
       apiKey: '',
       models: ''
@@ -92,14 +101,16 @@ function Providers() {
     setShowForm(true);
   }
 
+  // Which built-in this provider is, and the key. Everything else about a
+  // built-in — its address, what it serves — the panel knows or asks for.
+  // An endpoint of your own is the opposite: the address is the point.
   async function handleSubmit(e) {
     e.preventDefault();
     try {
-      const modelsArray = formData.models.split(',').map(m => m.trim()).filter(m => m);
-      const payload = {
-        ...formData,
-        models: modelsArray
-      };
+      const payload = formData.kind === 'builtin'
+        ? { name: (builtinList.find(b => b.slug === formData.slug) || {}).name || formData.name, apiKey: formData.apiKey }
+        : { name: formData.name, baseUrl: formData.baseUrl, apiKey: formData.apiKey,
+            models: formData.models.split(',').map(m => m.trim()).filter(m => m) };
 
       const url = editingProvider 
         ? `/api/providers/${editingProvider.id}`
@@ -113,9 +124,14 @@ function Providers() {
       });
 
       if (res.ok) {
+        const saved = await res.json().catch(() => ({}))
         setShowForm(false);
         fetchProviders();
-        toast.success(editingProvider ? 'Provider updated' : 'Provider created');
+        authFetch('/api/providers/builtin').then(r => r.json()).then(setBuiltinList).catch(() => {})
+        if (saved.warning) toast.warning(saved.warning)
+        else toast.success(saved.builtin && Array.isArray(saved.models)
+          ? `${saved.name} saved — ${saved.models.length} models fetched`
+          : (editingProvider ? 'Provider updated' : 'Provider created'));
       } else {
         const err = await res.json();
         toast.error('Error: ' + (err.error || 'Unknown error'));
@@ -221,6 +237,23 @@ function Providers() {
     }
   }
 
+  // Ask a provider what it serves now, and keep the answer. New models appear
+  // here and in the default-model list without anyone typing them.
+  async function handleRefreshModels(provider) {
+    setRefreshing(prev => ({ ...prev, [provider.id]: true }))
+    try {
+      const res = await authFetch(`/api/providers/${provider.id}/refresh-models`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not refresh')
+      toast.success(`${provider.name}: ${data.models.length} models`)
+      fetchProviders()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setRefreshing(prev => ({ ...prev, [provider.id]: false }))
+    }
+  }
+
   async function handleFetchModels(provider) {
     try {
       // ?live=1 asks the provider directly and returns the context window it
@@ -275,7 +308,10 @@ function Providers() {
       </div>
 
       {providers.some(p => Array.isArray(p.models) && p.models.length) && (() => {
-        const ids = providers.flatMap(p => (Array.isArray(p.models) ? p.models : []).map(m => `${providerSlug(p.name)}/${m}`))
+        const groups = providers
+          .filter(p => Array.isArray(p.models) && p.models.length)
+          .map(p => ({ name: p.name, ids: p.models.map(m => `${providerSlug(p.name)}/${m}`) }))
+        const ids = groups.flatMap(g => g.ids)
         const missing = defaultModel && !ids.includes(defaultModel)
         return (
           <div className="settings-section">
@@ -289,7 +325,11 @@ function Providers() {
               value={defaultModel} onChange={e => saveDefaultModel(e.target.value)}>
               <option value="">Automatic — the panel picks one that works</option>
               {missing && <option value={defaultModel}>{defaultModel} (provider missing — automatic is used)</option>}
-              {ids.map(id => <option key={id} value={id}>{id}</option>)}
+              {groups.map(g => (
+                <optgroup key={g.name} label={g.name}>
+                  {g.ids.map(id => <option key={id} value={id}>{id}</option>)}
+                </optgroup>
+              ))}
             </select>
           </div>
         )
@@ -322,46 +362,74 @@ function Providers() {
 
       {showForm && (
         <div className="settings-section">
-          <h2>{editingProvider ? 'Edit Provider' : 'Add Provider'}</h2>
+          <h2>{editingProvider ? `Edit ${editingProvider.name}` : 'Add Provider'}</h2>
           <form onSubmit={handleSubmit}>
-            <div className="form-group">
-              <label className="form-label">Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g., OpenAI, Anthropic, Local LLM"
-                required
-              />
-            </div>
+            {!editingProvider && (
+              <div className="form-group">
+                <label className="form-label">What kind</label>
+                <select className="form-select" value={formData.kind}
+                  onChange={(e) => setFormData({ ...formData, kind: e.target.value })}>
+                  <option value="builtin">A built-in provider — just the key</option>
+                  <option value="own">An endpoint of your own — vLLM, Ollama, llama.cpp, a GPU box</option>
+                </select>
+              </div>
+            )}
 
-            <div className="form-group">
-              <label className="form-label">Type</label>
-              <select
-                className="form-select"
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-              >
-                <option value="openai">OpenAI Compatible</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
+            {formData.kind === 'own' && !editingProvider && (
+              <div className="form-group">
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: 0 }}>
+                  Your own endpoint gets a name you choose, its address and a key. The panel asks it what it
+                  serves and shows the exact <code>name/model</code> an agent writes.
+                </p>
+                <button type="button" className="btn btn-primary" onClick={() => { setShowForm(false); setShowOwn(true); }}>
+                  <Cpu size={16} /> Continue
+                </button>
+                <button type="button" className="btn btn-secondary" style={{ marginLeft: '0.5rem' }} onClick={() => setShowForm(false)}>Cancel</button>
+              </div>
+            )}
 
-            <div className="form-group">
-              <label className="form-label">Base URL</label>
-              <input
-                type="url"
-                className="form-input"
-                value={formData.baseUrl}
-                onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
-                placeholder="https://api.openai.com/v1"
-                required
-              />
-            </div>
+            {formData.kind === 'builtin' && (
+              <div className="form-group">
+                <label className="form-label">Provider</label>
+                {editingProvider ? (
+                  <div style={{ fontSize: '0.9rem' }}>{editingProvider.name}
+                    <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>{editingProvider.baseUrl}</span>
+                  </div>
+                ) : (
+                  <select className="form-select" value={formData.slug} required
+                    onChange={(e) => setFormData({ ...formData, slug: e.target.value })}>
+                    {builtinList.map(b => (
+                      <option key={b.slug} value={b.slug} disabled={b.configured}>{b.name}{b.configured ? ' — already added' : ''}</option>
+                    ))}
+                  </select>
+                )}
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                  The address is fixed and the model list is fetched when you save. Agents write models as{' '}
+                  <code>{formData.slug || 'provider'}/model</code>.
+                </div>
+              </div>
+            )}
 
+            {formData.kind === 'own' && editingProvider && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Name</label>
+                  <input type="text" className="form-input" value={formData.name} required
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                    Agents write models as <code>{providerSlug(formData.name) || 'name'}/model</code>. Renaming changes that for every agent on its next redeploy.
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Base URL</label>
+                  <input type="url" className="form-input" value={formData.baseUrl} required
+                    onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
+                    placeholder="https://gpu.example.com/v1" />
+                </div>
+              </>
+            )}
+
+            {(formData.kind === 'builtin' || editingProvider) && (
             <div className="form-group">
               <label className="form-label">API Key</label>
               <input
@@ -370,9 +438,12 @@ function Providers() {
                 value={formData.apiKey}
                 onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
                 placeholder="sk-..."
+                autoComplete="off"
               />
             </div>
+            )}
 
+            {formData.kind === 'own' && editingProvider && (
             <div className="form-group">
               <label className="form-label">Models (comma-separated)</label>
               <input
@@ -415,18 +486,18 @@ function Providers() {
                   )}
                 </div>
               )}
-              {editingProvider && (
-                <button
-                  type="button"
-                  onClick={() => handleFetchModels(editingProvider)}
-                  className="btn btn-secondary"
-                  style={{ marginTop: '0.5rem' }}
-                >
-                  Fetch Models from API
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => handleFetchModels(editingProvider)}
+                className="btn btn-secondary"
+                style={{ marginTop: '0.5rem' }}
+              >
+                Fetch Models from API
+              </button>
             </div>
+            )}
 
+            {(formData.kind === 'builtin' || editingProvider) && (
             <div className="form-actions">
               <button type="submit" className="btn btn-primary">
                 {editingProvider ? 'Update' : 'Add'} Provider
@@ -439,6 +510,7 @@ function Providers() {
                 Cancel
               </button>
             </div>
+            )}
           </form>
         </div>
       )}
@@ -450,12 +522,22 @@ function Providers() {
               <div style={{ flex: 1 }}>
                 <h3 className="provider-card-title">{provider.name}</h3>
                 <div className="provider-card-meta">
-                  <span style={{ marginRight: '1rem' }}><strong>Type:</strong> {provider.type}</span>
-                  <span><strong>URL:</strong> {provider.baseUrl}</span>
+                  <span style={{ marginRight: '1rem' }}>{provider.builtin ? 'Built-in' : 'Your endpoint'}</span>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{provider.baseUrl}</span>
+                  {!provider.apiKey && <span style={{ marginLeft: '1rem', color: 'var(--accent-yellow, #f59e0b)' }}>no key</span>}
                 </div>
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  onClick={() => handleRefreshModels(provider)}
+                  disabled={refreshing[provider.id]}
+                  title="Ask the provider what it serves now"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                >
+                  {refreshing[provider.id] ? 'Refreshing…' : 'Refresh models'}
+                </button>
                 <button
                   onClick={() => handleEdit(provider)}
                   className="btn btn-secondary"

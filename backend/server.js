@@ -175,6 +175,23 @@ function logEvent(type, agentId, message) {
   }
 }
 
+// Rows from before built-ins had fixed addresses: whatever URL they stored,
+// requests now go to the provider's own. Saying so once in the event log is
+// owed to anyone who had pointed "OpenAI" at a proxy — rename it to keep that.
+try {
+  for (const p of db.prepare('SELECT id, name, baseUrl FROM providers').all()) {
+    const entry = require('./lib/builtinProviders').builtinFor(p.name);
+    if (!entry) continue;
+    const stored = String(p.baseUrl || '').trim().replace(/\/+$/, '');
+    if (stored && stored !== entry.baseUrl) {
+      logEvent('providers.builtin', null, `${p.name} is a built-in provider and now uses ${entry.baseUrl} (was ${stored}). Add it under another name to keep a custom address.`);
+    }
+    db.prepare("UPDATE providers SET baseUrl = ?, type = 'builtin' WHERE id = ?").run(entry.baseUrl, p.id);
+  }
+} catch (err) {
+  console.error('[Providers] Could not normalise built-in providers:', err.message);
+}
+
 // A Hermes agent created before per-agent passwords serves its dashboard — a
 // chat with an agent that runs shell commands — on a public domain, behind
 // admin / agenthotel: a password printed in this repository. Give each one
@@ -2751,9 +2768,49 @@ app.get('/api/events', requireAuth, (req, res) => {
   }
 });
 
+const builtinProviders = require('./lib/builtinProviders');
+
+// A provider is a built-in or the operator's own endpoint, decided by its
+// name. The response says which, and reports the address actually used, so
+// nothing downstream needs to know the row may have stored something else.
 app.get('/api/providers', requireAuth, (req, res) => {
   const providers = db.prepare('SELECT * FROM providers ORDER BY created_at DESC').all();
-  res.json(providers.map(p => ({ ...p, models: JSON.parse(p.models || '[]') })));
+  res.json(providers.map(p => ({
+    ...p,
+    builtin: Boolean(builtinProviders.builtinFor(p.name)),
+    baseUrl: builtinProviders.effectiveBaseUrl(p),
+    models: JSON.parse(p.models || '[]')
+  })));
+});
+
+// What the form offers under "built-in", with the ones already added marked.
+app.get('/api/providers/builtin', requireAuth, (req, res) => {
+  const have = new Set(db.prepare('SELECT name FROM providers').all().map(p => builtinProviders.slugify(p.name)));
+  res.json(builtinProviders.listBuiltin().map(b => ({ ...b, configured: have.has(b.slug) })));
+});
+
+// Ask the provider what it serves and remember the answer. The stored list is a
+// cache of this, never something typed in for a built-in; for an own endpoint
+// it is what the operator picked from the probe. Failure keeps what is there —
+// a provider mid-outage must not empty the list every agent's model is checked
+// against.
+async function refreshProviderModels(row) {
+  const { fetchProviderModels } = require('./lib/modelSelect');
+  const listed = await fetchProviderModels(row);
+  const ids = listed.map(m => m.id).filter(Boolean);
+  if (ids.length) db.prepare('UPDATE providers SET models = ? WHERE id = ?').run(JSON.stringify(ids), row.id);
+  return ids;
+}
+
+app.post('/api/providers/:id/refresh-models', requireAuth, async (req, res) => {
+  const row = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Provider not found' });
+  try {
+    const models = await refreshProviderModels(row);
+    res.json({ models });
+  } catch (err) {
+    res.status(502).json({ error: `${row.name} did not list its models: ${err.message}` });
+  }
 });
 
 // Copy-pasting a key or URL into the panel easily drags along a leading or
@@ -2804,32 +2861,61 @@ app.post('/api/providers/bulk', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/providers', requireAuth, (req, res) => {
+// What a saved provider looks like, from either form. A built-in takes only
+// the key: its address is fixed and its models are fetched, so whatever the
+// request said about those is ignored rather than stored. An own endpoint
+// keeps its URL and the list the operator chose.
+function providerRowFromRequest(body, existing) {
+  const name = trimField(body.name) || (existing && existing.name);
+  if (!name) throw new Error('A provider needs a name');
+  const apiKey = trimField(body.apiKey) ?? (existing ? existing.apiKey : '');
+  const entry = builtinProviders.builtinFor(name);
+  if (entry) {
+    return { name: entry.name, type: 'builtin', baseUrl: entry.baseUrl, apiKey, models: existing ? JSON.parse(existing.models || '[]') : [] };
+  }
+  const baseUrl = trimField(body.baseUrl) || (existing && existing.baseUrl) || '';
+  if (!/^https?:\/\//.test(baseUrl)) throw new Error('An endpoint of your own needs its base URL, starting with http:// or https://');
+  let models = body.models;
+  if (typeof models === 'string') models = models.split(',').map(m => m.trim()).filter(Boolean);
+  if (!Array.isArray(models)) models = existing ? JSON.parse(existing.models || '[]') : [];
+  return { name, type: 'own', baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, models };
+}
+
+// Saving a built-in fetches its models with the new key. The answer is part of
+// the response so the form can show it at once; a provider that does not list
+// (or a wrong key) is reported, not fatal — the key is saved either way.
+async function withFreshModels(row) {
+  let warning = null;
+  if (builtinProviders.builtinFor(row.name)) {
+    try { row.models = await refreshProviderModels(row); } catch (err) { warning = `Saved, but ${row.name} did not list its models: ${err.message}`; }
+  }
+  return { ...row, builtin: Boolean(builtinProviders.builtinFor(row.name)), warning };
+}
+
+app.post('/api/providers', requireAuth, async (req, res) => {
   try {
-    const name = trimField(req.body.name);
-    const { type, models } = req.body;
-    const baseUrl = trimField(req.body.baseUrl);
-    const apiKey = trimField(req.body.apiKey);
-    const id = `provider-${name}-${Date.now()}`;
+    const row = providerRowFromRequest(req.body, null);
+    const taken = db.prepare('SELECT name FROM providers').all().some(p => builtinProviders.slugify(p.name) === builtinProviders.slugify(row.name));
+    if (taken) return res.status(409).json({ error: `A provider named ${row.name} already exists` });
+    const id = `provider-${row.name}-${Date.now()}`;
     db.prepare('INSERT INTO providers (id, name, type, baseUrl, apiKey, models) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, name, type, baseUrl, apiKey, JSON.stringify(models || []));
-    res.json({ id, name, type, baseUrl, apiKey, models });
+      .run(id, row.name, row.type, row.baseUrl, row.apiKey, JSON.stringify(row.models));
+    res.json(await withFreshModels({ id, ...row }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
-app.put('/api/providers/:id', requireAuth, (req, res) => {
+app.put('/api/providers/:id', requireAuth, async (req, res) => {
   try {
-    const name = trimField(req.body.name);
-    const { type, models } = req.body;
-    const baseUrl = trimField(req.body.baseUrl);
-    const apiKey = trimField(req.body.apiKey);
+    const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Provider not found' });
+    const row = providerRowFromRequest(req.body, existing);
     db.prepare('UPDATE providers SET name = ?, type = ?, baseUrl = ?, apiKey = ?, models = ? WHERE id = ?')
-      .run(name, type, baseUrl, apiKey, JSON.stringify(models || []), req.params.id);
-    res.json({ updated: true });
+      .run(row.name, row.type, row.baseUrl, row.apiKey, JSON.stringify(row.models), req.params.id);
+    res.json(await withFreshModels({ id: req.params.id, ...row }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -3134,17 +3220,10 @@ app.get('/api/providers/:id/models', requireAuth, async (req, res) => {
       return res.json(JSON.parse(provider.models));
     }
     
-    if (provider.baseUrl) {
-      const fetch = require('node-fetch');
-      const headers = {};
-      if (provider.apiKey) {
-        headers['Authorization'] = `Bearer ${provider.apiKey}`;
-      }
-      const modelsRes = await fetch(`${provider.baseUrl}/models`, { headers });
-      const data = await modelsRes.json();
-      const models = data.data || data.models || [];
-      res.json(models);
-    } else {
+    // Nothing cached yet: ask, and keep the answer.
+    try {
+      res.json(await refreshProviderModels(provider));
+    } catch (err) {
       res.json([]);
     }
   } catch (err) {
@@ -3177,7 +3256,7 @@ app.post('/api/providers/:id/test', requireAuth, async (req, res) => {
       messages: [{ role: 'user', content: testPrompt }]
     });
     
-    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    const response = await fetch(`${builtinProviders.effectiveBaseUrl(provider)}/chat/completions`, {
       method: 'POST',
       headers,
       body

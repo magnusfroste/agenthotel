@@ -67,7 +67,7 @@ export default function OwnModelWizard({ existing = [], onDone, onCancel }) {
     try {
       const res = await authFetch('/api/providers', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: slug, type: 'openai', baseUrl: found.baseUrl, apiKey, models })
+        body: JSON.stringify({ name: slug, baseUrl: found.baseUrl, apiKey, models })
       })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not save the provider')
       toast.success(`Added — agents use it as ${slug}/${models[0]}`)

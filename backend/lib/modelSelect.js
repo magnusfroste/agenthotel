@@ -1,4 +1,5 @@
 const fetch = require('node-fetch');
+const { effectiveBaseUrl, modelsRequest, normalizeModelId } = require('./builtinProviders');
 
 // Picking a model that EXISTS is not the same as picking one that WORKS.
 //
@@ -58,7 +59,7 @@ function recordVerdict(db, provider, model, runtime, ok, detail) {
 // parameters. Deliberately no max_tokens: newer models reject it in favour of
 // max_completion_tokens, and a probe must never fail on something we added.
 async function probeModel(provider, model, requirements) {
-  const base = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const base = effectiveBaseUrl(provider) || 'https://api.openai.com/v1';
   const body = {
     model,
     messages: [{ role: 'user', content: 'ping' }],
@@ -178,15 +179,15 @@ async function selectModel(db, provider, runtime, requirements, minContextTokens
 // NOTHING at all while a model is loading — which is why an absent value must
 // never be treated as a small one.
 async function fetchProviderModels(provider) {
-  const base = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const headers = {};
-  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
-  const res = await fetch(`${base}/models`, { headers, timeout: 25000 });
+  // A built-in provider is asked at its own address, in its own dialect
+  // (Anthropic's listing is not OpenAI's); an own endpoint at the URL given.
+  const { url, headers } = modelsRequest({ ...provider, baseUrl: provider.baseUrl || 'https://api.openai.com/v1' });
+  const res = await fetch(url, { headers, timeout: 25000 });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   const items = data.data || data.models || [];
   return (Array.isArray(items) ? items : []).map(m => {
-    const id = typeof m === 'string' ? m : (m.id || m.name || '');
+    const id = normalizeModelId(provider.name, typeof m === 'string' ? m : (m.id || m.name || ''));
     const ctx = typeof m === 'object'
       // vLLM says max_model_len — the most common local server, and the one
       // that was being read as "context unknown", so the 64k gate never fired

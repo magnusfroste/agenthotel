@@ -4,7 +4,12 @@ Hands-on documentation for running AgentHotel day to day. For architecture and b
 
 ## Providers & Models
 
-Providers are configured once in the panel (**Providers** page) and shared by all agents. A provider has a name, a protocol type (currently OpenAI-compatible), a base URL, an API key, and an optional model list (fetch models from the provider or add them manually; use **Test** to verify a model actually responds).
+Providers are configured once in the panel (**Providers** page) and shared by all agents. There are two kinds:
+
+- **Built-in** — OpenAI, OpenRouter, Anthropic, Gemini, DeepSeek, Groq, xAI, Mistral, Z.ai. Pick one and paste the key; the address is fixed and the model list is fetched from the provider when you save (**Refresh models** asks again later). The name is the prefix agents write: `openai/gpt-5.6-luna`.
+- **Your own endpoint** — a vLLM, Ollama, llama.cpp or any OpenAI-compatible server. Give it a name of your choosing (`dgxspark`), its base URL and a key; the panel probes what it serves, flags models too small for a runtime, and shows the exact `dgxspark/model` an agent writes.
+
+Use **Test** on either to verify a model actually responds.
 
 ### How providers reach agents
 
