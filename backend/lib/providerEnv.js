@@ -5,7 +5,7 @@
 // would make OpenRouter's key clobber OpenAI's. Each canonical provider
 // maps to its own env var; custom OpenAI-compatible providers (unknown
 // name) fall back to the OPENAI_API_KEY/OPENAI_BASE_URL slots.
-const { BUILTIN, slugify, effectiveBaseUrl } = require('./builtinProviders');
+const { BUILTIN, slugify, effectiveBaseUrl, builtinFor } = require('./builtinProviders');
 
 // The canonical env slot per built-in provider, derived from the one registry
 // so a provider added there is injected here without a second edit.
@@ -71,15 +71,23 @@ async function injectProviderEnv(db, config, plugin) {
     // canonical slot are still visible inside agents — previously a custom
     // OpenAI-compatible provider silently injected nothing whenever a real
     // OpenAI provider had already claimed the OPENAI_* slots.
+    //
+    // For a built-in the key is the whole of it. Its address the runtimes
+    // know, and its model catalogue they carry themselves — so OPENAI_MODELS
+    // was a 141-entry snapshot in every agent's environment that nothing read,
+    // and OPENROUTER_BASE_URL a value no runtime looks at (2026-10-03). An own
+    // endpoint is the opposite: the address is how the agent finds it, and the
+    // list is how a bare model name is traced back to it.
     const slugUpper = slug.toUpperCase();
+    const own = !builtinFor(provider.name);
     if (slugUpper) {
       if (!finalConfig[`${slugUpper}_API_KEY`] && provider.apiKey) {
         finalConfig[`${slugUpper}_API_KEY`] = provider.apiKey;
       }
-      if (!finalConfig[`${slugUpper}_BASE_URL`] && effectiveBaseUrl(provider)) {
+      if (own && !finalConfig[`${slugUpper}_BASE_URL`] && effectiveBaseUrl(provider)) {
         finalConfig[`${slugUpper}_BASE_URL`] = effectiveBaseUrl(provider);
       }
-      if (!finalConfig[`${slugUpper}_MODELS`] && provider.models) {
+      if (own && !finalConfig[`${slugUpper}_MODELS`] && provider.models) {
         try {
           const list = JSON.parse(provider.models);
           if (Array.isArray(list) && list.length) finalConfig[`${slugUpper}_MODELS`] = list.join(',');
@@ -89,9 +97,8 @@ async function injectProviderEnv(db, config, plugin) {
     const mapping = PROVIDER_ENV_MAP[slug];
     if (mapping) {
       if (!finalConfig[mapping.key] && provider.apiKey) finalConfig[mapping.key] = provider.apiKey;
-      if (mapping.baseUrl && !finalConfig[mapping.baseUrl]) {
-        finalConfig[mapping.baseUrl] = effectiveBaseUrl(provider);
-      }
+      // OPENAI_BASE_URL is an override slot. The built-in's address is what
+      // the runtimes use when it is absent, so writing it says nothing.
     } else if (provider.type === 'openai' && provider.apiKey) {
       // Custom OpenAI-compatible provider (e.g. self-hosted vLLM, DGX1).
       // Use the OPENAI slots only if a real OpenAI provider hasn't claimed them.

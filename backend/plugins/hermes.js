@@ -45,7 +45,8 @@ const PROVIDER_REGISTRY_NAME = {
 // candidate actually appears in <SLUG>_MODELS. With no list to consult, fall
 // back to stripping one segment, which is right for canonical providers.
 // Who serves a model named without a prefix. The panel already knows: each
-// provider's own model list is injected as <SLUG>_MODELS. Assuming openai
+// own endpoint's model list is injected as <SLUG>_MODELS (built-ins get none;
+// a bare hosted name falls through to openai, and hermes knows those vendors). Assuming openai
 // instead sent "glm-5.3-flash" to api.openai.com, and hermes — which reads the
 // glm- family as Z.ai — then asked for a Z.ai key for a model running on the
 // operator's own hardware. The name was right; nothing had said whose it was.
