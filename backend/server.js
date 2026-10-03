@@ -3912,11 +3912,17 @@ app.get('/api/system/check-update', requireAuth, async (req, res) => {
     const latestCommit = shortSha(githubData.sha);
     const hasUpdate = current !== 'unknown' && shortSha(current) !== latestCommit;
 
+    // The subject and date let the sidebar say what the newest commit is,
+    // so deciding whether an upgrade is worth the interruption needs no click.
+    const subject = String(githubData.commit?.message || '').split('\n')[0].slice(0, 120);
     res.json({
       hasUpdate,
       currentVersion: shortSha(current),
       latestVersion: latestCommit,
-      remoteCommit: latestCommit
+      remoteCommit: latestCommit,
+      latestSubject: subject,
+      latestDate: githubData.commit?.committer?.date || null,
+      repoUrl: 'https://github.com/magnusfroste/agenthotel'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

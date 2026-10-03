@@ -252,6 +252,24 @@ body {
   gap: 0.35rem;
 }
 
+/* Version and update, as text that happens to be clickable: same colour as the
+   meta line, underline only on hover. The newer commit is one shade brighter,
+   enough to be noticed when you look, not enough to call. */
+.sidebar-meta-link {
+  color: inherit;
+  text-decoration: none;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+.sidebar-meta-link:hover {
+  text-decoration: underline;
+  color: var(--text-primary);
+}
+.sidebar-meta-newer {
+  color: var(--accent-blue);
+  margin-left: 0.15rem;
+}
+
 .sidebar-footer-actions {
   display: flex;
   align-items: center;

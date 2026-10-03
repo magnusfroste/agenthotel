@@ -255,11 +255,27 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
               <Globe size={13} color="currentColor" /> {ip}
             </button>
           )}
-          {version && version !== 'unknown' && (
-            <div className="sidebar-meta-item">
-              <Package size={13} color="currentColor" /> v{version}
-            </div>
-          )}
+          {version && version !== 'unknown' && (() => {
+            // The version links to its commit; a newer one, when there is one,
+            // to the compare view — the list of exactly what an upgrade would
+            // bring. Deliberately quiet: the Upgrade button above is the action,
+            // this is the information behind it.
+            const repo = updateInfo?.repoUrl || 'https://github.com/magnusfroste/agenthotel'
+            const latest = updateInfo?.hasUpdate ? updateInfo.latestVersion : null
+            return (
+              <div className="sidebar-meta-item">
+                <Package size={13} color="currentColor" />
+                <a className="sidebar-meta-link" href={`${repo}/commit/${version}`} target="_blank" rel="noreferrer"
+                  title={`Running commit ${version} — open it on GitHub`}>v{version}</a>
+                {latest && (
+                  <a className="sidebar-meta-link sidebar-meta-newer" href={`${repo}/compare/${version}...${latest}`} target="_blank" rel="noreferrer"
+                    title={`${latest} is newer${updateInfo.latestSubject ? `: ${updateInfo.latestSubject}` : ''}. See what changed since ${version}.`}>
+                    → {latest}
+                  </a>
+                )}
+              </div>
+            )
+          })()}
         </div>
         <div className="sidebar-footer-actions">
           <Link to="/profile" className="sidebar-profile-link">
