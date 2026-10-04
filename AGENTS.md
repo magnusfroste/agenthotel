@@ -20,7 +20,7 @@ The panel is self-protecting (no Docker Swarm — deliberately, plain Docker onl
 
 ## Critical Build Details
 
-**Dockerfiles use `npm install`, not `npm ci`** - No lock files are committed. This is intentional so the install script works on fresh VPS without pre-generated lock files. Do not change to `npm ci` without understanding this tradeoff.
+**Dockerfiles use `npm install`, not `npm ci`.** `backend/package-lock.json` and `frontend/package-lock.json` are committed — CI installs from them with `npm ci` — but the images deliberately do not, so a fresh VPS install never fails on a lock file that drifted from `package.json`. Do not switch the Dockerfiles to `npm ci` without weighing that.
 
 Backend Dockerfile: `npm install --omit=dev`
 Frontend Dockerfile: `npm install` then `npm run build`
@@ -29,17 +29,26 @@ Frontend Dockerfile: `npm install` then `npm run build`
 
 Caddy uses JSON config (`docker/caddy.json`), loaded via `caddy run --config /etc/caddy/caddy.json`. Uses `caddy:2` (full image, not alpine) because the alpine variant lacks the `letsencrypt` TLS module required for automatic HTTPS.
 
-Backend dynamically adds/removes agent routes via Caddy admin API:
-- Add: `POST http://caddy:2019/config/apps/http/servers/srv0/routes` with `@id: "agent-${domain}"`
-- Remove: `DELETE http://caddy:2019/id/agent-${domain}`
+Backend dynamically adds/removes agent routes via Caddy's admin API, which listens **only on a Unix socket** (`unix//run/caddy-admin/admin.sock`) in the `caddy-admin` volume that Caddy and the backend mount, and nothing else. **Never put it back on TCP** (`0.0.0.0:2019` or any port): guests share Caddy's Docker network, and an unauthenticated admin API there let any guest rewrite every route, including the panel's own (security sweep, 2026-09-30). Every call goes through `caddyFetch` in `backend/lib/caddyAdmin.js`:
+- Add: `POST /config/apps/http/servers/srv0/routes` with `@id: "agent-${domain}"`
+- Remove: `DELETE /id/agent-${domain}`
+
+The panel route carries security headers (`X-Frame-Options`, `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`) and is re-created each minute if Caddy lost it.
 
 ## Runtime Plugins
 
-Backend supports four agent runtimes in `backend/plugins/`:
+Backend supports seven runtimes in `backend/plugins/`:
 - `hermes`: NousResearch Hermes agent
 - `openclaw`: OpenClaw persistent agent
 - `odysseus`: Self-hosted AI workspace
 - `docker-app`: Generic Docker image deployment
+- `git-app`: Builds a repository's Dockerfile (how reel-studio and Lobby deploy)
+- `git-compose`: Runs a repository's compose file, for stacks that mount their own files (SkillHub)
+- `compose`: A compose file given as text
+
+Templates in `templates/<id>/meta.yaml` with a `deploy:` block are recipes on top of these runtimes (`runtime: docker-app | compose | git-app | git-compose`), with `secrets:` generated per deploy.
+
+Providers come in two kinds, decided by name (`backend/lib/builtinProviders.js`): a **built-in** (OpenAI, OpenRouter, Anthropic, …) hands a guest only its key, `<SLUG>_API_KEY`; an **own endpoint** also hands over `<SLUG>_BASE_URL` and `<SLUG>_MODELS`. Agents name models as `provider/model` — a bare name lets Hermes guess the vendor from it.
 
 Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-app which pulls images directly).
 
@@ -92,8 +101,8 @@ attached; the resource caps bound it and the health check surfaces the fallout.
 
 Following Easypanel's pattern, the panel uses a web-based setup flow:
 
-1. **First visit via IP** - User accesses `http://server-ip`
-2. **Setup page** - Creates admin account (email + password, min 8 chars)
+1. **First visit via IP** - User accesses `http://server-ip/?setup=<code>`, the link `install.sh` prints
+2. **Setup page** - Creates admin account (email + password, min 8 chars) **and requires the one-time setup code** generated at first boot (`agenthotel setup-code` shows it). Without it, the first stranger to reach a fresh panel on port 80 became admin — root on the host. The code is deleted once the admin exists
 3. **Login** - Subsequent visits require authentication
 4. **Token-based auth** - JWT-like tokens stored in localStorage, sent via `Authorization: Bearer <token>` header or `?token=` query param for WebSocket
 
@@ -101,14 +110,18 @@ Backend stores in SQLite `settings` table:
 - `admin_email`, `admin_password_hash`, `admin_password_salt`, `auth_token`
 
 Endpoints:
-- `GET /api/setup` - Returns `{configured: boolean}`
-- `POST /api/setup` - Creates admin account, returns token
+- `GET /api/setup` - Returns `{configured, codeRequired}`
+- `POST /api/setup` - Creates admin account given `setupCode`, returns token; throttled
 - `POST /api/login` - Validates credentials, returns token
 - All `/api/agents/*` routes require auth via `requireAuth` middleware
 
 ## Local Development
 
-No test suite, linting, or CI exists. To test changes:
+There is a test suite (`backend/test/*.test.js`, `node:test`) and GitHub Actions runs it on every push (`.github/workflows/test.yml`). Run it before committing — no host Node needed:
+```bash
+docker run --rm -v $PWD:/src:ro node:22-alpine sh -c "apk add -q python3 make g++ >/dev/null; cp -r /src /w && cd /w/backend && npm ci --silent && npm test"
+```
+To test changes in the running panel:
 ```bash
 # Rebuild and restart containers. GIT_COMMIT is a build arg baked into the
 # backend image (ARG -> ENV in backend/Dockerfile) and is what
