@@ -18,13 +18,15 @@ import Templates from './components/Templates'
 import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle } from 'lucide-react'
 import './index.css'
 
 function Sidebar({ onLogout, onNavigate, className = '' }) {
   const location = useLocation()
   const [ip, setIp] = useState('')
   const [version, setVersion] = useState('')
+  // Disk or memory past its threshold, for one quiet line in the footer.
+  const [alerts, setAlerts] = useState(null)
   const [updateInfo, setUpdateInfo] = useState(null)
   const [upgrading, setUpgrading] = useState(false)
   const [agents, setAgents] = useState([])
@@ -42,8 +44,12 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
     fetchSystemInfo()
     checkForUpdates()
     fetchAgents()
+    fetchAlerts()
     const interval = setInterval(() => { if (!document.hidden) fetchAgents() }, 5000)
-    return () => clearInterval(interval)
+    // The backend re-reads disk and memory every five minutes; once a minute
+    // here is plenty to pick that up.
+    const alertInterval = setInterval(() => { if (!document.hidden) fetchAlerts() }, 60000)
+    return () => { clearInterval(interval); clearInterval(alertInterval) }
   }, [])
 
   async function fetchSystemInfo() {
@@ -59,6 +65,12 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
     } catch (err) {
       console.error('Failed to fetch system info:', err)
     }
+  }
+
+  async function fetchAlerts() {
+    try {
+      setAlerts(await (await authFetch('/api/system/alerts')).json())
+    } catch (err) { /* a missing warning is not worth an error */ }
   }
 
   async function checkForUpdates() {
@@ -238,6 +250,14 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
           </button>
         )}
         <div className="sidebar-meta">
+          {/* Only when something is over its threshold. A host at 96% disk
+              once said nothing anywhere; this is where people already look. */}
+          {['disk', 'mem'].filter(k => alerts?.[k]?.over).map(k => (
+            <Link key={k} to="/system" className="sidebar-meta-item sidebar-meta-warning"
+              title={`Above the ${alerts[k].threshold}% threshold — see System`}>
+              <AlertTriangle size={13} color="currentColor" /> {k === 'disk' ? 'Disk' : 'Memory'} {alerts[k].pct}% full
+            </Link>
+          ))}
           {ip && (
             // The host address is what you paste into a DNS A record when the
             // panel is not behind a tunnel. A click copies it; selecting text

@@ -265,6 +265,12 @@ body {
   text-decoration: underline;
   color: var(--text-primary);
 }
+.sidebar-meta-warning {
+  color: var(--accent-yellow, #f59e0b);
+  text-decoration: none;
+}
+.sidebar-meta-warning:hover { text-decoration: underline; }
+
 .sidebar-meta-newer {
   color: var(--accent-blue);
   margin-left: 0.15rem;

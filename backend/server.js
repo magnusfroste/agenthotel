@@ -516,6 +516,35 @@ async function pruneDocker() {
     results.buildCacheError = err.message;
   }
 
+  // What deleted agents left behind before deleting cleaned up after itself:
+  // their own images and checkouts. Only ids shaped like an agent's that have
+  // no row — see lib/orphans.js for why that shape is the safety.
+  results.orphanImages = [];
+  results.orphanImagesSpaceReclaimed = 0;
+  try {
+    const { orphanImageTags, orphanBuildDirs } = require('./lib/orphans');
+    const agentIds = db.prepare('SELECT id FROM agents').all().map(a => a.id);
+    const images = await docker.listImages();
+    const tags = images.flatMap(i => i.RepoTags || []);
+    for (const tag of orphanImageTags(tags, agentIds)) {
+      const size = (images.find(i => (i.RepoTags || []).includes(tag)) || {}).Size || 0;
+      try {
+        await docker.getImage(tag).remove();
+        results.orphanImages.push(tag);
+        results.orphanImagesSpaceReclaimed += size;
+      } catch (e) { /* in use or already gone: leave it */ }
+    }
+    const buildRoot = process.env.AGENTHOTEL_BUILD_ROOT || '/data/builds';
+    let dirs = [];
+    try { dirs = fs.readdirSync(buildRoot); } catch (e) { /* no builds yet */ }
+    results.orphanCheckouts = orphanBuildDirs(dirs, agentIds);
+    for (const dir of results.orphanCheckouts) {
+      try { fs.rmSync(path.join(buildRoot, dir), { recursive: true, force: true }); } catch (e) {}
+    }
+  } catch (err) {
+    console.error('[Cleanup] Orphan sweep failed:', err.message);
+  }
+
   // NOTE: volumes are never pruned here — pruneVolumes() would destroy the
   // named volumes of stopped agents. Agent volumes are removed explicitly
   // when the agent is deleted (DELETE /api/agents/:id).
@@ -524,7 +553,8 @@ async function pruneDocker() {
 
   results.totalSpaceReclaimed = results.containersSpaceReclaimed +
                                 results.imagesSpaceReclaimed +
-                                results.buildCacheSpaceReclaimed;
+                                results.buildCacheSpaceReclaimed +
+                                results.orphanImagesSpaceReclaimed;
   return results;
 }
 
@@ -2128,6 +2158,16 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
       }
 
       await removeAgentVolumes(req.params.id);
+
+      // A Git App's image and checkout are its own — nothing else can use them.
+      const plugin = runtimes[agent.runtime];
+      if (plugin && typeof plugin.prepareBuild === 'function') {
+        await docker.getImage(`agenthotel-${req.params.id}:latest`).remove().catch(e => {
+          if (e.statusCode !== 404) console.error(`[Delete] Could not remove image for ${req.params.id}: ${e.message}`);
+        });
+        const buildRoot = process.env.AGENTHOTEL_BUILD_ROOT || '/data/builds';
+        try { fs.rmSync(path.join(buildRoot, req.params.id), { recursive: true, force: true }); } catch (e) { /* already gone */ }
+      }
     }
 
     await removeAgentRoutes(agent);
@@ -2266,7 +2306,17 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     // be, now that each editor sends only the fields it owns.
     const updatedConfig = config ? { ...JSON.parse(agent.config || '{}'), ...config } : JSON.parse(agent.config || '{}');
     if (Array.isArray(removeKeys)) for (const key of removeKeys) delete updatedConfig[key];
-    const updatedDomain = domain !== undefined ? domain : agent.domain;
+    let updatedDomain = domain !== undefined ? domain : agent.domain;
+    // Values derived from the old domain follow it (see lib/orphans.js), unless
+    // this same request set them — then the caller said what they want.
+    if (updatedDomain !== agent.domain) {
+      const moved = require('./lib/orphans').withDomainChanged(updatedConfig, agent.domain, updatedDomain);
+      for (const key of moved.changed) {
+        if (config && key in config) continue;
+        updatedConfig[key] = moved.config[key];
+        logEvent('agent.config', agent.id, `${key} follows the domain change to ${updatedDomain}`);
+      }
+    }
 
     db.prepare("UPDATE agents SET config = ?, domain = ?, status = 'updating', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(JSON.stringify(updatedConfig), updatedDomain, req.params.id);
@@ -4306,9 +4356,19 @@ async function runUptimeChecks() {
 // crosses its threshold, and once when it recovers (5-point hysteresis).
 // Thresholds come from settings with sane defaults.
 const resourceAlertState = { disk: false, mem: false };
+// Latest reading per resource, for the sidebar: { pct, threshold, over }.
+const resourceLevels = {};
 
+app.get('/api/system/alerts', requireAuth, (req, res) => {
+  res.json({ disk: resourceLevels.disk || null, mem: resourceLevels.mem || null });
+});
+
+// Disk and memory past their thresholds. This used to return at once when no
+// notification channel was configured — so a host could reach 96% disk with
+// not even a line in the event log (found 2026-10-03). The check always runs
+// and always logs; only sending a message needs a channel. The state is also
+// what the sidebar reads, so the warning is visible where people look.
 async function runResourceChecks() {
-  if (!anyChannelConfigured(db)) return;
   const getThreshold = (key, fallback) => {
     const n = parseInt(db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value);
     return Number.isFinite(n) ? n : fallback;
@@ -4333,16 +4393,17 @@ async function runResourceChecks() {
     ['disk', diskPct, diskThreshold, 'Disk'],
     ['mem', memPct, memThreshold, 'Memory']
   ]) {
+    resourceLevels[key] = { pct, threshold, over: pct >= threshold };
     if (pct >= threshold && !resourceAlertState[key]) {
       resourceAlertState[key] = true;
       const msg = `${label} usage at ${pct}% (threshold ${threshold}%)`;
       logEvent(`resource.${key}`, null, msg);
-      sendNotification(db, `AgentHotel WARNING: ${msg}`).catch(() => {});
+      if (anyChannelConfigured(db)) sendNotification(db, `AgentHotel WARNING: ${msg}`).catch(() => {});
     } else if (pct < threshold - 5 && resourceAlertState[key]) {
       resourceAlertState[key] = false;
       const msg = `${label} usage back to ${pct}%`;
       logEvent(`resource.${key}.recovered`, null, msg);
-      sendNotification(db, `AgentHotel OK: ${msg}`).catch(() => {});
+      if (anyChannelConfigured(db)) sendNotification(db, `AgentHotel OK: ${msg}`).catch(() => {});
     }
   }
 }
@@ -4405,6 +4466,7 @@ listen(async () => {
   runHealthChecks().catch(() => {}); // reconcile immediately, don't wait a minute
   console.log('[Health] Runtime health criteria enabled (60s interval)');
   console.log('[Uptime] Monitoring enabled (60s interval)');
+  runResourceChecks().catch(err => console.error('[Resources] Error:', err.message));
   setInterval(() => {
     runResourceChecks().catch(err => console.error('[Resources] Error:', err.message));
   }, 5 * 60 * 1000);
