@@ -299,6 +299,10 @@ module.exports = {
     return `cd /opt/data && hermes -z "Reply with exactly this word and nothing else: ${nonce}" 2>&1`;
   },
 
+  // What the agent page shows as the running version: "Hermes Agent v0.21.5
+  // (2026.9.24) · upstream 749220ef". Asked once per image, not per page load.
+  versionCommand: 'hermes --version 2>/dev/null | head -1',
+
   generateMcpBlock(config) {
     const raw = String(config.MCP_SERVERS || '').trim();
     if (!raw) return null;

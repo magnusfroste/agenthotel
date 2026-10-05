@@ -896,6 +896,9 @@ const PANEL_SECURITY_HEADERS = {
   'Referrer-Policy': ['same-origin']
 };
 
+// How Caddy reaches the backend: the socket when there is one (see listen()).
+const BACKEND_DIAL = process.env.BACKEND_SOCKET ? `unix/${process.env.BACKEND_SOCKET}` : 'backend:8080';
+
 function buildPanelRoute(domain) {
   const route = {
     '@id': 'panel-route',
@@ -909,14 +912,14 @@ function buildPanelRoute(domain) {
           match: [{ path: ['/api/*'] }],
           handle: [{
             handler: 'reverse_proxy',
-            upstreams: [{ dial: 'backend:8080' }]
+            upstreams: [{ dial: BACKEND_DIAL }]
           }]
         },
         {
           match: [{ path: ['/mcp'] }],
           handle: [{
             handler: 'reverse_proxy',
-            upstreams: [{ dial: 'backend:8080' }]
+            upstreams: [{ dial: BACKEND_DIAL }]
           }]
         },
         {
@@ -1154,7 +1157,7 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
   // code comes from belongs with the source, not in a list of environment
   // variables. Sending the declaration rather than a list of key names keeps
   // that decision with the plugin that owns the field.
-  res.json({ ...agent, config, source, configFields: plugin?.configFields || [], canSelfTest: typeof plugin?.selfTest === 'function' });
+  res.json({ ...agent, config, source, configFields: plugin?.configFields || [], canSelfTest: typeof plugin?.selfTest === 'function', hasRuntimeImage: Boolean(plugin && typeof plugin.prepareBuild !== 'function' && require('./lib/runtimeImage').baseImageFor(agent.runtime)) });
 });
 
 // Per-service export (Easypanel-style): the agent's full configuration as a
@@ -3194,6 +3197,48 @@ app.post('/api/providers/probe', requireAuth, async (req, res) => {
 // One real turn through a guest, on demand. The failure that cost an afternoon
 // — "No usable credentials found for provider 'zai'" — would have been on the
 // screen in twenty seconds.
+// How current this agent's runtime is: the version it reports, whether its
+// image is the panel's newest build of the runtime, and whether the runtime's
+// base image has moved on upstream. See lib/runtimeImage.js for why.
+app.get('/api/agents/:id/runtime', requireAuth, async (req, res) => {
+  const runtimeImage = require('./lib/runtimeImage');
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const plugin = runtimes[agent.runtime];
+  // Only runtimes built from a template have a base image to fall behind.
+  const base = runtimeImage.baseImageFor(agent.runtime);
+  if (!plugin || !base || typeof plugin.prepareBuild === 'function') return res.json({ applicable: false });
+
+  try {
+    const name = containerNameFor(runtimes, agent);
+    const info = await docker.getContainer(name).inspect().catch(() => null);
+    const imageId = info ? info.Image : null;
+    const latest = await docker.getImage(`${agent.runtime}-agenthotel:latest`).inspect().catch(() => null);
+    const image = imageId ? await docker.getImage(imageId).inspect().catch(() => null) : null;
+
+    let version = imageId ? runtimeImage.versionCache.get(imageId) || null : null;
+    if (!version && imageId && info.State.Running && plugin.versionCommand) {
+      const result = await execInAgent(docker, agent.id, plugin.versionCommand, { timeoutMs: 15000, container: name }).catch(() => null);
+      version = result ? runtimeImage.firstLine(result.output) : null;
+      if (version) runtimeImage.versionCache.set(imageId, version);
+    }
+
+    const upstream = await runtimeImage.upstreamStatus(docker, base);
+    res.json({
+      applicable: true,
+      runtime: plugin.name,
+      version,
+      builtAt: image ? image.Created : null,
+      // The panel rebuilt the runtime since this agent last started: other
+      // agents may already run the newer build, and a plain redeploy gets it.
+      behindPanel: Boolean(imageId && latest && latest.Id !== imageId),
+      upstream
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/agents/:id/selftest', requireAuth, async (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
@@ -4303,8 +4348,33 @@ async function runResourceChecks() {
 }
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`AgentHotel backend running on port ${PORT}`);
+// Where the panel answers.
+//
+// The backend sat on the Docker network every guest shares, listening on
+// 0.0.0.0:8080: any guest could talk to the API of a process that is root on
+// the host without going through Caddy at all (security sweep, 2026-09-30).
+// With BACKEND_SOCKET set — docker-compose sets it — the server that carries
+// the API and the terminals' WebSockets listens on a Unix socket in a volume
+// only Caddy and the backend mount, and a second, plain one on loopback for
+// whatever runs inside this container (the upgrade's readiness check, the
+// stdio MCP bridge). Nothing listens on the network. Without the variable,
+// as in development, it is the old single listener.
+const BACKEND_SOCKET = process.env.BACKEND_SOCKET || '';
+function listen(onReady) {
+  if (!BACKEND_SOCKET) return app.listen(PORT, '0.0.0.0', onReady);
+  fs.mkdirSync(path.dirname(BACKEND_SOCKET), { recursive: true });
+  try { fs.unlinkSync(BACKEND_SOCKET); } catch (e) { /* none left from last run */ }
+  require('http').createServer(app).listen(PORT, '127.0.0.1');
+  return app.listen(BACKEND_SOCKET, () => {
+    fs.chmodSync(BACKEND_SOCKET, 0o660);
+    onReady();
+  });
+}
+
+listen(async () => {
+  console.log(BACKEND_SOCKET
+    ? `AgentHotel backend listening on ${BACKEND_SOCKET} (and 127.0.0.1:${PORT} inside its container)`
+    : `AgentHotel backend running on port ${PORT}`);
   hostExecAvailable(); // probe + log host exec availability at startup
   if (!isSetup()) {
     const code = setupCode.ensure(db, SETUP_CODE_FILE);
@@ -4449,7 +4519,8 @@ async function initPanelRoute({ quiet = false } = {}) {
         
         // A route from before the security headers is replaced like a changed
         // domain would be — otherwise an upgrade never delivers them.
-        const current = JSON.stringify(panelRoute).includes('frame-ancestors');
+        const json = JSON.stringify(panelRoute);
+        const current = json.includes('frame-ancestors') && json.includes(BACKEND_DIAL);
         if (existingDomain === expectedDomain && current) {
           if (!quiet) console.log(`Panel route already exists for ${existingDomain || 'catch-all'}`);
           return;

@@ -51,15 +51,20 @@ function isCaddy(peer) {
 
 function clientIp(req) {
   const peer = bare(req.socket?.remoteAddress);
-  if (!peer) return 'unknown';
+  // A Unix socket has no peer address. The backend's socket is mounted by
+  // Caddy and nothing else, so a request on it came through Caddy — treating
+  // it as 'unknown' would put every visitor in one throttle bucket.
+  const viaSocket = !peer;
 
-  // A tunnel pointed straight at the backend, with no Caddy in between.
-  if (proxies.tunnel.has(peer)) return cfAddress(req) || peer;
-  if (!isCaddy(peer)) return peer;
+  if (!viaSocket) {
+    // A tunnel pointed straight at the backend, with no Caddy in between.
+    if (proxies.tunnel.has(peer)) return cfAddress(req) || peer;
+    if (!isCaddy(peer)) return peer;
+  }
 
   const fwd = req.headers['x-forwarded-for'];
   const hops = typeof fwd === 'string' ? fwd.split(',').map(bare).filter(Boolean) : [];
-  const seen = hops.length ? hops[hops.length - 1] : peer;
+  const seen = hops.length ? hops[hops.length - 1] : (peer || 'unknown');
   if (proxies.tunnel.has(seen)) return cfAddress(req) || seen;
   return seen;
 }

@@ -283,6 +283,7 @@ function AgentDetail() {
               <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
             </div>
           )}
+          {agent.hasRuntimeImage && <AgentRuntimeVersion agentId={id} onRebuild={handleRebuild} onRedeploy={() => handleAction('redeploy', 'POST')} />}
           {agent.canSelfTest && <AgentSelfTest agentId={id} running={agent.status === 'running'} />}
           <AgentSkillhub agentId={id} onChanged={fetchAgent} />
           <AgentActions agentId={id} status={agent.status} />
@@ -657,6 +658,47 @@ function AgentSkillhub({ agentId, onChanged }) {
 // provider 'zai'") would have been on this screen in twenty seconds. A timer
 // runs while it waits: a reasoning model can take half a minute, and a button
 // that looks stuck gets pressed again.
+// Which version of its runtime this agent runs, and whether a newer one is a
+// redeploy or a rebuild away. One quiet line when all is current; a hint with
+// the button that fixes it when not. agenthotel.froste.eu ran a month-old
+// Hermes on every agent and nothing here said so.
+function AgentRuntimeVersion({ agentId, onRebuild, onRedeploy }) {
+  const [info, setInfo] = useState(null)
+  useEffect(() => {
+    let live = true
+    authFetch(`/api/agents/${agentId}/runtime`).then(r => r.json()).then(d => { if (live) setInfo(d) }).catch(() => {})
+    return () => { live = false }
+  }, [agentId])
+  if (!info || !info.applicable) return null
+
+  const built = info.builtAt ? new Date(info.builtAt) : null
+  const age = built ? Math.max(0, Math.round((Date.now() - built.getTime()) / 86400000)) : null
+  const hint = { fontSize: '0.8rem', color: 'var(--accent-yellow, #f59e0b)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }
+  const small = { padding: '0.2rem 0.6rem', fontSize: '0.75rem' }
+
+  return (
+    <div className="card" style={{ padding: '0.75rem 1rem', marginBottom: '1rem' }}>
+      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+        <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{info.version || info.runtime}</span>
+        {age !== null && <span> · image built {age === 0 ? 'today' : age === 1 ? 'yesterday' : `${age} days ago`}</span>}
+      </div>
+      {info.behindPanel ? (
+        <div style={{ ...hint, marginTop: '0.4rem' }}>
+          The panel has a newer build of {info.runtime} than this agent runs.
+          <button className="btn btn-secondary" style={small} onClick={onRedeploy}>Redeploy</button>
+          <span style={{ color: 'var(--text-secondary)' }}>— about a second, sessions restart</span>
+        </div>
+      ) : info.upstream?.newer ? (
+        <div style={{ ...hint, marginTop: '0.4rem' }}>
+          A newer {info.runtime} is published upstream.
+          <button className="btn btn-secondary" style={small} onClick={onRebuild}>Rebuild image</button>
+          <span style={{ color: 'var(--text-secondary)' }}>— several minutes; other agents follow on their next redeploy</span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function AgentSelfTest({ agentId, running }) {
   const [state, setState] = useState(null)   // null | { running, started } | result
   const [elapsed, setElapsed] = useState(0)

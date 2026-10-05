@@ -24,6 +24,7 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 ## Features
 
 ### Agent Management
+- **Is it current?** — each agent's page shows the runtime version it runs, and says when the panel has a newer build (redeploy) or a newer one is published upstream (rebuild)
 - **Seven runtimes** — Hermes, OpenClaw, Odysseus, generic Docker App, Git App, Git Compose, and full Docker Compose deployments
 - **Quick Start** — API keys are injected automatically from your configured providers (OpenAI, Anthropic, OpenRouter, Gemini, DeepSeek, Groq, xAI, Mistral, or any OpenAI-compatible endpoint like vLLM)
 - **Tabbed agent view** — Overview, Logs, Console, Environment, Credentials and Settings in one place
@@ -259,9 +260,10 @@ can do anything on that machine. Treat panel access as you would root SSH.
 - Every API call is rate-limited per address (`Rate Limit`, on by default).
 - The panel cannot be framed by another site (`X-Frame-Options`,
   `frame-ancestors 'none'`), and sends `nosniff` and a same-origin referrer.
-- Guests share Caddy's network, so Caddy's admin API — which rewrites every
-  route — listens only on a Unix socket that Caddy and the backend mount. A guest
-  cannot repoint the panel's domain.
+- Guests share Caddy's network, so neither Caddy's admin API — which rewrites
+  every route — nor the panel's own API listens on it. Both are Unix sockets that
+  only Caddy and the backend mount: a guest cannot repoint the panel's domain, and
+  reaches the panel only the way the internet does, through Caddy.
 - AgentHotel publishes 80 and 443 and nothing else, served by Caddy with
   automatic certificates. **A Cloudflare Tunnel does not close them** — see below.
 

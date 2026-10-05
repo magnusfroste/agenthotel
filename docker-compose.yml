@@ -32,10 +32,13 @@ services:
       # Caddy's admin API, reachable only through this socket. Guests share
       # Caddy's network, so the admin API must not listen on it.
       - CADDY_ADMIN_SOCKET=/run/caddy-admin/admin.sock
+      # The API listens here, not on the network guests share. Caddy dials it.
+      - BACKEND_SOCKET=/run/agenthotel/backend.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agenthotel-data:/data
       - caddy-admin:/run/caddy-admin
+      - agenthotel-run:/run/agenthotel
       - ./templates:/templates
       # Checkouts for compose guests, mounted at the SAME path inside and out.
       #
@@ -76,6 +79,8 @@ services:
       - ./docker/caddy.json:/etc/caddy/caddy.json:ro
       # The admin socket. Mounted by Caddy and the backend, and nothing else.
       - caddy-admin:/run/caddy-admin
+      # The backend's socket. Caddy is the only thing that reaches the API.
+      - agenthotel-run:/run/agenthotel
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -97,6 +102,7 @@ services:
 volumes:
   agenthotel-data:
   caddy-admin:
+  agenthotel-run:
   caddy-data:
   caddy-config:
 

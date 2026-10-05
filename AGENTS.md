@@ -135,4 +135,4 @@ docker compose logs -f backend
 docker compose logs -f caddy
 ```
 
-Backend runs on port 8080 internally, exposed via Caddy on 80/443.
+The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` set) it answers on a Unix socket, `/run/agenthotel/backend.sock`, in the `agenthotel-run` volume that only Caddy and the backend mount, and on `127.0.0.1:8080` inside its own container for the upgrade's readiness check. Guests share the network with Caddy and must never reach the API except through Caddy — do not add a network listener, and do not add an `/api` proxy to the frontend's nginx. Without `BACKEND_SOCKET` (development) it listens on `0.0.0.0:8080` as before.

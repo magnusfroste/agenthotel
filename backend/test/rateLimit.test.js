@@ -78,3 +78,10 @@ test('before Caddy has been looked up, a private peer counts as Caddy — never 
     setProxies({ caddy: [CADDY], tunnel: [TUNNEL] });
   }
 });
+
+test('a request on the backend\'s Unix socket came through Caddy, and is read like one', () => {
+  // No peer address on a socket. 'unknown' would put every visitor in one bucket.
+  assert.strictEqual(clientIp({ headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.50' }, socket: {} }), '203.0.113.50');
+  assert.strictEqual(clientIp({ headers: { 'x-forwarded-for': TUNNEL, 'cf-connecting-ip': '198.51.100.7' }, socket: {} }), '198.51.100.7');
+  assert.strictEqual(clientIp({ headers: { 'cf-connecting-ip': '198.51.100.7' }, socket: {} }), 'unknown');
+});
