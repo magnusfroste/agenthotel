@@ -53,6 +53,61 @@ const PROVIDER_REGISTRY_NAME = {
 //
 // Only an unambiguous answer counts. Two providers listing the same id is a
 // question the operator has to settle with a prefix.
+// Every endpoint of the operator's own that this agent was handed: a
+// <SLUG>_BASE_URL with its <SLUG>_API_KEY, which is exactly what the panel
+// injects for one (a built-in gets only its key). Hermes lists a custom
+// endpoint in its model picker only if custom_providers names it, and the
+// panel used to write the one entry for the default model's provider — so
+// garageai, added after the agent was made, reached the agent's environment
+// on redeploy and never its picker, and switching the default to OpenAI made
+// dgxspark vanish from it (2026-10-07).
+//
+// Names hermes already uses for its own providers are left alone: an endpoint
+// called "openrouter" or "custom" must not shadow the real one.
+const RESERVED_PROVIDER_NAMES = new Set(['custom', 'auto', 'nous', 'openai-api', 'openai', 'openrouter', 'anthropic',
+  'gemini', 'zai', 'deepseek', 'xai', 'groq', 'mistral']);
+
+function ownEndpoints(config, alwaysInclude = null) {
+  const out = [];
+  for (const [key, value] of Object.entries(config || {})) {
+    const m = /^([A-Z0-9]+)_BASE_URL$/.exec(key);
+    if (!m || !value || !/^https?:\/\//.test(String(value).trim())) continue;
+    const name = m[1].toLowerCase();
+    if (RESERVED_PROVIDER_NAMES.has(name) || BUILTIN[name]) continue;
+    // A key or a model list says the panel put it there; a bare FOO_BASE_URL an
+    // operator set for some other tool is not a model provider. The default's
+    // endpoint is always included — it always was, keyless servers like a
+    // local Ollama among them.
+    const wanted = alwaysInclude && name === String(alwaysInclude).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (!wanted && !config[`${m[1]}_API_KEY`] && !config[`${m[1]}_MODELS`]) continue;
+    const models = String(config[`${m[1]}_MODELS`] || '').split(',').map(x => x.trim()).filter(Boolean);
+    out.push({ name, baseUrl: String(value).trim(), keyEnv: `${m[1]}_API_KEY`, models });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// The custom_providers block: the default's endpoint first with the default
+// model, then every other endpoint with the first model it lists. Values are
+// quoted — model ids carry slashes and colons ("unsloth/Qwen…-GGUF:UD-Q2_K_XL").
+function customProvidersBlock(endpoints, defaultName, defaultModel) {
+  if (!endpoints.length) return '';
+  const q = (v) => JSON.stringify(String(v));
+  // Matched by slug, named as the model id wrote it: "dgx-spark/…" has always
+  // produced provider: dgx-spark, and the entry must carry the same name.
+  const slugOf = (v) => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const isDefault = (e) => defaultName && e.name === slugOf(defaultName);
+  const ordered = [...endpoints].sort((a, b) => isDefault(b) - isDefault(a));
+  const lines = ['custom_providers:'];
+  for (const e of ordered) {
+    const model = isDefault(e) ? defaultModel : e.models[0];
+    lines.push(`- name: ${isDefault(e) ? defaultName : e.name}`);
+    lines.push(`  base_url: ${e.baseUrl}`);
+    lines.push(`  key_env: ${e.keyEnv}`);
+    if (model) lines.push(`  model: ${q(model)}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
 function providerListing(model, config) {
   const owners = [];
   for (const [key, value] of Object.entries(config || {})) {
@@ -64,9 +119,32 @@ function providerListing(model, config) {
   return owners.length === 1 ? owners[0] : null;
 }
 
+// Whether the agent has a provider by this name: the panel injected its key.
+function isConfiguredProvider(name, config) {
+  const slug = String(name || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return Boolean(slug && config && config[`${slug}_API_KEY`]);
+}
+
 function splitModel(value, config) {
   const raw = (value || '').trim();
   if (!raw.includes('/')) return { providerIn: providerListing(raw, config) || 'openai', model: raw };
+
+  // A proxy's own model ids carry slashes: garageai lists
+  // "garage/autoversio/deepseek/deepseek-v4.1-flash" and also
+  // "deepseek/deepseek-v4.1-flash". Written without the garageai/ prefix, the
+  // first segment was taken for the provider — "garage", which does not exist,
+  // so hermes got no model block and guessed OpenRouter; or "deepseek", a real
+  // vendor, which would have asked for a DeepSeek key (2026-10-07).
+  //
+  // So the first segment counts as the provider only when the agent actually
+  // has that provider. When it does not, and exactly one provider lists the
+  // whole id, that provider is meant. Every id that resolved correctly before
+  // still does: its prefix is a configured provider, and this never runs.
+  const head = raw.slice(0, raw.indexOf('/'));
+  if (!isConfiguredProvider(head, config)) {
+    const owner = providerListing(raw, config);
+    if (owner) return { providerIn: owner, model: raw };
+  }
 
   const providerIn = raw.slice(0, raw.indexOf('/'));
   const stripped = raw.slice(raw.indexOf('/') + 1);
@@ -82,6 +160,8 @@ function splitModel(value, config) {
 }
 
 module.exports = {
+  // For tests: how a model id and the agent's env become hermes's config.
+  _internals: { splitModel, ownEndpoints, customProvidersBlock },
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
@@ -381,6 +461,7 @@ module.exports = {
     // makes the endpoint appear under its own name, keyed to the env var the
     // panel already injects, without displacing the hosted providers.
     const canonical = PROVIDER_REGISTRY_NAME[providerIn];
+    const endpoints = ownEndpoints(config, canonical ? null : providerIn);
     if (!canonical) {
       const slug = providerIn.replace(/[^a-z0-9]/g, '').toUpperCase();
       const customBaseUrl = config[`${slug}_BASE_URL`];
@@ -390,12 +471,7 @@ module.exports = {
       return `model:
   provider: ${providerIn}
   default: ${bareModel}
-custom_providers:
-- name: ${providerIn}
-  base_url: ${customBaseUrl}
-  key_env: ${slug}_API_KEY
-  model: ${bareModel}
-`;
+` + customProvidersBlock(endpoints, providerIn, bareModel);
     }
     const provider = canonical;
 
@@ -403,6 +479,6 @@ custom_providers:
   provider: ${provider}
   default: ${bareModel}
   base_url: ${baseUrl}
-`;
+` + customProvidersBlock(endpoints, null, null);
   }
 };

@@ -110,3 +110,71 @@ test('two providers listing one id is not guessed at', () => {
   // Ambiguity is the operator's to settle with a prefix.
   assert.strictEqual(providerOf('glm-5.3-flash', { OPENAI_MODELS: 'glm-5.3-flash' }), 'openai-api');
 });
+
+// ---- Model ids from proxies, and every own endpoint in the model picker ----
+{
+  const yaml = require('js-yaml');
+  const { splitModel, ownEndpoints } = hermes._internals;
+  const keys = { OPENAI_API_KEY: 'sk', OPENROUTER_API_KEY: 'or' };
+  const garage = { GARAGEAI_API_KEY: 'g', GARAGEAI_BASE_URL: 'https://llm.example/v1',
+    GARAGEAI_MODELS: 'garage/autoversio/deepseek/deepseek-v4.1-flash,deepseek/deepseek-v4.1-flash' };
+  const dgx = { DGXSPARK_API_KEY: 'd', DGXSPARK_BASE_URL: 'https://glm.example/v1', DGXSPARK_MODELS: 'glm-5.3-flash' };
+
+  test("a proxy's own id, written without the proxy's name, finds the proxy", () => {
+    assert.deepStrictEqual(splitModel('garage/autoversio/deepseek/deepseek-v4.1-flash', { ...keys, ...garage }),
+      { providerIn: 'garageai', model: 'garage/autoversio/deepseek/deepseek-v4.1-flash' });
+  });
+
+  test("an id that looks like a vendor's goes to the proxy that lists it when there is no such vendor here", () => {
+    assert.deepStrictEqual(splitModel('deepseek/deepseek-v4.1-flash', { ...keys, ...garage }),
+      { providerIn: 'garageai', model: 'deepseek/deepseek-v4.1-flash' });
+  });
+
+  test('a prefix the agent has always wins — every id that worked before still does', () => {
+    assert.deepStrictEqual(splitModel('garageai/deepseek/deepseek-v4.1-flash', { ...keys, ...garage }),
+      { providerIn: 'garageai', model: 'deepseek/deepseek-v4.1-flash' });
+    assert.deepStrictEqual(splitModel('deepseek/deepseek-v4.1-flash', { ...keys, ...garage, DEEPSEEK_API_KEY: 'ds' }),
+      { providerIn: 'deepseek', model: 'deepseek-v4.1-flash' }, 'with a DeepSeek key, deepseek/ means DeepSeek');
+    assert.deepStrictEqual(splitModel('openai/gpt-6-sol', { ...keys, ...garage }), { providerIn: 'openai', model: 'gpt-6-sol' });
+    assert.deepStrictEqual(splitModel('dgxspark/glm-5.3-flash', { ...keys, ...dgx }), { providerIn: 'dgxspark', model: 'glm-5.3-flash' });
+  });
+
+  test('a typo with nothing to match stays as written — the page warns, the panel does not guess', () => {
+    assert.deepStrictEqual(splitModel('autoversi/autoversio', { ...keys, AUTOVERSIO_API_KEY: 'a', AUTOVERSIO_BASE_URL: 'https://x/v1', AUTOVERSIO_MODELS: 'autoversio' }),
+      { providerIn: 'autoversi', model: 'autoversio' });
+  });
+
+  test('every own endpoint is in the picker, the default first, even when the default is OpenAI', () => {
+    const cfg = { ...keys, ...garage, ...dgx, HERMES_MODEL: 'openai/gpt-6-sol' };
+    const parsed = yaml.load(hermes.generateConfig(cfg));
+    assert.deepStrictEqual(parsed.model, { provider: 'openai-api', default: 'gpt-6-sol', base_url: 'https://api.openai.com/v1' });
+    assert.deepStrictEqual(parsed.custom_providers.map(p => p.name), ['dgxspark', 'garageai']);
+    assert.strictEqual(parsed.custom_providers[1].model, 'garage/autoversio/deepseek/deepseek-v4.1-flash');
+
+    const own = yaml.load(hermes.generateConfig({ ...cfg, HERMES_MODEL: 'garageai/deepseek/deepseek-v4.1-flash' }));
+    assert.deepStrictEqual(own.model, { provider: 'garageai', default: 'deepseek/deepseek-v4.1-flash' });
+    assert.deepStrictEqual(own.custom_providers.map(p => p.name), ['garageai', 'dgxspark']);
+    assert.strictEqual(own.custom_providers[0].model, 'deepseek/deepseek-v4.1-flash');
+    assert.strictEqual(own.custom_providers[0].key_env, 'GARAGEAI_API_KEY');
+  });
+
+  test('a keyless default endpoint is kept, and named as the model id wrote it', () => {
+    const ollama = yaml.load(hermes.generateConfig({ ...keys, HERMES_MODEL: 'ollama/llama3.3', OLLAMA_BASE_URL: 'http://10.0.0.5:11434/v1' }));
+    assert.deepStrictEqual(ollama.custom_providers.map(p => p.name), ['ollama']);
+    const hyphen = yaml.load(hermes.generateConfig({ ...keys, ...dgx, HERMES_MODEL: 'dgx-spark/glm-5.3-flash' }));
+    assert.strictEqual(hyphen.model.provider, 'dgx-spark');
+    assert.deepStrictEqual(hyphen.custom_providers.map(p => p.name), ['dgx-spark']);
+  });
+
+  test('not a model provider: a stray FOO_BASE_URL, or a name hermes uses for its own', () => {
+    const names = ownEndpoints({ ...keys, FOO_BASE_URL: 'https://foo.example', OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+      CUSTOM_BASE_URL: 'https://c.example', CUSTOM_API_KEY: 'c', ...dgx }).map(e => e.name);
+    assert.deepStrictEqual(names, ['dgxspark']);
+  });
+
+  test('model ids with colons and slashes survive the YAML', () => {
+    const cfg = { ...keys, HERMES_MODEL: 'openai/gpt-6-sol', UNSLOTH_API_KEY: 'u', UNSLOTH_BASE_URL: 'https://u.example/v1',
+      UNSLOTH_MODELS: 'unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q2_K_XL' };
+    assert.strictEqual(yaml.load(hermes.generateConfig(cfg)).custom_providers[0].model, 'unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q2_K_XL');
+  });
+}

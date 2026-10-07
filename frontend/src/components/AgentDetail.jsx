@@ -392,6 +392,12 @@ function AgentDetail() {
                     ⚠ No provider prefix. Write it as provider/model — copy the exact id from Providers — or the agent may guess the wrong vendor from the name.
                   </div>
                 )}
+                {unknownProvider(agent, p) && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: '0.75rem', color: 'var(--accent-yellow, #f59e0b)', marginTop: '-0.25rem' }}>
+                    ⚠ No provider named <code>{unknownProvider(agent, p).head}</code> here, so this model is not configured.
+                    {unknownProvider(agent, p).providers.length > 0 && <> This agent has: {unknownProvider(agent, p).providers.map(x => <code key={x} style={{ marginRight: '0.3rem' }}>{x}</code>)}</>}
+                  </div>
+                )}
               </div>
             ))}
           </div>}
@@ -1069,6 +1075,28 @@ const bareModel = (agent, pair) => {
   if (!field || field.format !== 'provider/model') return false
   const parts = String(pair.value || '').split(',').map(x => x.trim()).filter(Boolean)
   return parts.length > 0 && parts.some(x => !x.includes('/'))
+}
+
+// A provider/model id whose provider this agent does not have. "autoversi/
+// autoversio" — one letter short — made the panel write no model at all, and
+// hermes kept running on whatever was left in its config, with nothing on the
+// page to say why (2026-10-07). Mirrors plugins/hermes.js splitModel: a prefix
+// counts if the agent has that provider's key or address, and an id one
+// provider lists whole ("garage/…" under garageai) resolves without one.
+const unknownProvider = (agent, pair) => {
+  const field = (agent?.configFields || []).find(f => f.key === pair.key)
+  if (!field || field.format !== 'provider/model') return null
+  const c = agent.config || {}
+  const have = Object.keys(c).map(k => (/^([A-Z0-9]+)_(API_KEY|BASE_URL)$/.exec(k) || [])[1]).filter(Boolean)
+  const listedWhole = (id) => Object.entries(c).some(([k, v]) => /^[A-Z0-9]+_MODELS$/.test(k) &&
+    String(v || '').split(',').map(x => x.trim()).includes(id))
+  for (const id of String(pair.value || '').split(',').map(x => x.trim()).filter(x => x.includes('/'))) {
+    const head = id.slice(0, id.indexOf('/'))
+    const slug = head.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+    if (have.includes(slug) || listedWhole(id)) continue
+    return { head, providers: [...new Set(have)].map(x => x.toLowerCase()).sort() }
+  }
+  return null
 }
 
 const multiline = (v) => typeof v === 'string' && (v.includes('\n') || v.length > 160)

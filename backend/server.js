@@ -1916,57 +1916,9 @@ open(path, 'w').write(text)
 }
 
 async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock) {
-  const b64 = Buffer.from(modelBlock || '').toString('base64');
-  const cwdB64 = Buffer.from(terminalCwd || '').toString('base64');
-  const mcpB64 = Buffer.from(mcpBlock || '').toString('base64');
   // Wait for the s6 init scripts to finish writing the baked config.
   await new Promise(r => setTimeout(r, 5000));
-  const patchScript = `
-import base64
-mb = base64.b64decode('${b64}').decode()
-mcp = base64.b64decode('${mcpB64}').decode()
-with open('/opt/data/config.yaml') as f: lines = f.readlines()
-
-# mcp_servers is replaced only when the panel has one to put there. Stripping it
-# unconditionally would delete servers the operator added inside hermes, which
-# the panel knows nothing about and could not put back.
-drop = ['model:', 'custom_providers:'] + (['mcp_servers:'] if mcp else [])
-out, i = [], 0
-while i < len(lines):
-    if any(lines[i].startswith(d) for d in drop):
-        i += 1
-        while i < len(lines) and (lines[i].startswith('  ') or lines[i].startswith('- ')): i += 1
-        continue
-    out.append(lines[i]); i += 1
-out = mb.splitlines(True) + out if mb else out
-out = mcp.splitlines(True) + out if mcp else out
-
-# terminal.cwd is edited in place: replace the cwd line inside the existing
-# terminal: block, or add one if the block has none. Rewriting the whole block
-# would drop backend and timeout, which are set there too.
-cwd = base64.b64decode('${cwdB64}').decode()
-if cwd:
-    res, i, done = [], 0, False
-    while i < len(out):
-        res.append(out[i])
-        if out[i].startswith('terminal:') and not done:
-            i += 1
-            wrote = False
-            while i < len(out) and out[i].startswith('  '):
-                if out[i].lstrip().startswith('cwd:'):
-                    res.append('  cwd: %s\\n' % cwd); wrote = True
-                else:
-                    res.append(out[i])
-                i += 1
-            if not wrote:
-                res.append('  cwd: %s\\n' % cwd)
-            done = True
-            continue
-        i += 1
-    out = res
-
-open('/opt/data/config.yaml', 'w').write(''.join(out))
-`;
+  const patchScript = require('./lib/hermesConfigPatch').buildPatchScript(modelBlock, mcpBlock, terminalCwd);
   await execAndWait(container, ['python3', '-c', patchScript], 'config.yaml patch');
   // SIGHUP the supervised gateway process; s6 auto-respawns it with new config.
   const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
