@@ -13,6 +13,14 @@ const TerminalPanel = lazy(() => import('./TerminalPanel'))
 import { toEnvText, mergeTextEdit, isMultiline } from '../lib/envText'
 
 const SENSITIVE = /key|token|password|secret/i
+// Values that are not named like a secret but carry them: MCP server headers,
+// a compose stack's whole .env, extra env lines. Marked data-secret too.
+//
+// data-secret has no effect in the panel itself. It is what a screen recorder
+// blurs: reel-studio's start_session(mask=["[data-secret]"]) keeps every
+// marked element unreadable from the first frame, so a video of the panel can
+// show any page without showing a key.
+const CARRIES_SECRETS = /^(MCP_SERVERS|COMPOSE_ENV|CUSTOM_ENV)$/
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Box },
@@ -301,7 +309,7 @@ function AgentDetail() {
             <h3 style={{ margin: 0, fontSize: '1rem' }}>Container logs</h3>
             <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={fetchLogs}><RefreshCw size={15} color="currentColor" /> Refresh</button>
           </div>
-          <pre ref={logBoxRef} style={{ background: '#0f172a', color: '#cbd5e1', padding: '1rem', borderRadius: '0.5rem', maxHeight: '60vh', overflow: 'auto', fontSize: '0.8rem', fontFamily: 'Menlo, monospace', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{logs || 'No logs available'}</pre>
+          <pre data-secret="" ref={logBoxRef} style={{ background: '#0f172a', color: '#cbd5e1', padding: '1rem', borderRadius: '0.5rem', maxHeight: '60vh', overflow: 'auto', fontSize: '0.8rem', fontFamily: 'Menlo, monospace', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{logs || 'No logs available'}</pre>
         </div>
       )}
 
@@ -339,6 +347,7 @@ function AgentDetail() {
                 {' '}<strong style={{ color: 'var(--accent-yellow, #f59e0b)' }}>Every value is shown in the clear, keys included</strong> — mind a shared screen.
               </div>
               <textarea
+                data-secret=""
                 aria-label="Environment variables as text"
                 style={{ fontFamily: 'monospace', fontSize: '0.85rem', minHeight: '320px', lineHeight: 1.5, resize: 'vertical', width: '100%' }}
                 spellCheck="false" autoComplete="off"
@@ -364,13 +373,14 @@ function AgentDetail() {
                     lines — is unreadable and uneditable in a one-line box. */}
                 {multiline(p.value) ? (
                   <textarea
+                    data-secret=""
                     style={{ fontFamily: 'monospace', fontSize: '0.8rem', minHeight: '260px', lineHeight: 1.5, resize: 'vertical', width: '100%' }}
                     spellCheck="false"
                     value={p.value}
                     placeholder="value"
                     onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 ) : (
-                  <input style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} type={SENSITIVE.test(p.key) ? 'password' : 'text'} value={p.value} placeholder="value" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                  <input data-secret={SENSITIVE.test(p.key) || CARRIES_SECRETS.test(p.key) ? '' : undefined} style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} type={SENSITIVE.test(p.key) ? 'password' : 'text'} value={p.value} placeholder="value" onChange={(e) => setEnvPairs(envPairs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 )}
                 <button className="btn btn-danger" title="Remove" onClick={() => setEnvPairs(envPairs.filter((_, j) => j !== i))}><X size={15} color="white" /></button>
                 {/* The runtime already says what its own fields mean. Without it
@@ -417,7 +427,7 @@ function AgentDetail() {
                   <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '0.85rem 1rem', border: '1px solid var(--border)', gap: '0.75rem' }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{cred.label}</div>
-                      <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>{masked}</div>
+                      <div data-secret="" style={{ fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>{masked}</div>
                     </div>
                     <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.75rem', flexShrink: 0 }} onClick={() => copy(cred.value)}><Copy size={14} color="currentColor" /> Copy</button>
                   </div>
@@ -559,7 +569,7 @@ function AgentActions({ agentId, status }) {
         })}
       </div>
       {output && (
-        <pre style={{ marginTop: '1rem', marginBottom: 0, padding: '0.75rem', borderRadius: '0.4rem', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: '220px', overflow: 'auto', color: output.failed ? 'var(--accent-red)' : 'var(--text-primary)' }}>
+        <pre data-secret="" style={{ marginTop: '1rem', marginBottom: 0, padding: '0.75rem', borderRadius: '0.4rem', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: '220px', overflow: 'auto', color: output.failed ? 'var(--accent-red)' : 'var(--text-primary)' }}>
           {output.text}
         </pre>
       )}

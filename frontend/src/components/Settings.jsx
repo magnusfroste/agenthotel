@@ -171,10 +171,10 @@ function Settings() {
   const formGroupStyle = { marginBottom: '1.5rem' }
   const twoCols = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }
 
-  const field = ({ name, label, help, type = 'text', placeholder, fallback = '' }) => (
+  const field = ({ name, label, help, type = 'text', placeholder, fallback = '', secret = false }) => (
     <div style={formGroupStyle}>
       <label style={labelStyle}>{label}</label>
-      <input type={type} name={name} value={settings[name] ?? fallback} onChange={handleChange} placeholder={placeholder} style={inputStyle} />
+      <input data-secret={secret ? '' : undefined} type={type} name={name} value={settings[name] ?? fallback} onChange={handleChange} placeholder={placeholder} style={inputStyle} />
       {help && <div style={helpTextStyle}>{help}</div>}
     </div>
   )
@@ -263,11 +263,11 @@ function Settings() {
         <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
           Get alerted when an agent goes down or recovers, when a login is blocked, and when host disk or memory usage crosses a threshold.
         </p>
-        {field({ name: 'notify_webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://hooks.slack.com/services/… or Discord webhook',
+        {field({ name: 'notify_webhook_url', label: 'Webhook URL', type: 'url', secret: true, placeholder: 'https://hooks.slack.com/services/… or Discord webhook',
           help: 'Slack or Discord incoming webhook — receives a JSON {"text": "…"} POST' })}
         <div style={twoCols}>
-          {field({ name: 'notify_telegram_token', label: 'Telegram bot token', placeholder: '123456:ABC-DEF…', help: 'From @BotFather. Leave both Telegram fields empty to use the webhook only.' })}
-          {field({ name: 'notify_telegram_chat_id', label: 'Telegram chat ID', placeholder: '-1001234567890', help: 'The chat or group the bot posts to. Groups start with -100.' })}
+          {field({ name: 'notify_telegram_token', label: 'Telegram bot token', secret: true, placeholder: '123456:ABC-DEF…', help: 'From @BotFather. Leave both Telegram fields empty to use the webhook only.' })}
+          {field({ name: 'notify_telegram_chat_id', label: 'Telegram chat ID', secret: true, placeholder: '-1001234567890', help: 'The chat or group the bot posts to. Groups start with -100.' })}
         </div>
         <div style={twoCols}>
           {field({ name: 'notify_disk_threshold', label: 'Disk alert threshold (%)', type: 'number', fallback: '85', help: 'Alert when the host disk is fuller than this. Checked every five minutes.' })}

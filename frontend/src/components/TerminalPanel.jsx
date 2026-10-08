@@ -48,7 +48,7 @@ function TerminalPanel({ agentId, wsPath, banner = 'Connecting to container…',
     }
   }, [agentId, wsPath, banner])
 
-  return <div ref={containerRef} style={{ height, background: '#0f172a' }} />
+  return <div data-secret="" ref={containerRef} style={{ height, background: '#0f172a' }} />
 }
 
 export default TerminalPanel

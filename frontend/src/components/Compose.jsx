@@ -260,6 +260,7 @@ volumes:
           
           <div className="form-group">
             <textarea
+              data-secret=""
               className="form-textarea"
               value={formData.composeYaml}
               onChange={handleYamlChange}
@@ -306,6 +307,7 @@ volumes:
               <div className="form-group">
                 <label className="form-label">Paste environment variables (KEY=VALUE, one per line — # comments and export prefixes are ignored)</label>
                 <textarea
+                  data-secret=""
                   className="form-textarea"
                   value={bulkEnvInput}
                   onChange={(e) => setBulkEnvInput(e.target.value)}
@@ -347,6 +349,7 @@ volumes:
                     style={{ flex: 1, fontFamily: 'monospace' }}
                   />
                   <input
+                    data-secret=""
                     type="text"
                     className="form-input"
                     value={envVar.value}

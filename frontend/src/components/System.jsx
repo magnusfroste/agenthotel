@@ -526,7 +526,7 @@ sysctl -w vm.swappiness=10`}</pre>
               <div className="sysinfo-item">
                 <div>
                   <div className="sysinfo-label">Token</div>
-                  <div className="sysinfo-value text-mono">{tunnelStatus.token}</div>
+                  <div data-secret="" className="sysinfo-value text-mono">{tunnelStatus.token}</div>
                 </div>
               </div>
             )}
@@ -535,6 +535,7 @@ sysctl -w vm.swappiness=10`}</pre>
           {!tunnelStatus.running && (
             <div style={{ marginTop: '1rem' }}>
               <input
+                data-secret=""
                 type="password"
                 className="input"
                 placeholder={tunnelStatus.configured ? 'Stored token in use — paste a new one to replace it' : 'Cloudflare tunnel token (eyJhIjoi…)'}
@@ -611,7 +612,7 @@ sysctl -w vm.swappiness=10`}</pre>
                     {/* Stays masked: the point is to copy it, not read it off a
                         screen. The full value is the token this browser already
                         holds for its own requests, so copying exposes nothing new. */}
-                    <div className="sysinfo-value text-mono">{mcpStatus.token}</div>
+                    <div data-secret="" className="sysinfo-value text-mono">{mcpStatus.token}</div>
                     <button onClick={copyMcpToken} title="Copy the full token"
                       className="btn btn-secondary" style={{ padding: "0.25rem 0.5rem" }}>
                       <Copy size={14} color="currentColor" />

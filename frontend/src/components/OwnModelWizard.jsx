@@ -102,7 +102,7 @@ export default function OwnModelWizard({ existing = [], onDone, onCancel }) {
       </div>
       <div className="form-group">
         <label style={label}>API key <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>(optional)</span></label>
-        <input className="form-input" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+        <input data-secret="" className="form-input" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
           placeholder="Leave empty if the server needs none" style={{ fontFamily: 'monospace' }} />
       </div>
       <button type="button" className="btn btn-primary" onClick={probe} disabled={probing || !baseUrl.trim()}

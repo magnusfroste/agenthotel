@@ -84,14 +84,14 @@ function CreateAgent() {
     <div key={field.key} className="form-group">
       <label>{field.label} {field.required && '*'}</label>
       {field.type === 'textarea' ? (
-        <textarea value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || ''} required={field.required} />
+        <textarea data-secret="" value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || ''} required={field.required} />
       ) : field.type === 'select' ? (
         <select value={formData.config[field.key] || field.default || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} required={field.required}>
           <option value="">Select…</option>
           {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
         </select>
       ) : (
-        <input type={field.type} value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || field.placeholder || ''} required={field.required} />
+        <input data-secret={field.type === 'password' ? '' : undefined} type={field.type} value={formData.config[field.key] || ''} onChange={(e) => handleConfigChange(field.key, e.target.value)} placeholder={field.default || field.placeholder || ''} required={field.required} />
       )}
       {field.description && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>{field.description}</div>}
     </div>

@@ -359,7 +359,7 @@ function Providers() {
             nothing is deleted. <strong>API keys are included</strong> — that is what
             makes it work on the other side, so treat it like the keys themselves.
           </p>
-          <textarea value={rawText} onChange={e => setRawText(e.target.value)}
+          <textarea data-secret="" value={rawText} onChange={e => setRawText(e.target.value)}
             spellCheck={false} rows={18}
             style={{ width: "100%", fontFamily: "monospace", fontSize: "0.8rem" }} />
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
@@ -442,6 +442,7 @@ function Providers() {
             <div className="form-group">
               <label className="form-label">API Key</label>
               <input
+                data-secret=""
                 type="password"
                 className="form-input"
                 value={formData.apiKey}

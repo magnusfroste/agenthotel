@@ -128,6 +128,7 @@ function Profile() {
           <div className="form-group">
             <label>Current Email</label>
             <input
+              data-secret=""
               type="email"
               value={profile.email}
               disabled
@@ -138,6 +139,7 @@ function Profile() {
           <div className="form-group">
             <label>New Email</label>
             <input
+              data-secret=""
               type="email"
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
@@ -149,6 +151,7 @@ function Profile() {
           <div className="form-group">
             <label>Current Password (required to change email)</label>
             <input
+              data-secret=""
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -176,6 +179,7 @@ function Profile() {
           <div className="form-group">
             <label>Current Password</label>
             <input
+              data-secret=""
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -187,6 +191,7 @@ function Profile() {
           <div className="form-group">
             <label>New Password</label>
             <input
+              data-secret=""
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -198,6 +203,7 @@ function Profile() {
           <div className="form-group">
             <label>Confirm New Password</label>
             <input
+              data-secret=""
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

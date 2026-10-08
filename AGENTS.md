@@ -136,3 +136,13 @@ docker compose logs -f caddy
 ```
 
 The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` set) it answers on a Unix socket, `/run/agenthotel/backend.sock`, in the `agenthotel-run` volume that only Caddy and the backend mount, and on `127.0.0.1:8080` inside its own container for the upgrade's readiness check. Guests share the network with Caddy and must never reach the API except through Caddy — do not add a network listener, and do not add an `/api` proxy to the frontend's nginx. Without `BACKEND_SOCKET` (development) it listens on `0.0.0.0:8080` as before.
+
+## Secrets on screen
+
+Any element that can show a secret — a key, token, password, a credentials
+value, MCP server headers, a compose .env, logs, the terminal — carries a
+`data-secret` attribute. It does nothing in the panel; it is what a screen
+recording blurs: reel-studio's `start_session(mask=["[data-secret]",
+"input[type=password]"])` keeps every marked element unreadable from the first
+frame. A new component that renders a secret must add it, or a demo video of
+that page shows the secret.
