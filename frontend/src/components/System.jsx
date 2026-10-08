@@ -472,7 +472,7 @@ sysctl -w vm.swappiness=10`}</pre>
             {Object.entries(systemStats.network).map(([iface, info]) => (
               <div key={iface} className="network-card">
                 <div className="network-card-name">{iface}</div>
-                {info.ip && <div className="network-card-detail">IP: <span className="text-mono">{info.ip}</span></div>}
+                {info.ip && <div className="network-card-detail">IP: <span data-secret="" className="text-mono">{info.ip}</span></div>}
                 {info.rx && <div className="network-card-detail">↓ {info.rx}</div>}
                 {info.tx && <div className="network-card-detail">↑ {info.tx}</div>}
               </div>

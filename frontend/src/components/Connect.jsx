@@ -259,7 +259,7 @@ function Connect() {
               fontFamily: 'monospace',
               fontSize: '0.875rem'
             }}>
-              <span style={{ flex: 1 }}>***{token.slice(-8)}</span>
+              <span data-secret="" style={{ flex: 1 }}>***{token.slice(-8)}</span>
               <button
                 onClick={() => copyToClipboard(token, 'token')}
                 className="btn btn-secondary"

@@ -568,7 +568,7 @@ function Providers() {
             <div className="provider-card-info">
               {provider.apiKey && (
                 <div style={{ marginBottom: '0.25rem' }}>
-                  <strong>API Key:</strong> •••••{provider.apiKey.slice(-4)}
+                  <strong>API Key:</strong> <span data-secret="">•••••{provider.apiKey.slice(-4)}</span>
                 </div>
               )}
               {provider.builtin && Array.isArray(provider.models) && (

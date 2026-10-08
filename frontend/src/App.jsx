@@ -272,7 +272,7 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
                 .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))}
               style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit', display: 'flex', alignItems: 'center', gap: 'inherit' }}
             >
-              <Globe size={13} color="currentColor" /> {ip}
+              <Globe size={13} color="currentColor" /> <span data-secret="">{ip}</span>
             </button>
           )}
           {version && version !== 'unknown' && (() => {
