@@ -88,3 +88,12 @@ test('a git-app template builds from the repository, with its env as config keys
 test('a git-app template needs a repository', () => {
   assert.strictEqual(normalizeDeploy({ runtime: 'git-app' }), null);
 });
+
+test('the reel-studio template asks for two cores — a recording needs one for the encoder alone', () => {
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/reel-studio/meta.yaml'), 'utf8'));
+  const { config } = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'reel.example.com', AGENT_NAME: 'reel' });
+  assert.strictEqual(config.CPU_LIMIT, '2');
+  assert.strictEqual(config.MEMORY_LIMIT_MB, '2048');
+  assert.strictEqual(config.REEL_PUBLIC_BASE_URL, 'https://reel.example.com');
+});

@@ -12,7 +12,7 @@ instructions: 'Give it a domain: the MCP address becomes https://<domain>/mcp, a
   Connect an agent by adding the MCP server in its settings, with the URL exactly as above. No trailing slash: `/mcp/` answers with a redirect that looks like a hang. The `Accept: application/json, text/event-stream` header is required.
 
 
-  The first deploy builds an image with Chromium, Xvfb and ffmpeg. It takes a few minutes and about 2 GB of disk. Give the guest at least 2 GB of RAM, because a browser recording at 1080p is not small.
+  The first deploy builds an image with Chromium, Xvfb and ffmpeg. It takes a few minutes and about 2 GB of disk. It is deployed with 2 CPU cores and 2 GB of RAM: the video encoder alone keeps a core busy while recording, and on one core every observe call slows to tens of seconds.
 
 
   Narration uses the free Edge voices. Add an ElevenLabs key to use your own voices.
@@ -50,6 +50,8 @@ deploy:
   envFile: |
     REEL_API_TOKEN=${REEL_API_TOKEN}
     REEL_PUBLIC_BASE_URL=https://${DOMAIN}
+    CPU_LIMIT=2
+    MEMORY_LIMIT_MB=2048
   env:
   - key: ELEVENLABS_API_KEY
     label: ElevenLabs API key

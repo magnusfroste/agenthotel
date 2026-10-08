@@ -2302,7 +2302,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
 
       await removeAgentRoutes(agent);
 
-      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, updatedConfig, plugin, { alreadyBuilt: true });
+      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, withCurrentLimits(agent.id, updatedConfig), plugin, { alreadyBuilt: true });
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
@@ -2367,6 +2367,25 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
 // The one way an agent is redeployed — the Redeploy button, and anything that
 // changes an agent's config behind the scenes, such as connecting it to
 // SkillHub. Kept in one place so the status handling below applies to all.
+// A build takes minutes, and limits can be changed live meanwhile (the
+// Resources panel applies them to the running container and saves them). The
+// container created after the build used the config captured when the
+// redeploy began, so a limit raised during a reel-studio rebuild was quietly
+// put back (2026-10-08). Resource limits are re-read just before the
+// container is made; everything else stays as the redeploy was asked for.
+function withCurrentLimits(agentId, config) {
+  try {
+    const saved = JSON.parse(db.prepare('SELECT config FROM agents WHERE id = ?').get(agentId)?.config || '{}');
+    const out = { ...config };
+    for (const key of ['MEMORY_LIMIT_MB', 'CPU_LIMIT']) {
+      if (saved[key] !== undefined) out[key] = saved[key];
+    }
+    return out;
+  } catch (e) {
+    return config;
+  }
+}
+
 async function redeployAgent(agentId, { rebuildImage = false } = {}) {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
   if (!agent) { const e = new Error('Agent not found'); e.status = 404; throw e; }
@@ -2398,7 +2417,7 @@ async function redeployAgent(agentId, { rebuildImage = false } = {}) {
         await removeAgentRoutes(agent);
 
         // The image is already built; deployAgent must not build it twice.
-        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: false, alreadyBuilt: true });
+        await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, withCurrentLimits(agent.id, config), plugin, { rebuildImage: false, alreadyBuilt: true });
       }
     });
 
