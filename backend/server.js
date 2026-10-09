@@ -21,6 +21,7 @@ const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
 const { caddyFetch } = require('./lib/caddyAdmin');
 const { evaluateHealth } = require('./lib/agentHealth');
+const deploys = require('./lib/deploysInFlight');
 const { execFile, execFileSync, spawn } = require('child_process');
 
 const app = express();
@@ -1655,7 +1656,9 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
         // dangling, and it is removed after the new container proves healthy.
         const previousImageId = await docker.getImage(buildTag).inspect().then(i => i.Id, () => null);
         const tarStream = tar.pack(buildContext);
-        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile });
+        // forcerm: remove intermediate containers even when the build fails or is
+        // cut off — an upgrade that killed a build mid-RUN left a ~1.5 GB one.
+        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile, forcerm: true });
         let buildOutput;
         try {
           buildOutput = await new Promise((resolve, reject) => {
@@ -4105,6 +4108,14 @@ async function upgradeHandler(req, res) {
     return res.status(409).json({ error: 'An upgrade is already running.' });
   }
 
+  // The upgrade recreates this container, and every deploy runs inside it: a
+  // build cut off at step 7/18 produced no image and left its guest failed
+  // (2026-10-09). Refuse while one runs; force: true is the operator's call.
+  const running = deploysRunning();
+  if (running.length && req.body?.force !== true) {
+    return res.status(409).json(deploys.upgradeConflict(running));
+  }
+
   let dir;
   try {
     dir = await hostProjectDir();
@@ -4167,6 +4178,15 @@ async function upgradeHandler(req, res) {
   child.stdin.end(buildUpgradeScript(dir));
 }
 
+function deploysRunning() {
+  return deploys.deploysInFlight(db.prepare('SELECT id, name, status FROM agents').all(), buildProgress);
+}
+
+// What an upgrade would interrupt, so the confirm dialog can name it.
+app.get('/api/system/deploys', requireAuth, (req, res) => {
+  res.json({ deploys: deploysRunning() });
+});
+
 app.post('/api/system/upgrade', requireAuth, upgradeHandler);
 // Older name for the same action.
 app.post('/api/system/update', requireAuth, upgradeHandler);
@@ -4220,7 +4240,7 @@ async function runHealthChecks() {
   const fetch = require('node-fetch');
   // config comes along because a generic guest declares its own criterion
   // there (HEALTHCHECK_PATH) — without it the health check silently saw none.
-  const agents = db.prepare('SELECT id, name, runtime, port, status, config, updated_at FROM agents').all();
+  const agents = db.prepare('SELECT id, name, runtime, port, status, config, updated_at, health FROM agents').all();
 
   for (const agent of agents) {
     // An agent mid-deploy has a row but no container yet, and a template image
@@ -4271,9 +4291,11 @@ async function runHealthChecks() {
       : 'unhealthy';
 
     // Written every sweep: the reason string carries the current detail even
-    // when the coarse status has not changed.
+    // when the coarse status has not changed. A deploy a restart cut short
+    // keeps saying so rather than "missing: container not found".
+    const health = deploys.sweptHealth(agent.health, result);
     db.prepare('UPDATE agents SET status = ?, health = ? WHERE id = ?')
-      .run(status, `${result.state}: ${result.reason}`, agent.id);
+      .run(status, health, agent.id);
 
     // A deliberately stopped agent is not a fault — never alert on it.
     if (result.state === 'stopped') { healthState.delete(agent.id); continue; }
@@ -4285,7 +4307,7 @@ async function runHealthChecks() {
       // observation never transitions, so seeding quietly would keep exactly
       // the failure we are trying to surface invisible.
       if (!result.healthy) {
-        const msg = `Agent ${agent.name} is not healthy (${result.state}: ${result.reason})`;
+        const msg = `Agent ${agent.name} is not healthy (${health})`;
         logEvent('agent.unhealthy', agent.id, msg);
         sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
       }
@@ -4293,7 +4315,7 @@ async function runHealthChecks() {
       healthState.set(agent.id, result.healthy);
       const msg = result.healthy
         ? `Agent ${agent.name} is healthy again`
-        : `Agent ${agent.name} is not healthy (${result.state}: ${result.reason})`;
+        : `Agent ${agent.name} is not healthy (${health})`;
       logEvent(result.healthy ? 'agent.healthy' : 'agent.unhealthy', agent.id, msg);
       sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
     }
@@ -4434,6 +4456,36 @@ const PORT = process.env.PORT || 8080;
 // stdio MCP bridge). Nothing listens on the network. Without the variable,
 // as in development, it is the old single listener.
 const BACKEND_SOCKET = process.env.BACKEND_SOCKET || '';
+// Rows a restart left mid-deploy. Read before listen(), so no deploy this
+// process starts can be among them.
+const deploysAtStart = db.prepare('SELECT id, name, runtime, status, config FROM agents')
+  .all().filter(r => deploys.isInFlight(r.status));
+
+async function recoverInterruptedDeploys() {
+  if (!deploysAtStart.length) return;
+  const decisions = await deploys.recoverInterrupted(deploysAtStart,
+    row => docker.getContainer(containerNameFor(runtimes, row)).inspect().then(i => i.State));
+  for (const d of decisions) {
+    // Guarded on the status it was read with: a deploy started since then
+    // owns the row now.
+    const r = d.health
+      ? db.prepare('UPDATE agents SET status = ?, health = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?').run(d.status, d.health, d.id, d.from)
+      : db.prepare('UPDATE agents SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?').run(d.status, d.id, d.from);
+    if (!r.changes) continue;
+    console.warn(`[Deploy] ${d.message}`);
+    logEvent('agent.error', d.id, d.message);
+  }
+  // A build cut off mid-RUN can leave its intermediate container behind.
+  // Same filter as the daily cleanup — never a guest's container.
+  try {
+    const pruned = await docker.pruneContainers({ filters: { 'label!': ['agenthotel.agent=true'] } });
+    const n = (pruned.ContainersDeleted || []).length;
+    if (n) console.log(`[Deploy] Removed ${n} stopped container(s) left by interrupted builds (${Math.round((pruned.SpaceReclaimed || 0) / 1e6)} MB)`);
+  } catch (err) {
+    console.warn(`[Deploy] Could not clean up after interrupted builds: ${err.message}`);
+  }
+}
+
 function listen(onReady) {
   if (!BACKEND_SOCKET) return app.listen(PORT, '0.0.0.0', onReady);
   fs.mkdirSync(path.dirname(BACKEND_SOCKET), { recursive: true });
@@ -4454,6 +4506,8 @@ listen(async () => {
     const code = setupCode.ensure(db, SETUP_CODE_FILE);
     console.log(`[Setup] No admin yet. Setup code: ${code} — or run \`agenthotel setup-code\` on the server`);
   }
+  // Before the first health sweep, which would call these "container not found".
+  await recoverInterruptedDeploys().catch(err => console.error('[Deploy] Recovery failed:', err.message));
   await initPanelRoute();
   // After the panel's own route, so a half-configured Caddy never leaves the
   // panel unreachable — that is the one route you need to fix the rest.
