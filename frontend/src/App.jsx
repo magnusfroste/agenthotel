@@ -279,6 +279,9 @@ function Sidebar({ onNavigate, className = '' }) {
 
   return (
     <aside className={`sidebar ${className}`}>
+      <div className="sidebar-header">
+        <Link to="/" className="sidebar-brand"><Bot size={20} color="currentColor" /> AgentHotel</Link>
+      </div>
       <nav className="sidebar-nav" onClick={onNavigate}>
         {/* On a phone the top bar has no room for its links; they live here. */}
         <div className="sidebar-group sidebar-mobile-only">
@@ -339,7 +342,7 @@ function Sidebar({ onNavigate, className = '' }) {
         })()}
         {updateInfo?.hasUpdate && (
           <button onClick={handleUpgrade} disabled={upgrading} className="btn-upgrade">
-            {upgrading ? 'Upgrading…' : <><Download size={14} color="currentColor" /> Upgrade</>}
+            {upgrading ? 'Upgrading…' : <><Download size={14} color="currentColor" /> Upgrade to {updateInfo.latestVersion}</>}
           </button>
         )}
       </div>

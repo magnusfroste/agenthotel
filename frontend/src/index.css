@@ -89,12 +89,14 @@ body {
   --sidebar-w: 232px;
 }
 
-/* Top bar: what you work with — the fleet, templates, docs — and, on the
-   right, making a new agent, the theme, and your account. */
+/* Top bar: what you work with — the fleet, templates, connect, docs — and,
+   on the right, making a new agent, the theme, and your account. It starts
+   where the sidebar ends; the sidebar runs the full height with the brand on
+   top, level with the bar. */
 .topbar {
   position: fixed;
   top: 0;
-  left: 0;
+  left: var(--sidebar-w);
   right: 0;
   height: var(--topbar-h);
   z-index: 1000;
@@ -107,7 +109,7 @@ body {
 }
 
 .topbar-brand {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 0.5rem;
   font-weight: 600;
@@ -121,7 +123,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.15rem;
-  margin-left: 0.75rem;
+  margin-left: -0.35rem;
 }
 
 .topbar-nav a {
@@ -283,9 +285,30 @@ body {
   display: flex;
   flex-direction: column;
   position: fixed;
-  top: var(--topbar-h);
+  top: 0;
   bottom: 0;
   left: 0;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-primary);
+  text-decoration: none;
 }
 
 .sidebar-nav {
@@ -364,12 +387,14 @@ body {
   padding: 0.7rem 1.1rem;
   border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.5rem;
   font-size: 0.75rem;
   color: var(--text-tertiary);
 }
+
+.sidebar-footer .btn-upgrade { justify-content: center; }
 
 .btn-upgrade {
   background: var(--accent-green-light);
@@ -1357,8 +1382,11 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 768px) {
-  .topbar { gap: 0.6rem; padding: 0 0.75rem; }
+  .topbar { gap: 0.6rem; padding: 0 0.75rem; left: 0; }
+  .topbar-brand { display: flex; }
   .topbar-menu { display: flex; }
+  .sidebar { top: var(--topbar-h); }
+  .sidebar-header { display: none; }
   .topbar-alert { display: none; }
 
   .sidebar {

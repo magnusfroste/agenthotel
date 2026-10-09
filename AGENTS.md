@@ -141,7 +141,9 @@ The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` 
 
 ## Panel layout
 
-The chrome follows OpenRouter's split (`frontend/src/App.jsx`): the **top bar**
+The chrome follows OpenRouter's split (`frontend/src/App.jsx`). The **sidebar**
+runs the full height with the brand on top, level with the bar; the **top bar**
+starts where it ends, and
 holds what you work with — Fleet, Templates, Connect (wiring your own AI
 agents to the hotel over MCP), Docs — and, on the right, *New
 agent* (Agent / From a template / Compose), the light/dark/system switch and
