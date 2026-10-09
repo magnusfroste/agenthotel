@@ -48,6 +48,8 @@ function Connect() {
     }
   }
 
+  const maskToken = (text) => (token ? text.split(token).join(`••••••••${token.slice(-4)}`) : text)
+
   function copyToClipboard(text, id) {
     navigator.clipboard.writeText(text)
     setCopied(id)
@@ -348,7 +350,10 @@ function Connect() {
                 {copied === key ? '✓' : 'Copy'}
               </button>
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {JSON.stringify(config.config, null, 2)}
+                {/* Shown with the token masked — it is the panel's master key,
+                    and these snippets were the one place it sat on screen in
+                    full. Copy still copies the real configuration. */}
+                {maskToken(JSON.stringify(config.config, null, 2))}
               </pre>
             </div>
           </div>
