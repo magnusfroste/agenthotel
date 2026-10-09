@@ -211,13 +211,48 @@ function Sidebar({ onNavigate, className = '' }) {
     }
   }
 
+  // The upgrade restarts the backend, which kills any image build running in
+  // it — so name those builds and let the operator choose to wait.
+  function describeDeploys(deploys) {
+    return deploys.map(d => {
+      const what = d.building ? (d.total ? `building, step ${d.step}/${d.total}` : 'building')
+        : d.status === 'redeploying' ? 'redeploying' : 'deploying'
+      return `  • ${d.name} (${what})`
+    }).join('\n')
+  }
+
+  function confirmOverDeploys(deploys) {
+    return confirm(`${deploys.length === 1 ? 'An agent is' : `${deploys.length} agents are`} being deployed right now:\n\n${describeDeploys(deploys)}\n\n`
+      + 'Upgrading restarts the backend and kills these builds part-way — the agents are left failed and must be redeployed.\n\n'
+      + 'OK = Upgrade anyway\nCancel = Wait for them to finish')
+  }
+
   async function handleUpgrade() {
-    if (!confirm('This will upgrade AgentHotel to the latest version. The panel will be temporarily unavailable. Continue?')) return
+    let deploys = []
+    try {
+      const r = await authFetch('/api/system/deploys')
+      if (r.ok) deploys = (await r.json()).deploys || []
+    } catch (err) { /* the upgrade endpoint checks again */ }
+    let force = false
+    if (deploys.length) {
+      if (!confirmOverDeploys(deploys)) return
+      force = true
+    } else if (!confirm('This will upgrade AgentHotel to the latest version. The panel will be temporarily unavailable. Continue?')) return
 
     setUpgrading(true)
     try {
-      const res = await authFetch('/api/system/upgrade', { method: 'POST' })
-      const data = await res.json().catch(() => ({}))
+      let res = await authFetch('/api/system/upgrade', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force })
+      })
+      let data = await res.json().catch(() => ({}))
+      // A deploy started between the check and the click.
+      if (res.status === 409 && data.deploys?.length) {
+        if (!confirmOverDeploys(data.deploys)) { setUpgrading(false); return }
+        res = await authFetch('/api/system/upgrade', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true })
+        })
+        data = await res.json().catch(() => ({}))
+      }
       if (!res.ok) {
         toast.error(data.error || 'Upgrade failed. Please check logs.')
         setUpgrading(false)
