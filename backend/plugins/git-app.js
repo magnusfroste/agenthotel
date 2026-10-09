@@ -1,4 +1,4 @@
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -38,6 +38,21 @@ function resolveContext(repoDir, subdir) {
     throw new Error('GIT_SUBDIR must stay inside the repository');
   }
   return resolved;
+}
+
+// `git ls-remote <repo> <ref>` lists every ref whose name ends in <ref>. The
+// one `git fetch origin <ref>` builds is the branch, else the tag (peeled to
+// its commit), else a ref named in full.
+function pickRemoteRevision(output, ref) {
+  const refs = new Map();
+  for (const line of output.split('\n')) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (sha && name) refs.set(name, sha);
+  }
+  for (const name of [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`, ref]) {
+    if (refs.has(name)) return refs.get(name);
+  }
+  return null;
 }
 
 module.exports = {
@@ -104,6 +119,22 @@ module.exports = {
     return source;
   },
 
+  // The commit GIT_REF names in the repository right now, without touching
+  // the checkout a running build may be using. Lets a redeploy asked for
+  // during an identical one join it when there is nothing newer to build
+  // (lib/redeployGate.js). A ref that is itself a commit names that commit.
+  remoteRevision(id, config) {
+    const repo = assertSafeRepo(config.GIT_REPO);
+    const ref = assertSafeRef(config.GIT_REF);
+    if (/^[0-9a-f]{7,40}$/i.test(ref)) return Promise.resolve(ref.toLowerCase());
+    return new Promise((resolve, reject) => {
+      execFile('git', ['ls-remote', repo, ref], { timeout: 30000 }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve(pickRemoteRevision(String(stdout), ref));
+      });
+    });
+  },
+
   // Called by deployAgent before the image build. Returns the directory to
   // build and the tag to build it as. The tag is per agent, not per runtime:
   // two Git App guests are two different repositories and cannot share an
@@ -155,3 +186,5 @@ module.exports = {
     };
   }
 };
+
+module.exports.pickRemoteRevision = pickRemoteRevision;

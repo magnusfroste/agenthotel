@@ -1082,7 +1082,9 @@ const runtimes = {
 const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 
 const { createMcpServer } = require('./mcp');
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage });
+// enqueueDeploy and redeployAgent are function declarations further down, so
+// they are hoisted: MCP deploys share the REST queue and the REST redeploy.
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1561,10 +1563,15 @@ const replacedImages = require('./lib/replacedImages').createReplacedImages(dock
 // waits for its new container to settle healthy first; any other deploy can
 // sweep at once, since it may have moved the last container off an image an
 // earlier rebuild of a shared template replaced.
+//
+// Only what was retired up to now is this deploy's to release: a later
+// redeploy of the same agent may already be building, and the image it
+// replaces stays until that deploy's own container has proved healthy.
 function sweepReplacedImages(agent, plugin) {
   const { waitUntilSettled } = require('./lib/replacedImages');
   const fetch = require('node-fetch');
-  const ready = replacedImages.holds(agent.id)
+  const upTo = replacedImages.mark();
+  const ready = replacedImages.holds(agent.id, upTo)
     ? waitUntilSettled(async () => {
         const r = await evaluateHealth(docker, fetch, agent, plugin);
         return r.healthy && !r.starting;
@@ -1575,7 +1582,7 @@ function sweepReplacedImages(agent, plugin) {
       console.warn(`[Images] ${agent.name || agent.id} did not settle healthy; keeping the image its build replaced`);
       return;
     }
-    replacedImages.release(agent.id);
+    replacedImages.release(agent.id, upTo);
     return replacedImages.sweep();
   }).catch(err => console.warn(`[Images] Cleanup after deploying ${agent.id} failed: ${err.message}`));
 }
@@ -1613,7 +1620,7 @@ function noteBuildEvent(id, o) {
 // OpenClaw rebuild took the guest down for the full twenty minutes, and a Git
 // App guest — which rebuilds on every redeploy — went down for its build every
 // time. The old container can keep serving until the new image exists.
-async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false, alreadyBuilt = false } = {}) {
+async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false, alreadyBuilt = false, onSource = null } = {}) {
   const baseImage = `${runtime}-agenthotel:latest`;
   let imageToRun = image;
 
@@ -1637,6 +1644,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     // torn down and once after.
     if (prepared.rebuild && !alreadyBuilt) forceRebuild = true;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
+    if (prepared.commit && onSource) onSource(prepared.commit);
   }
 
   let dockerfilePath = null;
@@ -1695,10 +1703,11 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
           throw new Error(`Image build did not produce ${buildTag}. Build log tail:\n${tail}`);
         }
         { const p = buildProgress.get(id); if (p) { p.done = true; p.finishedAt = Date.now(); p.line = 'Image built — starting container'; } }
-        // An unchanged build reproduces the same id; then nothing was replaced.
-        if (previousImageId && previousImageId !== builtImageId) {
-          replacedImages.retire(previousImageId, { tag: buildTag, agentId: id });
-        }
+        // Retires what the tag pointed at before, and whatever this panel last
+        // built under it — a build that overlapped this one read the same
+        // "before". An unchanged build reproduces the same id; then nothing
+        // was replaced.
+        replacedImages.rebuilt({ tag: buildTag, agentId: id, previousImageId, builtImageId });
         imageToRun = buildTag;
       }
     }
@@ -2330,34 +2339,43 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
 
     const plugin = runtimes[agent.runtime];
 
-    if (composeManaged(agent.runtime)) {
-      // Compose agents are managed via the compose plugin, not dockerode
-      // (their image is 'compose' and can't be created as a container).
-      // A stop that failed is worth knowing about before the stack is brought
-      // up over it — compose up is idempotent, so this does not abort, but the
-      // reason must not vanish (review hunch, 2026-09-19).
-      const stopped = await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
-      if (stopped && stopped.success === false) {
-        console.warn(`[Deploy] ${agent.name}: stop before redeploy failed: ${stopped.error}`);
-        logEvent('agent.warning', agent.id, `Stop before redeploy failed: ${stopped.error}`);
-      }
-      await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
-    } else {
-      // Build before tearing anything down, so the guest keeps serving while
-      // its new image is made. A Git App guest rebuilds on every redeploy, so
-      // this is not only the rebuild-flag case.
-      try {
-        await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, updatedConfig, plugin, {});
-      } catch (err) {
-        db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
-        return res.status(500).json({ error: `Build failed, the agent was left running: ${err.message}` });
-      }
-      const container = docker.getContainer(`agenthotel-${req.params.id}`);
-      try { await container.stop(); await container.remove(); } catch (e) {}
+    // In the deploy queue like every other deploy: a build here that ran
+    // beside a redeploy's of the same agent lost track of an image.
+    let buildError = null;
+    await enqueueDeploy(async () => {
+      if (composeManaged(agent.runtime)) {
+        // Compose agents are managed via the compose plugin, not dockerode
+        // (their image is 'compose' and can't be created as a container).
+        // A stop that failed is worth knowing about before the stack is brought
+        // up over it — compose up is idempotent, so this does not abort, but the
+        // reason must not vanish (review hunch, 2026-09-19).
+        const stopped = await plugin.stop(agent.id, JSON.parse(agent.config || '{}'));
+        if (stopped && stopped.success === false) {
+          console.warn(`[Deploy] ${agent.name}: stop before redeploy failed: ${stopped.error}`);
+          logEvent('agent.warning', agent.id, `Stop before redeploy failed: ${stopped.error}`);
+        }
+        await plugin.deploy(agent.id, agent.name, updatedConfig, plugin);
+      } else {
+        // Build before tearing anything down, so the guest keeps serving while
+        // its new image is made. A Git App guest rebuilds on every redeploy, so
+        // this is not only the rebuild-flag case.
+        try {
+          await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, updatedConfig, plugin, {});
+        } catch (err) {
+          buildError = err;
+          return;
+        }
+        const container = docker.getContainer(`agenthotel-${req.params.id}`);
+        try { await container.stop(); await container.remove(); } catch (e) {}
 
-      await removeAgentRoutes(agent);
+        await removeAgentRoutes(agent);
 
-      await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, withCurrentLimits(agent.id, updatedConfig), plugin, { alreadyBuilt: true });
+        await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, withCurrentLimits(agent.id, updatedConfig), plugin, { alreadyBuilt: true });
+      }
+    }, req.params.id);
+    if (buildError) {
+      db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+      return res.status(500).json({ error: `Build failed, the agent was left running: ${buildError.message}` });
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
@@ -2441,27 +2459,52 @@ function withCurrentLimits(agentId, config) {
   }
 }
 
+// A redeploy asked for while an identical one is queued, or running from the
+// commit the source still names, joins it rather than building the same thing
+// twice — see lib/redeployGate.js.
+const redeployGate = require('./lib/redeployGate').createRedeployGate();
+
 async function redeployAgent(agentId, { rebuildImage = false } = {}) {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
   if (!agent) { const e = new Error('Agent not found'); e.status = 404; throw e; }
+  // Re-inject provider env on redeploy: providers added after the agent was
+  // created would otherwise never reach it. Injection only fills missing
+  // keys, so manual env edits are never clobbered.
+  const plugin = runtimes[agent.runtime];
+  const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
+  const key = JSON.stringify({ rebuildImage, image: agent.image, domain: agent.domain, port: agent.port, config });
+  const remoteRevision = plugin && typeof plugin.remoteRevision === 'function'
+    ? () => plugin.remoteRevision(agentId, config)
+    : null;
+  const { promise, joined, revision } = await redeployGate.redeploy(agentId, key,
+    entry => runRedeploy(agent, plugin, config, rebuildImage, entry),
+    { remoteRevision, sourceless: !config.GIT_REPO });
+  if (joined) {
+    const what = `the identical redeploy already ${joined}${revision ? ` (commit ${revision})` : ''}`;
+    console.log(`[Redeploy] ${agent.name}: joined ${what}`);
+    logEvent('agent.redeploy', agentId, `Redeploy of ${agent.name} joined ${what}`);
+  }
+  return promise;
+}
+
+async function runRedeploy(agent, plugin, config, rebuildImage, gateEntry) {
+  const agentId = agent.id;
   try {
-    // Re-inject provider env on redeploy: providers added after the agent was
-    // created would otherwise never reach it. Injection only fills missing
-    // keys, so manual env edits are never clobbered.
-    const plugin = runtimes[agent.runtime];
-    const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
     db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), agentId);
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
 
     await enqueueDeploy(async () => {
+      gateEntry.started = true;
       if (composeManaged(agent.runtime)) {
         // Compose agents are managed via the compose plugin, not dockerode.
         await plugin.stop(agent.id, config);
         await plugin.deploy(agent.id, agent.name, config, plugin);
       } else {
         try {
-          await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, { rebuildImage });
+          await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, {
+            rebuildImage, onSource: commit => { gateEntry.revision = commit; }
+          });
         } catch (err) {
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
           throw new Error(`Build failed, the agent was left running: ${err.message}`);

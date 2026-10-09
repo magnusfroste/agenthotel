@@ -31,7 +31,11 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // so a cleanup triggered over MCP is logged and bounded identically.
   // removeAgentVolumes likewise mirrors DELETE /api/agents/:id — without it an
   // MCP delete left every named volume behind as an orphan.
-  const { pruneDocker, removeAgentVolumes, ensureAgentImage } = extras;
+  const { pruneDocker, removeAgentVolumes, ensureAgentImage, redeployAgent } = extras;
+  // Deploys run in the panel's one deploy queue. Outside it, a redeploy over
+  // MCP built beside the Redeploy button's build of the same agent, and the
+  // image between the two was never removed (2026-10-09).
+  const enqueueDeploy = extras.enqueueDeploy || ((work) => work());
   // See server.js: ask the plugin whether it runs its own containers, rather
   // than matching the runtime's name.
   const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
@@ -279,11 +283,13 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           .run(id, args.name, args.runtime, args.domain || null, image, port, 'creating', JSON.stringify(agentConfig));
 
         try {
-          if (args.runtime === 'compose') {
-            await plugin.deploy(id, args.name, agentConfig, plugin);
-          } else {
-            await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
-          }
+          await enqueueDeploy(async () => {
+            if (args.runtime === 'compose') {
+              await plugin.deploy(id, args.name, agentConfig, plugin);
+            } else {
+              await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
+            }
+          }, id);
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: id, status: 'running' }) }] };
         } catch (err) {
@@ -392,23 +398,30 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         db.prepare("UPDATE agents SET config = ?, status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(deployConfig), args.agent_id);
 
         try {
-          if (composeManaged(agent.runtime)) {
-            try { await plugin.stop(agent.id, deployConfig); } catch (e) {}
-            await plugin.deploy(agent.id, agent.name, deployConfig, plugin);
-          } else {
-          // Build before tearing down, so the guest keeps serving meanwhile.
-          if (ensureAgentImage) {
-            try {
-              await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, deployConfig, plugin, { rebuildImage: false });
-            } catch (err) {
-              db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
-              return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${err.message}` }) }], isError: true };
+          let buildError = null;
+          await enqueueDeploy(async () => {
+            if (composeManaged(agent.runtime)) {
+              try { await plugin.stop(agent.id, deployConfig); } catch (e) {}
+              await plugin.deploy(agent.id, agent.name, deployConfig, plugin);
+              return;
             }
-          }
+            // Build before tearing down, so the guest keeps serving meanwhile.
+            if (ensureAgentImage) {
+              try {
+                await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, deployConfig, plugin, { rebuildImage: false });
+              } catch (err) {
+                buildError = err;
+                return;
+              }
+            }
             const container = docker.getContainer(`agenthotel-${args.agent_id}`);
             try { await container.stop(); } catch (e) {}
             try { await container.remove({ force: true }); } catch (e) {}
             await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, deployConfig, plugin, { alreadyBuilt: true });
+          }, args.agent_id);
+          if (buildError) {
+            db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+            return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${buildError.message}` }) }], isError: true };
           }
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, set, removed, applied: true, status: 'running' }) }] };
@@ -422,43 +435,16 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
         if (!agent) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }], isError: true };
 
-        const plugin = runtimes[agent.runtime];
-        // Re-inject provider env, exactly as the REST redeploy does. Without
-        // this the two paths disagreed: redeploying from the panel picked up
-        // providers added since the agent was created, while redeploying over
-        // MCP silently kept the old set — so a provider swapped on the panel
-        // never reached an agent redeployed by an agent. Injection only fills
-        // missing keys, so manual env edits are still never clobbered.
-        const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
-        db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), args.agent_id);
-
-        db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
-
+        // The panel's own redeploy, exactly as the Redeploy button runs it:
+        // provider env re-injected, the deploy queue, the status handling, and
+        // an identical redeploy already queued or running joined rather than
+        // built a second time (lib/redeployGate.js). This used to be a copy
+        // that ran outside the queue — a redeploy here a minute after one from
+        // the button built the same commit twice, side by side (2026-10-09).
         try {
-          if (composeManaged(agent.runtime)) {
-            // Compose agents are managed via the compose plugin, not dockerode.
-            try { await plugin.stop(agent.id, config); } catch (e) {}
-            await plugin.deploy(agent.id, agent.name, config, plugin);
-          } else {
-          // Build before tearing down, so the guest keeps serving meanwhile.
-          if (ensureAgentImage) {
-            try {
-              await ensureAgentImage(agent.id, agent.name, agent.runtime, agent.image, config, plugin, { rebuildImage: args.rebuild === true });
-            } catch (err) {
-              db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
-              return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${err.message}` }) }], isError: true };
-            }
-          }
-            const container = docker.getContainer(`agenthotel-${args.agent_id}`);
-            try { await container.stop(); } catch (e) {}
-            try { await container.remove(); } catch (e) {}
-
-            await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, config, plugin, { rebuildImage: false, alreadyBuilt: true });
-          }
-          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
+          await redeployAgent(agent.id, { rebuildImage: args.rebuild === true });
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
         } catch (err) {
-          db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
         }
       }
