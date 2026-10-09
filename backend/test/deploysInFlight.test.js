@@ -147,3 +147,32 @@ test('rows not mid-deploy are judged as usual, build entry or not', () => {
 test('an unreadable timestamp never trips the hatch', () => {
   assert.deepStrictEqual(sweepInFlight({ ...row(), updated_at: null }, undefined, T0 + 99 * MIN), { action: 'skip' });
 });
+
+// A deploy queued behind another's 28-minute build has no build of its own.
+const { queueSlot } = require('../lib/deploysInFlight');
+
+test('a deploy waiting its turn is never judged', () => {
+  const queue = new Map([
+    ['openclaw-a-1', { seq: 1, startedAt: T0 + 1000 }],
+    [CLAW, { seq: 2, startedAt: null }]
+  ]);
+  const slot = queueSlot(queue, CLAW);
+  assert.deepStrictEqual(slot, { ahead: 1, startedAt: null });
+  for (const status of ['creating', 'redeploying']) {
+    assert.deepStrictEqual(sweepInFlight(row(status), undefined, T0 + 40 * MIN, slot),
+      { action: 'queued', health: 'queued: waiting for 1 deploy ahead' });
+  }
+  queue.set('hermes-b-2', { seq: 0, startedAt: null });
+  assert.strictEqual(sweepInFlight(row(), undefined, T0, queueSlot(queue, CLAW)).health, 'queued: waiting for 2 deploys ahead');
+  assert.strictEqual(queueSlot(queue, 'not-queued'), null);
+  assert.strictEqual(queueSlot(undefined, CLAW), null);
+});
+
+test('a queued deploy gets its 15 minutes from when its turn came', () => {
+  const slot = { ahead: 0, startedAt: T0 + 28 * MIN };
+  assert.deepStrictEqual(sweepInFlight(row(), undefined, T0 + 40 * MIN, slot), { action: 'skip' });
+  assert.deepStrictEqual(sweepInFlight(row(), undefined, T0 + 44 * MIN, slot), { action: 'judge', stuck: true });
+  // Its own build, once started, is reported as usual.
+  const p = { startedAt: T0 + 29 * MIN, step: 4, total: 18, done: false };
+  assert.strictEqual(sweepInFlight(row(), p, T0 + 50 * MIN, slot).health, 'building: step 4/18');
+});

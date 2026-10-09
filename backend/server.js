@@ -1387,10 +1387,10 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     // Handle compose runtime separately
     if (composeManaged(runtime)) {
-      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin));
+      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin), id);
       await attachComposeRoute({ id }, plugin, agentConfig, domain);
     } else {
-      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin));
+      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin), id);
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
@@ -1528,9 +1528,19 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
 
 // Serialize deploys/redeploys: concurrent image builds can saturate the host
 // and take the panel itself down with it. One deploy at a time, FIFO.
+//
+// deployQueue holds each agent's place while its deploy waits or runs, so the
+// health sweep can tell a deploy waiting its turn behind a long build from one
+// that is stuck (lib/deploysInFlight.js).
 let deployChain = Promise.resolve();
-function enqueueDeploy(work) {
-  const run = deployChain.then(work);
+const deployQueue = new Map();
+let deploySeq = 0;
+function enqueueDeploy(work, agentId = null) {
+  const entry = { seq: ++deploySeq, startedAt: null };
+  if (agentId) deployQueue.set(agentId, entry);
+  const run = deployChain.then(() => { entry.startedAt = Date.now(); return work(); });
+  const leave = () => { if (deployQueue.get(agentId) === entry) deployQueue.delete(agentId); };
+  run.then(leave, leave);
   deployChain = run.catch(() => {});
   return run;
 }
@@ -2464,7 +2474,7 @@ async function redeployAgent(agentId, { rebuildImage = false } = {}) {
         // The image is already built; deployAgent must not build it twice.
         await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, withCurrentLimits(agent.id, config), plugin, { rebuildImage: false, alreadyBuilt: true });
       }
-    });
+    }, agentId);
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
     logEvent('agent.redeploy', agentId, `Redeployed agent ${agent.name}`);
@@ -4251,9 +4261,9 @@ async function runHealthChecks() {
     // died without writing one left the guest mid-flight permanently, exempt
     // from the very check that would have noticed. A build still running is
     // the deploy working, however long it takes (lib/deploysInFlight.js).
-    const inFlight = deploys.sweepInFlight(agent, buildProgress.get(agent.id));
+    const inFlight = deploys.sweepInFlight(agent, buildProgress.get(agent.id), Date.now(), deploys.queueSlot(deployQueue, agent.id));
     if (inFlight.action === 'skip') continue;
-    if (inFlight.action === 'building') {
+    if (inFlight.action === 'building' || inFlight.action === 'queued') {
       if (agent.health !== inFlight.health) {
         db.prepare('UPDATE agents SET health = ? WHERE id = ? AND status = ?').run(inFlight.health, agent.id, agent.status);
       }
