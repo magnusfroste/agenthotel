@@ -142,11 +142,12 @@ The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` 
 ## Panel layout
 
 The chrome follows OpenRouter's split (`frontend/src/App.jsx`): the **top bar**
-holds what you work with — Fleet, Templates, Docs — and, on the right, *New
+holds what you work with — Fleet, Templates, Connect (wiring your own AI
+agents to the hotel over MCP), Docs — and, on the right, *New
 agent* (Agent / From a template / Compose), the light/dark/system switch and
 the account menu (Profile, Settings, copy host IP, log out). The **sidebar**
 holds what you look after: the agents, then Infrastructure (Providers,
-Domains, Certificates, Connect, Console, System), and the version in its
+Domains, Certificates, Console, System), and the version in its
 footer. A new page goes in one of those two places, not both. The theme is
 `frontend/src/lib/theme.js`, applied in `main.jsx` before the first render so
 the login page follows it too; `system` tracks `prefers-color-scheme` live.
