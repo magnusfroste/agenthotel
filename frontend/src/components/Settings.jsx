@@ -1,21 +1,18 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Globe, Server, Shield, Save, RotateCcw, CheckCircle, AlertCircle, Database, Download, Upload, Bell, Send } from 'lucide-react'
+import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send } from 'lucide-react'
 
 // Each card saves only its own keys. One form for everything meant that a
 // changed Telegram chat id re-sent the panel domain too — and the backend, seeing
 // the domain key, rewrote the Caddy route and the ACME e-mail on every save,
 // whatever had actually changed. Fields nobody reads were removed rather than
 // kept as decoration: a switch connected to nothing is worse than no switch.
+//
+// What is left here is yours to choose — who may get in and for how long, and
+// where alerts go. Settings about the installation moved to the page they
+// belong to: the panel domain to Domains, the certificate e-mail to
+// Certificates, the Docker network and backup/migration to System.
 const SECTIONS = [
-  {
-    id: 'panel', title: 'Panel', icon: Globe, color: '#3b82f6',
-    keys: ['panel_domain', 'caddy_email'],
-  },
-  {
-    id: 'docker', title: 'Docker', icon: Server, color: '#10b981',
-    keys: ['default_network'],
-  },
   {
     id: 'security', title: 'Security', icon: Shield, color: '#f59e0b',
     keys: ['rate_limit_enabled', 'rate_limit_requests', 'session_timeout'],
@@ -32,7 +29,6 @@ function Settings() {
   const [loading, setLoading] = useState(true)
   const [savingSection, setSavingSection] = useState(null)
   const [message, setMessage] = useState({ type: '', text: '' })
-  const [importing, setImporting] = useState(false)
   const [testingNotify, setTestingNotify] = useState(false)
 
   useEffect(() => { fetchSettings() }, [])
@@ -111,47 +107,6 @@ function Settings() {
     }
   }
 
-  async function handleExport() {
-    try {
-      const res = await authFetch('/api/system/export')
-      if (!res.ok) throw new Error('Export failed')
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `agenthotel-export-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      showMessage('success', 'Export downloaded — store it safely, it contains API keys')
-    } catch (err) {
-      showMessage('error', 'Export failed: ' + err.message)
-    }
-  }
-
-  async function handleImport(e) {
-    const file = e.target.files && e.target.files[0]
-    if (!file) return
-    try {
-      const text = await file.text()
-      const data = JSON.parse(text)
-      if (!confirm(`Import ${data.agents?.length || 0} agents and ${data.providers?.length || 0} providers from "${file.name}"? Existing entries with the same name are kept.`)) return
-      setImporting(true)
-      const res = await authFetch('/api/system/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: text
-      })
-      const result = await res.json()
-      if (!res.ok) throw new Error(result.error || 'Import failed')
-      showMessage('success', `Import done: ${result.agents.imported} agents added (${result.agents.skipped} skipped), ${result.providers.imported} providers added (${result.providers.skipped} skipped)`)
-    } catch (err) {
-      showMessage('error', 'Import failed: ' + err.message)
-    } finally {
-      setImporting(false)
-      e.target.value = ''
-    }
-  }
-
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '400px', color: 'var(--text-secondary, #94a3b8)' }}>
@@ -215,14 +170,14 @@ function Settings() {
     )
   }
 
-  const [panel, dockerSec, security, notifications] = SECTIONS
+  const [security, notifications] = SECTIONS
 
   return (
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', fontWeight: '700' }}>Settings</h1>
         <p style={{ margin: 0, color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
-          Each card saves on its own. Nothing here applies until you press its Save.
+          Your own choices: access and alerts. Each card saves on its own. The panel domain, certificate e-mail, Docker network and backups live on Domains, Certificates and System.
         </p>
       </div>
 
@@ -232,18 +187,6 @@ function Settings() {
           {message.text}
         </div>
       )}
-
-      {card(panel, <>
-        {field({ name: 'panel_domain', label: 'Panel domain', placeholder: 'panel.example.com',
-          help: 'The hostname this panel answers on. Changing it rewrites the panel\'s own Caddy route and requests a certificate for the new name — DNS must already point here.' })}
-        {field({ name: 'caddy_email', label: 'Certificate e-mail', type: 'email', placeholder: 'admin@example.com',
-          help: 'Given to Let\'s Encrypt with every certificate request. They write here when a certificate is about to expire and could not be renewed.' })}
-      </>)}
-
-      {card(dockerSec, <>
-        {field({ name: 'default_network', label: 'Panel network', fallback: 'agenthotel_agenthotel',
-          help: 'The Docker network agents and compose guests are joined to so Caddy can reach them by name. Only change this if you renamed the compose project.' })}
-      </>)}
 
       {card(security, <>
         <div style={formGroupStyle}>
@@ -279,26 +222,6 @@ function Settings() {
         </button>
       </>)}
 
-      <div style={sectionStyle}>
-        <h2 style={sectionHeaderStyle}><Database size={22} color="#8b5cf6" /> Backup & Migration</h2>
-        <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
-          Move this instance to another VPS: export here, import on the new AgentHotel instance.
-          Agents, providers (including API keys) and panel settings are included — admin credentials are never exported.
-        </p>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-secondary" onClick={handleExport} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Download size={18} /> Export Instance
-          </button>
-          <label className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: importing ? 'wait' : 'pointer', opacity: importing ? 0.6 : 1 }}>
-            <Upload size={18} /> {importing ? 'Importing...' : 'Import Instance'}
-            <input type="file" accept="application/json,.json" onChange={handleImport} disabled={importing} style={{ display: 'none' }} />
-          </label>
-        </div>
-        <div style={helpTextStyle}>
-          The export file contains provider API keys in plain text — store it safely.
-          Imported agents start as stopped; redeploy them from the dashboard. Existing agents are kept (matched on name/domain); existing providers are kept (matched on name).
-        </div>
-      </div>
     </div>
   )
 }

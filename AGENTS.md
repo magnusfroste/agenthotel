@@ -150,7 +150,13 @@ agent* (Agent / From a template / Compose), the light/dark/system switch and
 the account menu (Profile, Settings, copy host IP, log out). The **sidebar**
 holds what you look after: the agents, then Infrastructure (Providers,
 Domains, Certificates, Console, System), and the version in its
-footer. A new page goes in one of those two places, not both. The theme is
+footer. A new page goes in one of those two places, not both.
+
+Settings (in the account menu) is only your own choices — security and
+notifications. A setting about the installation lives on its page as a
+`SettingCard` (`frontend/src/components/SettingCard.jsx`, saving only its own
+keys): the panel domain on Domains, the certificate e-mail on Certificates,
+the Docker network and backup/migration (`InstanceBackup.jsx`) on System. The theme is
 `frontend/src/lib/theme.js`, applied in `main.jsx` before the first render so
 the login page follows it too; `system` tracks `prefers-color-scheme` live.
 

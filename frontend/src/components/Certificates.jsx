@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Shield } from 'lucide-react'
+import { Shield, Mail } from 'lucide-react'
+import SettingCard from './SettingCard'
 
 function Certificates() {
   const [certificates, setCertificates] = useState([])
@@ -68,6 +69,11 @@ function Certificates() {
   return (
     <div>
       <h1 style={{ marginBottom: '2rem' }}>SSL Certificates</h1>
+
+      <SettingCard title="Certificate e-mail" icon={Mail} fields={[
+        { name: 'caddy_email', label: 'Certificate e-mail', type: 'email', placeholder: 'admin@example.com', secret: true,
+          help: 'Given to Let\'s Encrypt with every certificate request. They write here when a certificate is about to expire and could not be renewed.' },
+      ]} />
 
       {certificates.length === 0 ? (
         <div style={{

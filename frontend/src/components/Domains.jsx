@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { ExternalLink, Trash2, RefreshCw, Globe } from 'lucide-react'
+import SettingCard from './SettingCard'
 
 function Domains() {
   const [domains, setDomains] = useState([])
@@ -53,8 +54,13 @@ function Domains() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h1 style={{ margin: 0 }}>Domains</h1>
-        <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={fetchDomains}><RefreshCw size={15} color="white" /> Refresh</button>
+        <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }} onClick={fetchDomains}><RefreshCw size={15} color="currentColor" /> Refresh</button>
       </div>
+
+      <SettingCard title="Panel domain" icon={Globe} fields={[
+        { name: 'panel_domain', label: 'Panel domain', placeholder: 'panel.example.com',
+          help: 'The hostname this panel answers on. Changing it rewrites the panel\'s own Caddy route and requests a certificate for the new name — DNS must already point here.' },
+      ]} />
 
       {domains.length === 0 ? (
         <div style={{ 
