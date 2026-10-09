@@ -15,10 +15,11 @@ import Certificates from './components/Certificates'
 import Profile from './components/Profile'
 import Domains from './components/Domains'
 import Templates from './components/Templates'
+import Chat from './components/Chat'
 import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink, MessagesSquare } from 'lucide-react'
 import { getThemeChoice, setThemeChoice } from './lib/theme'
 import './index.css'
 
@@ -134,6 +135,7 @@ function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
   const location = useLocation()
   const fleetActive = location.pathname === '/' || location.pathname.startsWith('/agent/')
   const templatesActive = location.pathname.startsWith('/templates')
+  const chatActive = location.pathname.startsWith('/chat')
   const connectActive = location.pathname.startsWith('/connect')
   const over = ['disk', 'mem'].filter(k => alerts?.[k]?.over)
   return (
@@ -144,6 +146,7 @@ function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
       <Link to="/" className="topbar-brand"><Bot size={20} color="currentColor" /> AgentHotel</Link>
       <nav className="topbar-nav">
         <Link to="/" className={fleetActive ? 'active' : ''}>Fleet</Link>
+        <Link to="/chat" className={chatActive ? 'active' : ''}>Chat</Link>
         <Link to="/templates" className={templatesActive ? 'active' : ''}>Templates</Link>
         <Link to="/connect" className={connectActive ? 'active' : ''}>Connect</Link>
         <a href="https://github.com/magnusfroste/agenthotel" target="_blank" rel="noopener noreferrer">
@@ -321,6 +324,7 @@ function Sidebar({ onNavigate, className = '' }) {
         {/* On a phone the top bar has no room for its links; they live here. */}
         <div className="sidebar-group sidebar-mobile-only">
           <Link to="/" className={`sidebar-link ${isActive('/')}`}><BarChart3 size={16} color="currentColor" /> Fleet</Link>
+          <Link to="/chat" className={`sidebar-link ${isActive('/chat')}`}><MessagesSquare size={16} color="currentColor" /> Chat</Link>
           <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}><LayoutTemplate size={16} color="currentColor" /> Templates</Link>
           <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}><Link2 size={16} color="currentColor" /> Connect</Link>
           <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}><SettingsIcon size={16} color="currentColor" /> Settings</Link>
@@ -469,6 +473,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/templates" element={<Templates />} />
+              <Route path="/chat" element={<Chat />} />
               <Route path="/templates/:id" element={<TemplateDetail />} />
               <Route path="/create" element={<CreateAgent />} />
               <Route path="/compose" element={<Compose />} />

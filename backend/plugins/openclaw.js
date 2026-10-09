@@ -86,6 +86,9 @@ except Exception:
   ],
 
   terminalUser: 'node',
+  // `openclaw acp` is a light bridge to the Gateway already running in the
+  // container; it runs as terminalUser, whose state it shares.
+  acp: { command: ['openclaw', 'acp'], cwd: '/home/node/.openclaw/workspace' },
   configFields: [
     { key: 'OPENCLAW_GATEWAY_TOKEN', label: 'Gateway Token', type: 'password', required: false },
     { key: 'OPENCLAW_MODEL_PRIMARY', label: 'Primary Model', type: 'text', default: 'openai/gpt-5.3', placeholder: 'provider/model', format: 'provider/model',

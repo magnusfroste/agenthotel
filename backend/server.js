@@ -107,6 +107,7 @@ db.exec(`
   )
 `);
 const sessions = require('./lib/sessions');
+const acpBridge = require('./lib/acpBridge');
 sessions.init(db);
 // Expired sessions cost nothing but rows; sweep hourly.
 setInterval(() => { try { sessions.purgeExpired(db); } catch (e) {} }, 60 * 60 * 1000).unref?.();
@@ -2524,6 +2525,86 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
   }
 });
 
+// Chat: one WebSocket per chat pane, bridged to the agent's ACP process in
+// its container (lib/acpBridge.js). The browser speaks the protocol; this end
+// moves lines, enforces the session cap, and ends the process with the socket.
+app.ws('/api/agents/:id/acp', (ws, req) => {
+  const panel = (type, message) => {
+    try { ws.send(JSON.stringify({ panel: { type, message } })) } catch (_) {}
+  };
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (!sessions.verify(db, token)) {
+    panel('error', 'Authentication failed');
+    ws.close();
+    return;
+  }
+  // The browser sends `initialize` the moment the socket opens, while the
+  // agent's process is still starting: hold what arrives until it is up, or
+  // the first message is lost and the chat never starts.
+  let session = null;
+  let closedEarly = false;
+  const waiting = [];
+  ws.on('message', msg => {
+    if (session) session.send(msg.toString());
+    else waiting.push(msg.toString());
+  });
+  ws.on('close', () => {
+    closedEarly = !session;
+    if (session) {
+      session.close();
+      console.log(`[Chat] ACP session closed (${acpBridge.liveCount()} open)`);
+    }
+  });
+  ws.on('error', () => { if (session) session.close(); });
+  (async () => {
+    const agent = db.prepare('SELECT id, name, runtime, config FROM agents WHERE id = ?').get(req.params.id);
+    const plugin = agent && runtimes[agent.runtime];
+    if (!plugin || !plugin.acp) {
+      panel('error', agent ? `${plugin?.name || agent.runtime} agents cannot chat here yet.` : 'No such agent');
+      ws.close();
+      return;
+    }
+    const full = acpBridge.capacityError(agent.id);
+    if (full) {
+      panel('error', full);
+      ws.close();
+      return;
+    }
+    let opened;
+    try {
+      opened = await acpBridge.openAcpSession(docker, {
+        agentId: agent.id,
+        containerName: containerNameFor(runtimes, agent),
+        command: plugin.acp.command,
+        user: plugin.terminalUser || null,
+        cwd: plugin.acp.cwd || null
+      });
+    } catch (err) {
+      panel('error', `Could not start a chat with ${agent.name}: ${err.message}`);
+      ws.close();
+      return;
+    }
+    if (closedEarly || ws.readyState !== 1) {
+      // The pane was closed while the process started.
+      opened.close();
+      return;
+    }
+    console.log(`[Chat] ${agent.name}: ACP session opened (${acpBridge.liveCount()} open)`);
+    opened.onLine(line => { if (ws.readyState === 1) ws.send(line); });
+    opened.onExit(() => {
+      const tail = opened.stderrTail().slice(-3).join(' | ');
+      if (tail) console.log(`[Chat] ${agent.name}: ACP process ended — ${tail.slice(0, 300)}`);
+      panel('exit', `${agent.name}'s chat process ended.`);
+      try { ws.close(); } catch (_) {}
+    });
+    session = opened;
+    waiting.splice(0).forEach(line => session.send(line));
+  })().catch(err => {
+    panel('error', err.message);
+    try { ws.close(); } catch (_) {}
+  });
+});
+
 app.ws('/api/agents/:id/terminal', (ws, req) => {
   // Handle authentication manually for WebSocket
   const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
@@ -2713,7 +2794,10 @@ app.get('/api/runtimes', requireAuth, (req, res) => {
     configFields: plugin.configFields,
     // Surfaced so the provider screen can flag a model that is too small for a
     // runtime, without the frontend hardcoding a number the plugin owns.
-    minContextTokens: plugin.minContextTokens || null
+    minContextTokens: plugin.minContextTokens || null,
+    // Whether the Chat page can talk to it, and the working directory its
+    // ACP sessions start in.
+    acp: plugin.acp ? { cwd: plugin.acp.cwd } : null
   })));
 });
 

@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
   Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer, Activity,
-  Zap, GitBranch
+  Zap, GitBranch, MessagesSquare
 } from 'lucide-react'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
@@ -35,6 +35,14 @@ function AgentDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [agent, setAgent] = useState(null)
+  // Whether this agent's runtime speaks ACP, so the Chat page can talk to it.
+  const [canChat, setCanChat] = useState(false)
+  useEffect(() => {
+    if (!agent?.runtime) return
+    authFetch('/api/runtimes').then(r => r.json())
+      .then(list => setCanChat(Boolean(list.find(rt => rt.id === agent.runtime)?.acp)))
+      .catch(() => {})
+  }, [agent?.runtime])
   const [tab, setTab] = useState('overview')
   const [logs, setLogs] = useState('')
   const [envPairs, setEnvPairs] = useState([])
@@ -229,6 +237,11 @@ function AgentDetail() {
           )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {canChat && running && (
+            <Link to={`/chat?agent=${agent.id}`} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+              <MessagesSquare size={15} color="currentColor" /> Chat
+            </Link>
+          )}
           {appUrl && (
             <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
               <ExternalLink size={15} color="currentColor" /> Open

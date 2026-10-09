@@ -70,6 +70,27 @@ The **runtime plugins drive the list** — a runtime without a `meta.yaml` still
 
 Parsed meta.yaml is cached per file and invalidated on mtime, so editing a template on the host shows up without restarting the backend. A malformed meta.yaml logs `[Templates] Failed to parse …` and falls back to plugin metadata — one broken file never takes the library down.
 
+## Chat (ACP)
+
+The Chat page (top bar → Chat, `frontend/src/components/Chat.jsx`) talks to
+agents over the Agent Client Protocol (https://agentclientprotocol.com) — one,
+two or four panes, and "Send to all" asks every open agent the same thing.
+A runtime opts in with `acp: { command, cwd }` in its plugin (hermes:
+`hermes acp`, openclaw: `openclaw acp`, run as `terminalUser`); `/api/runtimes`
+reports it, and agents without it are not offered.
+
+Each pane is a WebSocket to `/api/agents/:id/acp`, which starts the ACP command
+in the agent's container with `docker exec` (no TTY) and moves JSON-RPC lines
+both ways (`backend/lib/acpBridge.js`). Messages that arrive before the process
+is up are queued — the browser sends `initialize` the moment the socket opens.
+The protocol itself lives in the browser (`frontend/src/lib/acpClient.js`):
+initialize, session/new (authenticating with the agent's configured method if
+it asks), session/prompt, session/cancel, permission requests as buttons. The
+client offers no filesystem or terminal of its own; the agent works with its
+own tools in its own container. Every pane is a process (`hermes acp` is a full
+Hermes, 200-300 MB), so sessions are capped at 4 per agent and 8 in total, and a
+session ends with its socket: stdin closes, then SIGTERM by host pid after 3 s.
+
 ## Persistent Web Terminal
 
 The Console tab's shell runs inside a tmux session (`tmux new -A -s agenthotel`),

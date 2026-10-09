@@ -166,6 +166,9 @@ module.exports = {
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
   defaultPort: 9119,
+  // The panel's Chat talks to the agent over the Agent Client Protocol:
+  // `hermes acp` in the container, one process per open chat pane.
+  acp: { command: ['hermes', 'acp'], cwd: '/opt/data' },
   // Hermes sends reasoning.effort; models that predate it reject the request.
   // Declared here so lib/modelSelect.js can probe for it rather than relying
   // on a hardcoded model name being right on someone else's account.
