@@ -139,6 +139,18 @@ docker compose logs -f caddy
 
 The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` set) it answers on a Unix socket, `/run/agenthotel/backend.sock`, in the `agenthotel-run` volume that only Caddy and the backend mount, and on `127.0.0.1:8080` inside its own container for the upgrade's readiness check. Guests share the network with Caddy and must never reach the API except through Caddy — do not add a network listener, and do not add an `/api` proxy to the frontend's nginx. Without `BACKEND_SOCKET` (development) it listens on `0.0.0.0:8080` as before.
 
+## Panel layout
+
+The chrome follows OpenRouter's split (`frontend/src/App.jsx`): the **top bar**
+holds what you work with — Fleet, Templates, Docs — and, on the right, *New
+agent* (Agent / From a template / Compose), the light/dark/system switch and
+the account menu (Profile, Settings, copy host IP, log out). The **sidebar**
+holds what you look after: the agents, then Infrastructure (Providers,
+Domains, Certificates, Connect, Console, System), and the version in its
+footer. A new page goes in one of those two places, not both. The theme is
+`frontend/src/lib/theme.js`, applied in `main.jsx` before the first render so
+the login page follows it too; `system` tracks `prefers-color-scheme` live.
+
 ## Secrets on screen
 
 Any element that can show a secret — a key, token, password, a credentials

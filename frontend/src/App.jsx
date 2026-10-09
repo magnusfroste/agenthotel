@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
 import { ToastProvider, useToast } from './components/Toast'
@@ -18,59 +18,175 @@ import Templates from './components/Templates'
 import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, Link2, Key, Settings as SettingsIcon, BookOpen, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink } from 'lucide-react'
+import { getThemeChoice, setThemeChoice } from './lib/theme'
 import './index.css'
 
-function Sidebar({ onLogout, onNavigate, className = '' }) {
-  const location = useLocation()
+// A small dropdown: opens on click, closes on a click elsewhere or Escape.
+function useDropdown() {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  return { open, setOpen, ref }
+}
+
+function ThemeSwitch() {
+  const [choice, setChoice] = useState(getThemeChoice)
+  const options = [
+    { value: 'light', label: 'Light', Icon: Sun },
+    { value: 'dark', label: 'Dark', Icon: Moon },
+    { value: 'system', label: 'System', Icon: MonitorSmartphone },
+  ]
+  return (
+    <div className="theme-switch" role="radiogroup" aria-label="Theme">
+      {options.map(({ value, label, Icon }) => (
+        <button key={value} type="button" role="radio" aria-checked={choice === value} title={label}
+          className={choice === value ? 'active' : ''}
+          onClick={() => { setThemeChoice(value); setChoice(value) }}>
+          <Icon size={15} color="currentColor" />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function NewAgentMenu() {
+  const { open, setOpen, ref } = useDropdown()
+  return (
+    <div className="topbar-dropdown" ref={ref}>
+      <button type="button" className="topbar-new" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
+        <Plus size={15} color="currentColor" /> <span className="topbar-new-label">New agent</span> <ChevronDown size={14} color="currentColor" />
+      </button>
+      {open && (
+        <div className="dropdown-menu" role="menu" onClick={() => setOpen(false)}>
+          <Link to="/create" role="menuitem" className="dropdown-item">
+            <Bot size={15} color="currentColor" /> <span><strong>Agent</strong><small>Hermes, OpenClaw, an image or a repo</small></span>
+          </Link>
+          <Link to="/templates" role="menuitem" className="dropdown-item">
+            <LayoutTemplate size={15} color="currentColor" /> <span><strong>From a template</strong><small>Ready-made, one click</small></span>
+          </Link>
+          <Link to="/compose" role="menuitem" className="dropdown-item">
+            <Layers size={15} color="currentColor" /> <span><strong>Compose</strong><small>A stack from a compose file</small></span>
+          </Link>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UserMenu({ onLogout }) {
+  const { open, setOpen, ref } = useDropdown()
+  const [email, setEmail] = useState('')
   const [ip, setIp] = useState('')
-  const [version, setVersion] = useState('')
-  // Disk or memory past its threshold, for one quiet line in the footer.
-  const [alerts, setAlerts] = useState(null)
-  const [updateInfo, setUpdateInfo] = useState(null)
-  const [upgrading, setUpgrading] = useState(false)
-  const [agents, setAgents] = useState([])
-  const [darkMode, setDarkMode] = useState(() => {
-    return localStorage.getItem('darkMode') !== 'false'
-  })
   const toast = useToast()
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
-    localStorage.setItem('darkMode', darkMode)
-  }, [darkMode])
-
-  useEffect(() => {
-    fetchSystemInfo()
-    checkForUpdates()
-    fetchAgents()
-    fetchAlerts()
-    const interval = setInterval(() => { if (!document.hidden) fetchAgents() }, 5000)
-    // The backend re-reads disk and memory every five minutes; once a minute
-    // here is plenty to pick that up.
-    const alertInterval = setInterval(() => { if (!document.hidden) fetchAlerts() }, 60000)
-    return () => { clearInterval(interval); clearInterval(alertInterval) }
+    authFetch('/api/profile').then(r => r.json()).then(d => setEmail(d.email || '')).catch(() => {})
+    authFetch('/api/system/ip').then(r => r.json()).then(d => setIp(d.ip || '')).catch(() => {})
   }, [])
 
-  async function fetchSystemInfo() {
+  const initial = (email.trim()[0] || 'A').toUpperCase()
+  return (
+    <div className="topbar-dropdown" ref={ref}>
+      <button type="button" className="topbar-avatar" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} aria-label="Account menu">
+        {initial}
+      </button>
+      {open && (
+        <div className="dropdown-menu dropdown-menu-right" role="menu">
+          {email && <div className="dropdown-caption" data-secret="">{email}</div>}
+          <Link to="/profile" role="menuitem" className="dropdown-item" onClick={() => setOpen(false)}>
+            <User size={15} color="currentColor" /> Profile
+          </Link>
+          <Link to="/settings" role="menuitem" className="dropdown-item" onClick={() => setOpen(false)}>
+            <SettingsIcon size={15} color="currentColor" /> Settings
+          </Link>
+          {ip && (
+            // The host address is what you paste into a DNS A record when the
+            // panel is not behind a tunnel; one click copies it.
+            <button type="button" role="menuitem" className="dropdown-item"
+              onClick={() => {
+                setOpen(false)
+                navigator.clipboard.writeText(ip)
+                  .then(() => toast.success(`${ip} copied`))
+                  .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))
+              }}>
+              <Copy size={15} color="currentColor" /> <span>Copy host IP <small data-secret="">{ip}</small></span>
+            </button>
+          )}
+          <div className="dropdown-divider" />
+          <button type="button" role="menuitem" className="dropdown-item" onClick={() => { setOpen(false); onLogout() }}>
+            <LogOut size={15} color="currentColor" /> Log out
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
+  const location = useLocation()
+  const fleetActive = location.pathname === '/' || location.pathname.startsWith('/agent/')
+  const templatesActive = location.pathname.startsWith('/templates')
+  const over = ['disk', 'mem'].filter(k => alerts?.[k]?.over)
+  return (
+    <header className="topbar">
+      <button type="button" className="topbar-menu" onClick={onToggleMenu} aria-label="Toggle menu">
+        {menuOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+      <Link to="/" className="topbar-brand"><Bot size={20} color="currentColor" /> AgentHotel</Link>
+      <nav className="topbar-nav">
+        <Link to="/" className={fleetActive ? 'active' : ''}>Fleet</Link>
+        <Link to="/templates" className={templatesActive ? 'active' : ''}>Templates</Link>
+        <a href="https://github.com/magnusfroste/agenthotel" target="_blank" rel="noopener noreferrer">
+          Docs <ExternalLink size={12} color="currentColor" />
+        </a>
+      </nav>
+      <div className="topbar-spacer" />
+      {/* Only when something is over its threshold. A host at 96% disk once
+          said nothing anywhere; this is where people look. */}
+      {over.map(k => (
+        <Link key={k} to="/system" className="topbar-alert"
+          title={`Above the ${alerts[k].threshold}% threshold — see System`}>
+          <AlertTriangle size={14} color="currentColor" /> {k === 'disk' ? 'Disk' : 'Memory'} {alerts[k].pct}%
+        </Link>
+      ))}
+      <NewAgentMenu />
+      <ThemeSwitch />
+      <UserMenu onLogout={onLogout} />
+    </header>
+  )
+}
+
+function Sidebar({ onNavigate, className = '' }) {
+  const location = useLocation()
+  const [version, setVersion] = useState('')
+  const [updateInfo, setUpdateInfo] = useState(null)
+  const [upgrading, setUpgrading] = useState(false)
+  const [agents, setAgents] = useState([])
+  const toast = useToast()
+
+  useEffect(() => {
+    fetchVersion()
+    checkForUpdates()
+    fetchAgents()
+    const interval = setInterval(() => { if (!document.hidden) fetchAgents() }, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  async function fetchVersion() {
     try {
-      const [ipRes, versionRes] = await Promise.all([
-        authFetch('/api/system/ip'),
-        authFetch('/api/system/version')
-      ])
-      const ipData = await ipRes.json()
-      const versionData = await versionRes.json()
-      setIp(ipData.ip)
+      const versionData = await (await authFetch('/api/system/version')).json()
       setVersion(versionData.version)
     } catch (err) {
       console.error('Failed to fetch system info:', err)
     }
-  }
-
-  async function fetchAlerts() {
-    try {
-      setAlerts(await (await authFetch('/api/system/alerts')).json())
-    } catch (err) { /* a missing warning is not worth an error */ }
   }
 
   async function checkForUpdates() {
@@ -148,175 +264,106 @@ function Sidebar({ onLogout, onNavigate, className = '' }) {
     return ''
   }
 
+  const statusColor = (status) =>
+    status === 'running' ? 'var(--accent-green)' : status === 'stopped' ? 'var(--accent-red)' : 'var(--accent-yellow)'
+
+  const infrastructure = [
+    { to: '/providers', label: 'Providers', Icon: Key },
+    { to: '/domains', label: 'Domains', Icon: Globe },
+    { to: '/certificates', label: 'Certificates', Icon: Lock },
+    { to: '/connect', label: 'Connect', Icon: Link2 },
+    { to: '/console', label: 'Console', Icon: Terminal },
+    { to: '/system', label: 'System', Icon: Monitor },
+  ]
+
   return (
-    <div className={`sidebar ${className}`}>
-      <div className="sidebar-header">
-        <Link to="/" className="sidebar-brand"><Bot size={24} color="white" /> AgentHotel</Link>
-      </div>
+    <aside className={`sidebar ${className}`}>
       <nav className="sidebar-nav" onClick={onNavigate}>
-        <Link to="/" className={`sidebar-link ${isActive('/')}`}>
-          <span className="sidebar-icon"><BarChart3 size={18} color="white" /></span>
-          <span>Dashboard</span>
-        </Link>
-        <Link to="/create" className={`sidebar-link ${isActive('/create')}`}>
-          <span className="sidebar-icon"><Plus size={18} color="white" /></span>
-          <span>Create Agent</span>
-        </Link>
-        <Link to="/compose" className={`sidebar-link ${isActive('/compose')}`}>
-          <span className="sidebar-icon"><Layers size={18} color="white" /></span>
-          <span>Compose</span>
-        </Link>
-        <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}>
-          <span className="sidebar-icon"><LayoutTemplate size={18} color="white" /></span>
-          <span>Templates</span>
-        </Link>
-        <Link to="/domains" className={`sidebar-link ${isActive('/domains')}`}>
-          <span className="sidebar-icon"><Globe size={18} color="white" /></span>
-          <span>Domains</span>
-        </Link>
-        <Link to="/certificates" className={`sidebar-link ${isActive('/certificates')}`}>
-          <span className="sidebar-icon"><Lock size={18} color="white" /></span>
-          <span>Certificates</span>
-        </Link>
-        <Link to="/console" className={`sidebar-link ${isActive('/console')}`}>
-          <span className="sidebar-icon"><Terminal size={18} color="white" /></span>
-          <span>Console</span>
-        </Link>
-        <Link to="/system" className={`sidebar-link ${isActive('/system')}`}>
-          <span className="sidebar-icon"><Monitor size={18} color="white" /></span>
-          <span>System</span>
-        </Link>
-        <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}>
-          <span className="sidebar-icon"><Link2 size={18} color="white" /></span>
-          <span>Connect</span>
-        </Link>
-        <Link to="/providers" className={`sidebar-link ${isActive('/providers')}`}>
-          <span className="sidebar-icon"><Key size={18} color="white" /></span>
-          <span>Providers</span>
-        </Link>
-        <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}>
-          <span className="sidebar-icon"><SettingsIcon size={18} color="white" /></span>
-          <span>Settings</span>
-        </Link>
-        <a href="https://github.com/magnusfroste/agenthotel" target="_blank" rel="noopener noreferrer" className="sidebar-link">
-          <span className="sidebar-icon"><BookOpen size={18} color="white" /></span>
-          <span>Docs</span>
-        </a>
-      </nav>
-      
-      {agents.length > 0 && (
-        <div className="sidebar-agents">
-          <div className="sidebar-agents-label">
-            ACTIVE AGENTS
-          </div>
+        {/* On a phone the top bar has no room for its links; they live here. */}
+        <div className="sidebar-group sidebar-mobile-only">
+          <Link to="/" className={`sidebar-link ${isActive('/')}`}><BarChart3 size={16} color="currentColor" /> Fleet</Link>
+          <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}><LayoutTemplate size={16} color="currentColor" /> Templates</Link>
+          <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}><SettingsIcon size={16} color="currentColor" /> Settings</Link>
+        </div>
+
+        <div className="sidebar-group">
+          <div className="sidebar-label">Agents</div>
+          {agents.length === 0 && (
+            <Link to="/create" className="sidebar-link sidebar-empty"><Plus size={16} color="currentColor" /> Check in your first agent</Link>
+          )}
           {agents.map(agent => (
-            <Link 
-              key={agent.id}
-              to={`/agent/${agent.id}`}
-              className="sidebar-agent"
-            >
-              <div className="sidebar-agent-name">
-                <div
-                  className="sidebar-agent-dot"
-                  style={{
-                    background: agent.status === 'running' ? '#10b981' : agent.status === 'stopped' ? '#ef4444' : '#f59e0b'
-                  }}
-                />
+            <Link key={agent.id} to={`/agent/${agent.id}`}
+              className={`sidebar-agent ${location.pathname === `/agent/${agent.id}` ? 'active' : ''}`}>
+              <span className="sidebar-agent-name">
+                <span className="sidebar-agent-dot" style={{ background: statusColor(agent.status) }} />
                 <span>{agent.name}</span>
-              </div>
-              <span className="sidebar-agent-runtime">
-                {agent.runtime}
               </span>
+              <span className="sidebar-agent-runtime">{agent.runtime}</span>
             </Link>
           ))}
         </div>
-      )}
-      
+
+        <div className="sidebar-group">
+          <div className="sidebar-label">Infrastructure</div>
+          {infrastructure.map(({ to, label, Icon }) => (
+            <Link key={to} to={to} className={`sidebar-link ${isActive(to)}`}>
+              <Icon size={16} color="currentColor" /> {label}
+            </Link>
+          ))}
+        </div>
+      </nav>
+
       <div className="sidebar-footer">
-        <button 
-          onClick={() => setDarkMode(!darkMode)}
-          className="theme-toggle"
-        >
-          {darkMode ? <><Sun size={15} color="white" /> Light Mode</> : <><Moon size={15} color="white" /> Dark Mode</>}
-        </button>
-        
+        {version && version !== 'unknown' && (() => {
+          // The version links to its commit; a newer one, when there is one,
+          // to the compare view — the list of exactly what an upgrade would
+          // bring. Deliberately quiet: the Upgrade button is the action, this
+          // is the information behind it.
+          const repo = updateInfo?.repoUrl || 'https://github.com/magnusfroste/agenthotel'
+          const latest = updateInfo?.hasUpdate ? updateInfo.latestVersion : null
+          return (
+            <div className="sidebar-meta-item">
+              <Package size={13} color="currentColor" />
+              <a className="sidebar-meta-link" href={`${repo}/commit/${version}`} target="_blank" rel="noreferrer"
+                title={`Running commit ${version} — open it on GitHub`}>v{version}</a>
+              {latest && (
+                <a className="sidebar-meta-link sidebar-meta-newer" href={`${repo}/compare/${version}...${latest}`} target="_blank" rel="noreferrer"
+                  title={`${latest} is newer${updateInfo.latestSubject ? `: ${updateInfo.latestSubject}` : ''}. See what changed since ${version}.`}>
+                  → {latest}
+                </a>
+              )}
+            </div>
+          )
+        })()}
         {updateInfo?.hasUpdate && (
-          <button 
-            onClick={handleUpgrade} 
-            disabled={upgrading}
-            className="btn-upgrade"
-          >
-            {upgrading ? 'Upgrading…' : <><Download size={15} color="white" /> Upgrade to {updateInfo.latestVersion}</>}
+          <button onClick={handleUpgrade} disabled={upgrading} className="btn-upgrade">
+            {upgrading ? 'Upgrading…' : <><Download size={14} color="currentColor" /> Upgrade</>}
           </button>
         )}
-        <div className="sidebar-meta">
-          {/* Only when something is over its threshold. A host at 96% disk
-              once said nothing anywhere; this is where people already look. */}
-          {['disk', 'mem'].filter(k => alerts?.[k]?.over).map(k => (
-            <Link key={k} to="/system" className="sidebar-meta-item sidebar-meta-warning"
-              title={`Above the ${alerts[k].threshold}% threshold — see System`}>
-              <AlertTriangle size={13} color="currentColor" /> {k === 'disk' ? 'Disk' : 'Memory'} {alerts[k].pct}% full
-            </Link>
-          ))}
-          {ip && (
-            // The host address is what you paste into a DNS A record when the
-            // panel is not behind a tunnel. A click copies it; selecting text
-            // in a sidebar is fiddly and the middle of setting up DNS is not
-            // the moment for fiddly.
-            <button
-              type="button"
-              className="sidebar-meta-item"
-              title="Host IP address — click to copy, for a DNS A record"
-              onClick={() => navigator.clipboard.writeText(ip)
-                .then(() => toast.success(`${ip} copied`))
-                .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))}
-              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit', display: 'flex', alignItems: 'center', gap: 'inherit' }}
-            >
-              <Globe size={13} color="currentColor" /> <span data-secret="">{ip}</span>
-            </button>
-          )}
-          {version && version !== 'unknown' && (() => {
-            // The version links to its commit; a newer one, when there is one,
-            // to the compare view — the list of exactly what an upgrade would
-            // bring. Deliberately quiet: the Upgrade button above is the action,
-            // this is the information behind it.
-            const repo = updateInfo?.repoUrl || 'https://github.com/magnusfroste/agenthotel'
-            const latest = updateInfo?.hasUpdate ? updateInfo.latestVersion : null
-            return (
-              <div className="sidebar-meta-item">
-                <Package size={13} color="currentColor" />
-                <a className="sidebar-meta-link" href={`${repo}/commit/${version}`} target="_blank" rel="noreferrer"
-                  title={`Running commit ${version} — open it on GitHub`}>v{version}</a>
-                {latest && (
-                  <a className="sidebar-meta-link sidebar-meta-newer" href={`${repo}/compare/${version}...${latest}`} target="_blank" rel="noreferrer"
-                    title={`${latest} is newer${updateInfo.latestSubject ? `: ${updateInfo.latestSubject}` : ''}. See what changed since ${version}.`}>
-                    → {latest}
-                  </a>
-                )}
-              </div>
-            )
-          })()}
-        </div>
-        <div className="sidebar-footer-actions">
-          <Link to="/profile" className="sidebar-profile-link">
-            <User size={13} color="currentColor" /> Profile
-          </Link>
-          <button onClick={onLogout} className="btn-logout">
-            Logout
-          </button>
-        </div>
       </div>
-    </div>
+    </aside>
   )
 }
 
 function App() {
   const [state, setState] = useState('loading')
   const [mobileOpen, setMobileOpen] = useState(false)
+  // Disk or memory past its threshold, shown as a quiet badge in the top bar.
+  const [alerts, setAlerts] = useState(null)
 
   useEffect(() => {
     checkState()
   }, [])
+
+  useEffect(() => {
+    if (state !== 'authenticated') return
+    const fetchAlerts = () => authFetch('/api/system/alerts').then(r => r.json()).then(setAlerts).catch(() => {})
+    fetchAlerts()
+    // The backend re-reads disk and memory every five minutes; once a minute
+    // here is plenty to pick that up.
+    const interval = setInterval(() => { if (!document.hidden) fetchAlerts() }, 60000)
+    return () => clearInterval(interval)
+  }, [state])
 
   async function checkState() {
     try {
@@ -360,23 +407,21 @@ function App() {
     <ToastProvider>
       <BrowserRouter>
         <div className="app">
-          <button 
-            className="mobile-menu-toggle"
-            onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label="Toggle menu"
-          >
-            {mobileOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-          
+          <Topbar
+            onLogout={handleLogout}
+            onToggleMenu={() => setMobileOpen(!mobileOpen)}
+            menuOpen={mobileOpen}
+            alerts={alerts}
+          />
+
           {mobileOpen && (
-            <div 
+            <div
               className="mobile-sidebar-overlay active"
               onClick={() => setMobileOpen(false)}
             />
           )}
-          
-          <Sidebar 
-            onLogout={handleLogout} 
+
+          <Sidebar
             onNavigate={() => setMobileOpen(false)}
             className={mobileOpen ? 'sidebar-open' : ''}
           />

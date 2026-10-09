@@ -240,7 +240,6 @@ function Dashboard() {
             <Upload size={16} color="currentColor" /> Import Agent
             <input type="file" accept=".zip,application/zip" onChange={handleImportService} style={{ display: 'none' }} />
           </label>
-          <Link to="/create" className="btn btn-primary">+ Create Agent</Link>
         </div>
       </div>
 
@@ -289,7 +288,7 @@ function Dashboard() {
               <Plus size={16} color="white" /> Create Agent
             </Link>
             <Link to="/compose" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Layers size={16} color="white" /> Deploy Compose
+              <Layers size={16} color="currentColor" /> Deploy Compose
             </Link>
           </div>
         </div>
