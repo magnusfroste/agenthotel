@@ -995,6 +995,38 @@ body {
   margin-bottom: var(--space-lg);
 }
 
+/* Forms that write a bare <label> and <input> inside .form-group (Create
+   Agent among them) had no style at all: the label sat beside a small,
+   browser-default field. They get the same look as .form-label/.form-input. */
+.form-group > label {
+  display: block;
+  margin-bottom: var(--space-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.form-group > input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.form-group > select,
+.form-group > textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+
+.form-group > input:focus,
+.form-group > select:focus,
+.form-group > textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
 .form-label {
   display: block;
   margin-bottom: var(--space-sm);

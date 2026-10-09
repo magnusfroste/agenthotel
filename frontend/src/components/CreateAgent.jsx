@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
-import { AlertTriangle, Bot, PawPrint, Layers, Container, Zap, ArrowRight } from 'lucide-react'
+import { AlertTriangle, Bot, PawPrint, Layers, Container, Zap, ArrowRight, GitBranch, GitMerge } from 'lucide-react'
+import { templateIcon } from '../lib/templateIcons'
 
 const RUNTIME_ICON = {
   hermes: Zap,
   openclaw: PawPrint,
   odysseus: Bot,
   'docker-app': Container,
+  'git-app': GitBranch,
+  'git-compose': GitMerge,
   compose: Layers
 }
 
@@ -171,22 +174,29 @@ function CreateAgent() {
         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.6rem', display: 'block' }}>Runtime *</label>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
           {runtimes.map(rt => {
-            const Icon = RUNTIME_ICON[rt.id] || Container
+            // A template brings its own icon and colour from its meta.yaml;
+            // every recipe used to show the same box.
+            const Icon = RUNTIME_ICON[rt.id] || (rt.icon ? templateIcon(rt.icon) : Container)
             const selected = formData.runtime === rt.id
             return (
               <button key={rt.id} type="button" onClick={() => setFormData(prev => ({ ...prev, runtime: rt.id }))} style={{
                 textAlign: 'left', background: selected ? 'rgba(59,130,246,0.12)' : 'var(--bg-secondary, #1e293b)',
                 border: selected ? '1px solid #3b82f6' : '1px solid var(--border, #334155)', borderRadius: '0.6rem',
-                padding: '1rem', cursor: 'pointer', color: 'inherit', transition: 'all 0.15s'
-              }}>
+                padding: '1rem', cursor: 'pointer', color: 'inherit', transition: 'all 0.15s',
+                // A button centres its content vertically: cards with a short
+                // description had their icon and title lower than their
+                // neighbours'. Top-aligned, every row lines up.
+                display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'stretch'
+              }} title={rt.description}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ width: '34px', height: '34px', borderRadius: '0.4rem', background: selected ? '#3b82f6' : '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ width: '34px', height: '34px', borderRadius: '0.4rem', background: selected ? '#3b82f6' : (rt.color || '#334155'), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Icon size={18} color="white" />
                   </span>
                   {selected && <ArrowRight size={16} color="#3b82f6" />}
                 </div>
                 <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{rt.name}</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem', lineHeight: 1.3 }}>{rt.description}</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem', lineHeight: 1.35,
+                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{rt.description}</div>
               </button>
             )
           })}
