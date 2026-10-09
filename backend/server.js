@@ -1387,10 +1387,10 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     // Handle compose runtime separately
     if (composeManaged(runtime)) {
-      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin));
+      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin), id);
       await attachComposeRoute({ id }, plugin, agentConfig, domain);
     } else {
-      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin));
+      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin), id);
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
@@ -1528,9 +1528,19 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
 
 // Serialize deploys/redeploys: concurrent image builds can saturate the host
 // and take the panel itself down with it. One deploy at a time, FIFO.
+//
+// deployQueue holds each agent's place while its deploy waits or runs, so the
+// health sweep can tell a deploy waiting its turn behind a long build from one
+// that is stuck (lib/deploysInFlight.js).
 let deployChain = Promise.resolve();
-function enqueueDeploy(work) {
-  const run = deployChain.then(work);
+const deployQueue = new Map();
+let deploySeq = 0;
+function enqueueDeploy(work, agentId = null) {
+  const entry = { seq: ++deploySeq, startedAt: null };
+  if (agentId) deployQueue.set(agentId, entry);
+  const run = deployChain.then(() => { entry.startedAt = Date.now(); return work(); });
+  const leave = () => { if (deployQueue.get(agentId) === entry) deployQueue.delete(agentId); };
+  run.then(leave, leave);
   deployChain = run.catch(() => {});
   return run;
 }
@@ -2464,7 +2474,7 @@ async function redeployAgent(agentId, { rebuildImage = false } = {}) {
         // The image is already built; deployAgent must not build it twice.
         await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, withCurrentLimits(agent.id, config), plugin, { rebuildImage: false, alreadyBuilt: true });
       }
-    });
+    }, agentId);
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
     logEvent('agent.redeploy', agentId, `Redeployed agent ${agent.name}`);
@@ -3715,6 +3725,18 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
   }
 });
 
+// The token an MCP client needs: the static panel token, the only credential
+// /mcp accepts. Since a login got a session of its own, the browser's token is
+// a session — the Connect page put that in every client config and asked /mcp
+// for its tool list with it, which answered 401 ("the MCP endpoint did not
+// answer"). A session that can see this can already rotate the token and be
+// handed the new one, so this widens nothing.
+app.get('/api/system/mcp-token', requireAuth, (req, res) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'auth_token'").get();
+  if (!row || !row.value) return res.status(404).json({ error: 'No panel token — run setup first' });
+  res.json({ token: row.value });
+});
+
 // Turning MCP off is the other half of a switch. Without it the only way to
 // revoke an agent's access was to rotate the token, which breaks every other
 // client at the same time.
@@ -4251,9 +4273,9 @@ async function runHealthChecks() {
     // died without writing one left the guest mid-flight permanently, exempt
     // from the very check that would have noticed. A build still running is
     // the deploy working, however long it takes (lib/deploysInFlight.js).
-    const inFlight = deploys.sweepInFlight(agent, buildProgress.get(agent.id));
+    const inFlight = deploys.sweepInFlight(agent, buildProgress.get(agent.id), Date.now(), deploys.queueSlot(deployQueue, agent.id));
     if (inFlight.action === 'skip') continue;
-    if (inFlight.action === 'building') {
+    if (inFlight.action === 'building' || inFlight.action === 'queued') {
       if (agent.health !== inFlight.health) {
         db.prepare('UPDATE agents SET health = ? WHERE id = ? AND status = ?').run(inFlight.health, agent.id, agent.status);
       }

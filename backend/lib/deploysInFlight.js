@@ -142,13 +142,23 @@ function buildingHealth(p) {
 // of its build), so the escape hatch still catches a deploy that died without
 // writing back. A failed build is judged at once, with its own error.
 //
+// Deploys run one at a time, so a second deploy started during that build
+// waited 28 minutes in the queue with no build of its own and was judged too.
+// queue is the agent's place in the deploy queue ({ ahead, startedAt }, from
+// queueSlot): while it waits it is never judged, and its 15 minutes start
+// when its turn comes.
+//
 // → { action: 'judge' }                 not in flight, or stuck: judge as usual
 //   { action: 'judge', buildError }     the build failed; that is the reason
 //   { action: 'building', health }      keep the status, write the build step
+//   { action: 'queued', health }        keep the status, write the queue place
 //   { action: 'skip' }                  deploy owns the row, leave it alone
-function sweepInFlight(row, progress, now = Date.now()) {
+function sweepInFlight(row, progress, now = Date.now(), queue = null) {
   if (!isInFlight(row.status)) return { action: 'judge' };
   if (progress && !progress.done) return { action: 'building', health: buildingHealth(progress) };
+  if (queue && !queue.startedAt) {
+    return { action: 'queued', health: `queued: waiting for ${queue.ahead} deploy${queue.ahead === 1 ? '' : 's'} ahead` };
+  }
   const since = rowTime(row.updated_at);
   // An unreadable timestamp never trips the hatch — as before.
   if (!Number.isFinite(since)) return { action: 'skip' };
@@ -156,8 +166,19 @@ function sweepInFlight(row, progress, now = Date.now()) {
   // map lives as long as the backend and entries are never removed.
   const current = progress && progress.done && Number(progress.startedAt) >= since ? progress : null;
   if (current && current.error) return { action: 'judge', buildError: current.error };
-  const lastSign = Math.max(since, current ? Number(current.finishedAt) || 0 : 0);
+  const lastSign = Math.max(since, Number(queue && queue.startedAt) || 0, current ? Number(current.finishedAt) || 0 : 0);
   return now - lastSign > STUCK_AFTER_MS ? { action: 'judge', stuck: true } : { action: 'skip' };
+}
+
+// An agent's place in the deploy queue. queue is server.js's map (agent id →
+// { seq, startedAt }), holding every deploy waiting or running; ahead counts
+// the ones queued before this one.
+function queueSlot(queue, id) {
+  const mine = queue && queue.get(id);
+  if (!mine) return null;
+  let ahead = 0;
+  for (const e of queue.values()) if (e.seq < mine.seq) ahead++;
+  return { ahead, startedAt: mine.startedAt || null };
 }
 
 // The health text for a guest whose build failed: the build's error rather
@@ -171,5 +192,5 @@ function buildFailedHealth(buildError, result) {
 module.exports = {
   IN_FLIGHT, INTERRUPTED_REASON, INTERRUPTED_HEALTH,
   isInFlight, deploysInFlight, upgradeConflict, recoverInterrupted, sweptHealth,
-  STUCK_AFTER_MS, sweepInFlight, buildingHealth, buildFailedHealth
+  STUCK_AFTER_MS, sweepInFlight, buildingHealth, buildFailedHealth, queueSlot
 };
