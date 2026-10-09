@@ -52,6 +52,8 @@ Providers come in two kinds, decided by name (`backend/lib/builtinProviders.js`)
 
 Each runtime has a template in `templates/<runtime>/Dockerfile` (except docker-app which pulls images directly).
 
+**A rebuild removes the image it replaces** (`backend/lib/replacedImages.js`). `ensureAgentImage` notes the image id the tag pointed to before the build; once the agent's new container has settled healthy (six good health checks in a row, 15 min at most), that image is removed — never forced, and only when no container, running or stopped, still uses it. A Git App rebuilds `agenthotel-<id>:latest` on every redeploy, and six reel-studio redeploys (~2.5 GB each) filled a 38 GB disk before this (2026-10-09). A template image `<runtime>-agenthotel:latest` is shared, so the old one is kept while any other agent of that runtime still runs it, and removed by the deploy that moves the last one off. A failed removal is logged and never fails the deploy; a deploy that never settles keeps the old image. The list is in memory, so a panel restart forgets it and the manual prune reclaims the rest. compose and git-compose run `up -d` without `--build`, so they never retag and are not covered.
+
 **Template images are only built once** — deploy reuses `<runtime>-agenthotel:latest` if it exists. After changing a template Dockerfile (e.g. the openclaw entrypoint that generates `openclaw.json` from `<SLUG>_API_KEY` / `<SLUG>_BASE_URL` / `<SLUG>_MODELS` env triplets), remove the image (`docker rmi <runtime>-agenthotel:latest`) and redeploy the agent to rebuild.
 
 ## Template Library

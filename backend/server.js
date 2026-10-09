@@ -1542,6 +1542,33 @@ function enqueueDeploy(work) {
 // GET /api/agents/:id/build-log while the card is in creating/redeploying.
 const buildProgress = new Map();
 
+// Images a rebuild left dangling, removed once the agent's new container is
+// healthy and no container uses them — see lib/replacedImages.js.
+const replacedImages = require('./lib/replacedImages').createReplacedImages(docker);
+
+// Called once a new container is up. An agent whose build replaced an image
+// waits for its new container to settle healthy first; any other deploy can
+// sweep at once, since it may have moved the last container off an image an
+// earlier rebuild of a shared template replaced.
+function sweepReplacedImages(agent, plugin) {
+  const { waitUntilSettled } = require('./lib/replacedImages');
+  const fetch = require('node-fetch');
+  const ready = replacedImages.holds(agent.id)
+    ? waitUntilSettled(async () => {
+        const r = await evaluateHealth(docker, fetch, agent, plugin);
+        return r.healthy && !r.starting;
+      })
+    : Promise.resolve(true);
+  ready.then(healthy => {
+    if (!healthy) {
+      console.warn(`[Images] ${agent.name || agent.id} did not settle healthy; keeping the image its build replaced`);
+      return;
+    }
+    replacedImages.release(agent.id);
+    return replacedImages.sweep();
+  }).catch(err => console.warn(`[Images] Cleanup after deploying ${agent.id} failed: ${err.message}`));
+}
+
 function noteBuildEvent(id, o) {
   const p = buildProgress.get(id);
   if (!p) return;
@@ -1624,6 +1651,9 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
       if (needsBuild) {
         console.log(`${forceRebuild ? 'Rebuilding' : 'Building'} image: ${buildTag}`);
         buildProgress.set(id, { startedAt: Date.now(), image: buildTag, step: 0, total: 0, line: 'Preparing build context', lines: [], pulls: {}, pullPercent: null, done: false, error: null });
+        // What the tag points at now. Once the build retags it, that image is
+        // dangling, and it is removed after the new container proves healthy.
+        const previousImageId = await docker.getImage(buildTag).inspect().then(i => i.Id, () => null);
         const tarStream = tar.pack(buildContext);
         const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile });
         let buildOutput;
@@ -1640,8 +1670,9 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
         // (seen with buildkit: stream ends, no image tagged, deploy later
         // dies with a confusing "No such image"). Verify the image exists
         // and surface the tail of the build log if it doesn't.
+        let builtImageId = null;
         try {
-          await docker.getImage(buildTag).inspect();
+          builtImageId = (await docker.getImage(buildTag).inspect()).Id;
         } catch (e) {
           const tail = (buildOutput || [])
             .map(o => o.stream || o.error || o.status || '')
@@ -1651,6 +1682,10 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
           throw new Error(`Image build did not produce ${buildTag}. Build log tail:\n${tail}`);
         }
         { const p = buildProgress.get(id); if (p) { p.done = true; p.line = 'Image built — starting container'; } }
+        // An unchanged build reproduces the same id; then nothing was replaced.
+        if (previousImageId && previousImageId !== builtImageId) {
+          replacedImages.retire(previousImageId, { tag: buildTag, agentId: id });
+        }
         imageToRun = buildTag;
       }
     }
@@ -1833,6 +1868,10 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     try { await container.remove({ force: true }); } catch (e) {}
     throw err;
   }
+
+  // In the background: the deploy is done, and a failed cleanup is logged,
+  // never thrown.
+  sweepReplacedImages({ id, name, port, config: JSON.stringify(config) }, plugin);
 
   // Hermes needs its model: block in /opt/data/config.yaml overridden. The image
   // bakes `provider: auto` + an OpenRouter base_url. We patch config.yaml (base64,
@@ -2120,6 +2159,9 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
         const buildRoot = process.env.AGENTHOTEL_BUILD_ROOT || '/data/builds';
         try { fs.rmSync(path.join(buildRoot, req.params.id), { recursive: true, force: true }); } catch (e) { /* already gone */ }
       }
+      // No new container is coming, so what its builds replaced can go too.
+      replacedImages.release(req.params.id);
+      replacedImages.sweep();
     }
 
     await removeAgentRoutes(agent);

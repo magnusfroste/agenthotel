@@ -101,7 +101,7 @@ async function evaluateHealth(docker, fetch, agent, plugin, containerName = null
     const dockerHealth = info.State.Health && info.State.Health.Status;
     if (dockerHealth === 'healthy') return { state: 'healthy', healthy: true, reason: 'docker healthcheck' };
     if (dockerHealth === 'unhealthy') return { state: 'unhealthy', healthy: false, reason: 'docker healthcheck' };
-    if (dockerHealth === 'starting') return { state: 'running', healthy: true, reason: 'docker healthcheck starting' };
+    if (dockerHealth === 'starting') return { state: 'running', healthy: true, starting: true, reason: 'docker healthcheck starting' };
     return { state: 'running', healthy: true, reason: 'container running (no criterion declared)' };
   }
 
