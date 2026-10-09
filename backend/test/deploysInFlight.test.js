@@ -89,3 +89,61 @@ test('the sweep keeps the interrupted reason while the container is missing', ()
   // Once a container exists, the sweep reports it as usual.
   assert.strictEqual(sweptHealth(INTERRUPTED_HEALTH, { state: 'running', reason: 'ok' }), 'running: ok');
 });
+
+// The health sweep and a deploy in flight. 2026-10-09: a 28-minute OpenClaw
+// build showed FAILED from minute 15 although it was progressing normally.
+const { sweepInFlight, buildFailedHealth, STUCK_AFTER_MS } = require('../lib/deploysInFlight');
+
+const T0 = Date.parse('2026-10-09T17:00:00Z');
+const row = (status = 'creating') => ({ id: CLAW, name: 'bot', status, updated_at: '2026-10-09 17:00:00' });
+const MIN = 60 * 1000;
+
+test('a build still running is never judged, however long it takes', () => {
+  const p = { startedAt: T0 + 1000, step: 10, total: 18, done: false };
+  for (const status of ['creating', 'redeploying']) {
+    assert.deepStrictEqual(sweepInFlight(row(status), p, T0 + 28 * MIN), { action: 'building', health: 'building: step 10/18' });
+  }
+  // Before the first step line arrives there is no count to show yet.
+  const early = sweepInFlight(row(), { startedAt: T0, step: 0, total: 0, line: 'Preparing build context', done: false }, T0 + 20 * MIN);
+  assert.deepStrictEqual(early, { action: 'building', health: 'building: Preparing build context' });
+});
+
+test('with no build running the 15-minute escape hatch still fires', () => {
+  assert.deepStrictEqual(sweepInFlight(row(), undefined, T0 + 14 * MIN), { action: 'skip' });
+  assert.deepStrictEqual(sweepInFlight(row(), undefined, T0 + 16 * MIN), { action: 'judge', stuck: true });
+  assert.ok(STUCK_AFTER_MS === 15 * MIN);
+});
+
+test('the 15 minutes restart when a build finishes', () => {
+  const p = { startedAt: T0 + 1000, finishedAt: T0 + 28 * MIN, step: 18, total: 18, done: true, error: null };
+  // Minute 29: the build finished a minute ago and the container is starting.
+  assert.deepStrictEqual(sweepInFlight(row(), p, T0 + 29 * MIN), { action: 'skip' });
+  assert.deepStrictEqual(sweepInFlight(row(), p, T0 + 44 * MIN), { action: 'judge', stuck: true });
+});
+
+test('a failed build is judged at once, with its own error', () => {
+  const p = { startedAt: T0 + 1000, finishedAt: T0 + 5 * MIN, done: true, error: 'The command /bin/sh -c npx playwright install returned a non-zero code: 1' };
+  const v = sweepInFlight(row(), p, T0 + 6 * MIN);
+  assert.deepStrictEqual(v, { action: 'judge', buildError: p.error });
+  assert.strictEqual(buildFailedHealth(v.buildError, { state: 'missing', reason: 'container not found' }),
+    'missing: build failed: The command /bin/sh -c npx playwright install returned a non-zero code: 1');
+  // A redeploy's old container still serving is reported as usual.
+  assert.strictEqual(buildFailedHealth(v.buildError, { state: 'healthy', reason: 'HTTP 200' }), null);
+  assert.strictEqual(buildFailedHealth('first line\nrest of log', { state: 'missing' }), 'missing: build failed: first line');
+});
+
+test('a finished build from an earlier deploy is ignored', () => {
+  const old = { startedAt: T0 - 60 * MIN, finishedAt: T0 - 50 * MIN, done: true, error: 'old failure' };
+  assert.deepStrictEqual(sweepInFlight(row(), old, T0 + MIN), { action: 'skip' });
+  assert.deepStrictEqual(sweepInFlight(row(), old, T0 + 16 * MIN), { action: 'judge', stuck: true });
+});
+
+test('rows not mid-deploy are judged as usual, build entry or not', () => {
+  for (const status of ['running', 'failed', 'unhealthy']) {
+    assert.deepStrictEqual(sweepInFlight({ ...row(), status }, { done: false, step: 3, total: 9 }, T0), { action: 'judge' });
+  }
+});
+
+test('an unreadable timestamp never trips the hatch', () => {
+  assert.deepStrictEqual(sweepInFlight({ ...row(), updated_at: null }, undefined, T0 + 99 * MIN), { action: 'skip' });
+});

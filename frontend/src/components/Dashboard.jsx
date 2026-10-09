@@ -152,6 +152,8 @@ function Dashboard() {
     const state = healthState(h)
     if (state === 'healthy') return 'var(--text-secondary)'
     if (state === 'stopped') return 'var(--text-secondary)'
+    // An image build in progress ("building: step 10/18") is not a fault.
+    if (state === 'building') return 'var(--text-secondary)'
     return '#ef4444'
   }
   const healthText = (h) => {
