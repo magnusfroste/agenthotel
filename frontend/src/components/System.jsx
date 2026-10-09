@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authFetch, authFetchOk, getToken, setToken } from '../lib/auth'
+import { authFetch, authFetchOk, setToken } from '../lib/auth'
 import { useToast } from './Toast'
 import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers, Copy, Network } from 'lucide-react'
 import SettingCard from './SettingCard'
@@ -98,12 +98,19 @@ function System() {
     }
   }
 
-  function copyMcpToken() {
+  async function copyMcpToken() {
     // The masked value cannot be pasted anywhere useful, and the real one was
     // only on the Connect page — so reading the token meant leaving this
-    // screen mid-task. Same token the browser already uses for its requests.
-    const full = getToken()
-    if (!full) { toast.error('No token in this session — sign in again'); return }
+    // screen mid-task. The panel token, not this browser's session: /mcp
+    // accepts only that.
+    let full = ''
+    try {
+      const res = await authFetchOk('/api/system/mcp-token')
+      full = (await res.json()).token || ''
+    } catch (err) {
+      toast.error('Could not read the token: ' + err.message)
+      return
+    }
     navigator.clipboard.writeText(full)
       .then(() => toast.success('MCP token copied'))
       .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))
@@ -612,8 +619,7 @@ sysctl -w vm.swappiness=10`}</pre>
                   <div className="sysinfo-label">Token</div>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                     {/* Stays masked: the point is to copy it, not read it off a
-                        screen. The full value is the token this browser already
-                        holds for its own requests, so copying exposes nothing new. */}
+                        screen. */}
                     <div data-secret="" className="sysinfo-value text-mono">{mcpStatus.token}</div>
                     <button onClick={copyMcpToken} title="Copy the full token"
                       className="btn btn-secondary" style={{ padding: "0.25rem 0.5rem" }}>

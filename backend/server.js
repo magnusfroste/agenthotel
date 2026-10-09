@@ -3725,6 +3725,18 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
   }
 });
 
+// The token an MCP client needs: the static panel token, the only credential
+// /mcp accepts. Since a login got a session of its own, the browser's token is
+// a session — the Connect page put that in every client config and asked /mcp
+// for its tool list with it, which answered 401 ("the MCP endpoint did not
+// answer"). A session that can see this can already rotate the token and be
+// handed the new one, so this widens nothing.
+app.get('/api/system/mcp-token', requireAuth, (req, res) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'auth_token'").get();
+  if (!row || !row.value) return res.status(404).json({ error: 'No panel token — run setup first' });
+  res.json({ token: row.value });
+});
+
 // Turning MCP off is the other half of a switch. Without it the only way to
 // revoke an agent's access was to rotate the token, which breaks every other
 // client at the same time.

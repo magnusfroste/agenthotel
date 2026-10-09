@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authFetch, getToken } from '../lib/auth'
+import { authFetch } from '../lib/auth'
 import { Bot, PawPrint, Landmark, Terminal, Zap, Rocket, PenTool, Plug, AlertTriangle } from 'lucide-react'
 
 function Connect() {
   const [tools, setTools] = useState(null)
+  const [toolsError, setToolsError] = useState('')
   const [mcpOn, setMcpOn] = useState(null)
 
   const [token, setToken] = useState('')
@@ -21,8 +22,13 @@ function Connect() {
       const settings = await settingsRes.json()
       setPanelDomain(settings.panel_domain || window.location.hostname)
       
-      const storedToken = getToken()
-      if (storedToken) setToken(storedToken)
+      // The static panel token, not this browser's session: /mcp accepts only
+      // that, and a session lapses after the timeout anyway.
+      const mcpToken = await authFetch('/api/system/mcp-token')
+        .then(r => r.ok ? r.json() : {})
+        .then(d => d.token || '')
+        .catch(() => '')
+      setToken(mcpToken)
       // Ask the MCP endpoint what it serves rather than listing names by hand.
       // The hardcoded list had drifted to eight of eighteen tools, so the page
       // told operators the panel could do less than half of what it can — the
@@ -33,7 +39,7 @@ function Connect() {
         .then(r => r.json())
         .then(st => {
           setMcpOn(Boolean(st.configured))
-          if (st.configured && storedToken) fetchTools(storedToken)
+          if (st.configured && mcpToken) fetchTools(mcpToken)
           else setTools([])
         })
         .catch(() => { setMcpOn(false); setTools([]) })
@@ -182,12 +188,18 @@ function Connect() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => null)
+      const listed = data && data.result && data.result.tools
+      if (!listed) {
+        setToolsError((data && data.error && data.error.message) || `HTTP ${res.status}`)
+        setTools([])
+        return
+      }
       // tools is an object keyed by name, not an array.
-      const listed = (data && data.result && data.result.tools) || {}
       setTools(Object.entries(listed).map(([name, t]) => ({ name, description: t.description || '' })))
     } catch (err) {
       console.error('Failed to read MCP tools:', err)
+      setToolsError(err.message)
       setTools([])
     }
   }
@@ -280,7 +292,7 @@ function Connect() {
             color: '#f59e0b',
             fontSize: '0.875rem'
           }}>
-            <AlertTriangle size={16} color="#f59e0b" /> Token not found. Please log in again or check your browser settings.
+            <AlertTriangle size={16} color="#f59e0b" /> Could not read the panel token. Please log in again.
           </div>
         )}
       </div>
@@ -356,7 +368,7 @@ function Connect() {
           {tools === null && <span style={{ color: 'var(--text-secondary)' }}>Loading…</span>}
           {tools && tools.length === 0 && (
             <span style={{ color: 'var(--text-secondary)' }}>
-              Could not read the tool list — the MCP endpoint did not answer.
+              Could not read the tool list — the MCP endpoint did not answer{toolsError ? ` (${toolsError})` : ''}.
             </span>
           )}
           {tools && tools.map(t => (
