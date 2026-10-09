@@ -116,7 +116,60 @@ function sweptHealth(previous, result) {
   return `${result.state}: ${result.reason}`;
 }
 
+// How long a deploy may hold its row with nothing visibly happening before
+// the health sweep judges it anyway.
+const STUCK_AFTER_MS = 15 * 60 * 1000;
+
+// "2026-10-09 17:21:04" (SQLite CURRENT_TIMESTAMP, UTC) → ms, NaN if unreadable.
+function rowTime(updatedAt) {
+  return new Date(String(updatedAt || '').replace(' ', 'T') + 'Z').getTime();
+}
+
+// "building: step 10/18"
+function buildingHealth(p) {
+  return p.total ? `building: step ${p.step || 0}/${p.total}` : `building: ${p.line || 'preparing'}`.slice(0, 200);
+}
+
+// What the health sweep does with a row a deploy holds. progress is the
+// agent's buildProgress entry, if any.
+//
+// On 2026-10-09 an OpenClaw template build took 28 minutes on a 2-core host;
+// at minute 15 the sweep judged the guest by a container that could not exist
+// yet and showed it FAILED, "missing: container not found", while the build
+// was progressing normally. A running build is the deploy visibly working, so
+// it is never judged — the sweep writes the build step instead. The 15 minutes
+// count from when the deploy last showed life (the status write, or the end
+// of its build), so the escape hatch still catches a deploy that died without
+// writing back. A failed build is judged at once, with its own error.
+//
+// → { action: 'judge' }                 not in flight, or stuck: judge as usual
+//   { action: 'judge', buildError }     the build failed; that is the reason
+//   { action: 'building', health }      keep the status, write the build step
+//   { action: 'skip' }                  deploy owns the row, leave it alone
+function sweepInFlight(row, progress, now = Date.now()) {
+  if (!isInFlight(row.status)) return { action: 'judge' };
+  if (progress && !progress.done) return { action: 'building', health: buildingHealth(progress) };
+  const since = rowTime(row.updated_at);
+  // An unreadable timestamp never trips the hatch — as before.
+  if (!Number.isFinite(since)) return { action: 'skip' };
+  // A finished entry from an earlier deploy says nothing about this one: the
+  // map lives as long as the backend and entries are never removed.
+  const current = progress && progress.done && Number(progress.startedAt) >= since ? progress : null;
+  if (current && current.error) return { action: 'judge', buildError: current.error };
+  const lastSign = Math.max(since, current ? Number(current.finishedAt) || 0 : 0);
+  return now - lastSign > STUCK_AFTER_MS ? { action: 'judge', stuck: true } : { action: 'skip' };
+}
+
+// The health text for a guest whose build failed: the build's error rather
+// than "container not found". A container that does exist (a redeploy's old
+// one still serving) is reported as usual.
+function buildFailedHealth(buildError, result) {
+  if (result.state !== 'missing') return null;
+  return `missing: build failed: ${String(buildError).split('\n')[0]}`.slice(0, 300);
+}
+
 module.exports = {
   IN_FLIGHT, INTERRUPTED_REASON, INTERRUPTED_HEALTH,
-  isInFlight, deploysInFlight, upgradeConflict, recoverInterrupted, sweptHealth
+  isInFlight, deploysInFlight, upgradeConflict, recoverInterrupted, sweptHealth,
+  STUCK_AFTER_MS, sweepInFlight, buildingHealth, buildFailedHealth
 };

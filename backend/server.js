@@ -1666,7 +1666,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
           });
         } catch (err) {
           const p = buildProgress.get(id);
-          if (p) { p.done = true; p.error = err.message; p.line = `Build failed: ${err.message}`.slice(0, 200); }
+          if (p) { p.done = true; p.finishedAt = Date.now(); p.error = err.message; p.line = `Build failed: ${err.message}`.slice(0, 200); }
           throw err;
         }
         // Build failures can slip through followProgress without an error
@@ -1681,10 +1681,10 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
             .map(o => o.stream || o.error || o.status || '')
             .join('').trim().split('\n').slice(-15).join('\n');
           const p = buildProgress.get(id);
-          if (p) { p.done = true; p.error = 'Image build did not produce an image'; p.line = p.error; }
+          if (p) { p.done = true; p.finishedAt = Date.now(); p.error = 'Image build did not produce an image'; p.line = p.error; }
           throw new Error(`Image build did not produce ${buildTag}. Build log tail:\n${tail}`);
         }
-        { const p = buildProgress.get(id); if (p) { p.done = true; p.line = 'Image built — starting container'; } }
+        { const p = buildProgress.get(id); if (p) { p.done = true; p.finishedAt = Date.now(); p.line = 'Image built — starting container'; } }
         // An unchanged build reproduces the same id; then nothing was replaced.
         if (previousImageId && previousImageId !== builtImageId) {
           replacedImages.retire(previousImageId, { tag: buildTag, agentId: id });
@@ -4249,11 +4249,20 @@ async function runHealthChecks() {
     // Deploy owns the status until it hands over.
     // Deploy owns the status while it works — but not for ever. A deploy that
     // died without writing one left the guest mid-flight permanently, exempt
-    // from the very check that would have noticed.
-    if (agent.status === 'creating' || agent.status === 'redeploying') {
-      const startedAt = new Date(String(agent.updated_at || '').replace(' ', 'T') + 'Z').getTime();
-      if (!(Number.isFinite(startedAt) && Date.now() - startedAt > 15 * 60 * 1000)) continue;
-      console.warn(`[Health] ${agent.name} has been '${agent.status}' for over 15 minutes — judging it anyway`);
+    // from the very check that would have noticed. A build still running is
+    // the deploy working, however long it takes (lib/deploysInFlight.js).
+    const inFlight = deploys.sweepInFlight(agent, buildProgress.get(agent.id));
+    if (inFlight.action === 'skip') continue;
+    if (inFlight.action === 'building') {
+      if (agent.health !== inFlight.health) {
+        db.prepare('UPDATE agents SET health = ? WHERE id = ? AND status = ?').run(inFlight.health, agent.id, agent.status);
+      }
+      continue;
+    }
+    if (inFlight.buildError) {
+      console.warn(`[Health] ${agent.name} is still '${agent.status}' after its build failed — judging it`);
+    } else if (inFlight.stuck) {
+      console.warn(`[Health] ${agent.name} has been '${agent.status}' for over 15 minutes with no build running — judging it anyway`);
     }
     // A guest stopped on purpose is not a patient. Judging it anyway turned a
     // deliberate stop into "failed: container not found" as soon as anything
@@ -4293,7 +4302,8 @@ async function runHealthChecks() {
     // Written every sweep: the reason string carries the current detail even
     // when the coarse status has not changed. A deploy a restart cut short
     // keeps saying so rather than "missing: container not found".
-    const health = deploys.sweptHealth(agent.health, result);
+    const health = (inFlight.buildError && deploys.buildFailedHealth(inFlight.buildError, result))
+      || deploys.sweptHealth(agent.health, result);
     db.prepare('UPDATE agents SET status = ?, health = ? WHERE id = ?')
       .run(status, health, agent.id);
 
