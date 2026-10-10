@@ -174,7 +174,10 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
     return true
   }, [])
 
-  useEffect(() => registerSender(paneKey, status === 'ready' ? send : null), [status, send, paneKey])
+  // Registered while the pane has a live session, with whether it can take a
+  // message now — so "Send to all" counts the panes that are open, not just
+  // the ones idle this second (it read "Send to all 0" while both answered).
+  useEffect(() => registerSender(paneKey, (status === 'ready' || status === 'working') ? { send, ready: status === 'ready' } : null), [status, send, paneKey])
   useEffect(() => () => registerSender(paneKey, null), [paneKey])
 
   // Follow the conversation unless the reader has scrolled up.
@@ -265,7 +268,7 @@ function Chat() {
   const [panes, setPanes] = useState(() => remembered('chat.panes', [null, null, null, null]))
   const [broadcast, setBroadcast] = useState('')
   const sendersRef = useRef({})
-  const [readyCount, setReadyCount] = useState(0)
+  const [paneCounts, setPaneCounts] = useState({ open: 0, ready: 0 })
 
   useEffect(() => {
     Promise.all([
@@ -297,7 +300,8 @@ function Chat() {
   const registerSender = useCallback((paneKey, sender) => {
     if (sender) sendersRef.current[paneKey] = sender
     else delete sendersRef.current[paneKey]
-    setReadyCount(Object.keys(sendersRef.current).length)
+    const all = Object.values(sendersRef.current)
+    setPaneCounts({ open: all.length, ready: all.filter(p => p.ready).length })
   }, [])
 
   const visible = panes.slice(0, layout)
@@ -308,7 +312,7 @@ function Chat() {
     const text = broadcast.trim()
     if (!text) return
     setBroadcast('')
-    await Promise.all(Object.values(sendersRef.current).map(send => send(text)))
+    await Promise.all(Object.values(sendersRef.current).filter(p => p.ready).map(p => p.send(text)))
   }
 
   const agentById = Object.fromEntries(agents.map(a => [a.id, a]))
@@ -334,9 +338,11 @@ function Chat() {
         <form className="chat-broadcast" onSubmit={sendToAll}>
           <Radio size={16} />
           <input value={broadcast} onChange={e => setBroadcast(e.target.value)}
-            placeholder={readyCount > 1 ? 'Ask every open agent the same thing…' : 'Open two or more agents to ask them all at once'} />
-          <button type="submit" className="btn btn-primary" disabled={readyCount < 1 || !broadcast.trim()}>
-            Send to {readyCount === 1 ? '1 agent' : `all ${readyCount}`}
+            placeholder={paneCounts.open > 1 ? 'Ask every open agent the same thing…' : 'Open two or more agents to ask them all at once'} />
+          <button type="submit" className="btn btn-primary"
+            disabled={paneCounts.open < 1 || paneCounts.ready < paneCounts.open || !broadcast.trim()}
+            title={paneCounts.ready < paneCounts.open ? 'Waiting for every agent to finish' : undefined}>
+            Send to {paneCounts.open === 1 ? '1 agent' : `all ${paneCounts.open}`}
           </button>
         </form>
       )}
