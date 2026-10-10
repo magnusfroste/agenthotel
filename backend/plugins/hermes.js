@@ -159,9 +159,19 @@ function splitModel(value, config) {
   return { providerIn, model: stripped };
 }
 
+// The provider generateConfig writes as model.provider, or null when it writes
+// no model block and hermes resolves the model from the environment itself.
+function configProvider(config) {
+  if (!config.HERMES_MODEL) return null;
+  const { providerIn } = splitModel(config.HERMES_MODEL, config);
+  if (PROVIDER_REGISTRY_NAME[providerIn]) return PROVIDER_REGISTRY_NAME[providerIn];
+  const slug = providerIn.replace(/[^a-z0-9]/g, '').toUpperCase();
+  return config[`${slug}_BASE_URL`] ? providerIn : null;
+}
+
 module.exports = {
   // For tests: how a model id and the agent's env become hermes's config.
-  _internals: { splitModel, ownEndpoints, customProvidersBlock },
+  _internals: { splitModel, ownEndpoints, customProvidersBlock, configProvider },
   name: 'Hermes Agent',
   description: 'NousResearch Hermes Agent — multi-tool AI agent with MCP support',
   defaultImage: 'nousresearch/hermes-agent:latest',
@@ -333,6 +343,14 @@ module.exports = {
     // provider 'openai'" because hermes looks up "openai" as a provider name).
     if (config.HERMES_MODEL) {
       env.push(`HERMES_MODEL=${splitModel(config.HERMES_MODEL, config).model}`);
+      // Hermes's own chat (the dashboard side panel, the TUI) treats
+      // HERMES_MODEL as a launch seed and looks the bare name up in its vendor
+      // catalogue before it reads config.yaml: mimo-v2.6-flash on a private
+      // endpoint became provider 'xiaomi' and failed with "Set XIAOMI_API_KEY"
+      // (2026-10-10), while `hermes -z` and ACP, which read config.yaml, worked.
+      // HERMES_TUI_PROVIDER names the provider outright — the one config.yaml has.
+      const provider = configProvider(config) || config.HERMES_TUI_PROVIDER;
+      if (provider) env.push(`HERMES_TUI_PROVIDER=${provider}`);
     }
 
     const keys = [
@@ -347,7 +365,7 @@ module.exports = {
     // fallback. Without naming them here the pass-through appends a second copy
     // of each — harmless while the values agree, but it also defeats the guard
     // that keeps an empty secret out of the environment.
-    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL',
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL', 'HERMES_TUI_PROVIDER',
       'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
       'HERMES_DASHBOARD_BASIC_AUTH_SECRET', 'HERMES_DASHBOARD_PASSWORD']);
     return env;

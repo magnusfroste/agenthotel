@@ -178,3 +178,22 @@ test('two providers listing one id is not guessed at', () => {
     assert.strictEqual(yaml.load(hermes.generateConfig(cfg)).custom_providers[0].model, 'unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q2_K_XL');
   });
 }
+
+test("hermes's own chat is told the provider config.yaml names, not left to guess from the model", () => {
+  // mimo-v2.6-flash on a private endpoint: hermes's dashboard read the bare
+  // HERMES_MODEL, found it in Xiaomi's catalogue and asked for XIAOMI_API_KEY.
+  const own = envOf({
+    HERMES_MODEL: 'dgxspark/mimo-v2.6-flash',
+    DGXSPARK_API_KEY: 'k', DGXSPARK_BASE_URL: 'https://glm.example/v1', DGXSPARK_MODELS: 'mimo-v2.6-flash'
+  });
+  assert.strictEqual(own.HERMES_MODEL, 'mimo-v2.6-flash');
+  assert.strictEqual(own.HERMES_TUI_PROVIDER, 'dgxspark');
+  assert.match(hermes.generateConfig({
+    HERMES_MODEL: 'dgxspark/mimo-v2.6-flash', DGXSPARK_BASE_URL: 'https://glm.example/v1', DGXSPARK_MODELS: 'mimo-v2.6-flash'
+  }), /provider: dgxspark/);
+
+  assert.strictEqual(envOf({ HERMES_MODEL: 'openrouter/xiaomi/mimo-v2.6-flash', OPENROUTER_API_KEY: 'k' }).HERMES_TUI_PROVIDER, 'openrouter');
+  assert.strictEqual(envOf({ HERMES_MODEL: 'openai/gpt-5.6-luna', OPENAI_API_KEY: 'k' }).HERMES_TUI_PROVIDER, 'openai-api');
+  // No model block written (an unknown provider with no endpoint): nothing to name.
+  assert.strictEqual(envOf({ HERMES_MODEL: 'nowhere/m' }).HERMES_TUI_PROVIDER, undefined);
+});
