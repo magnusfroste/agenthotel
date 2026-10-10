@@ -64,20 +64,20 @@ module.exports = {
     try {
       // Try docker compose first, fallback to docker-compose
       try {
-        execSync(`docker compose -p ${projectName} -f ${composePath} up -d`, {
+        require('../lib/deployLog').note(execSync(`docker compose -p ${projectName} -f ${composePath} up -d 2>&1`, {
           cwd: projectDir,
           stdio: 'pipe'
-        });
+        }));
       } catch (e) {
         // Fallback to docker-compose (standalone)
-        execSync(`docker-compose -p ${projectName} -f ${composePath} up -d`, {
+        require('../lib/deployLog').note(execSync(`docker-compose -p ${projectName} -f ${composePath} up -d 2>&1`, {
           cwd: projectDir,
           stdio: 'pipe'
-        });
+        }));
       }
       return { success: true };
     } catch (err) {
-      throw new Error(`Compose deploy failed: ${err.stderr || err.message}`);
+      throw new Error(`Compose deploy failed: ${String(err.stderr || '').trim() || String(err.stdout || '').trim() || err.message}`);
     }
   },
 

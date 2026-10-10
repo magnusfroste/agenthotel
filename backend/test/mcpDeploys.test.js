@@ -44,7 +44,7 @@ test('redeploy_agent is the panel\'s redeploy, not a copy outside the queue', as
   });
   const out = await call(server, 'redeploy_agent', { agent_id: REEL, rebuild: true });
   assert.deepStrictEqual(out, { success: true, agent_id: REEL, status: 'running' });
-  assert.deepStrictEqual(calls, [[REEL, { rebuildImage: true }]]);
+  assert.deepStrictEqual(calls, [[REEL, { rebuildImage: true, trigger: 'MCP' }]]);
 });
 
 test('redeploy_agent reports the shared redeploy\'s failure', async () => {
@@ -84,4 +84,26 @@ test('set_agent_env: a failed build leaves the agent running and is reported', a
   const out = await call(server, 'set_agent_env', { agent_id: REEL, env: { FOO: 'bar' } });
   assert.match(out.error, /Build failed, the agent was left running: boom/);
   assert.strictEqual(db.prepare('SELECT status FROM agents WHERE id = ?').get(REEL).status, 'running');
+});
+
+test('get_deploy_log hands an agent the latest deploy and its log, masked', async () => {
+  const { db, docker } = setup();
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const deployLog = require('../lib/deployLog').createDeployLog(db, fs.mkdtempSync(path.join(os.tmpdir(), 'mcpdl-')));
+  const id = deployLog.queued(REEL, { kind: 'redeploy', trigger: 'MCP', config: { GIT_TOKEN: 'ghp_secretvalue1' } });
+  await assert.rejects(deployLog.run(id, REEL, async () => {
+    deployLog.line('cloning with ghp_secretvalue1');
+    throw new Error('Image build did not produce agenthotel-x');
+  }));
+  const server = createMcpServer(db, docker, runtimes, async () => {}, async () => {}, { deployLog });
+  const out = await call(server, 'get_deploy_log', { agent_id: REEL });
+  assert.strictEqual(out.deployment.id, id);
+  assert.strictEqual(out.deployment.status, 'failed');
+  assert.strictEqual(out.deployment.trigger, 'MCP');
+  assert.match(out.log, /Image build did not produce/);
+  assert.doesNotMatch(out.log, /ghp_secretvalue1/);
+  const other = await call(server, 'get_deploy_log', { agent_id: 'someone-else', deployment_id: id });
+  assert.ok(other.note || other.error);
 });

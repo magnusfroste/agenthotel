@@ -1,4 +1,4 @@
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { checkout, SHARED_ROOT, resolveContext } = require('../lib/gitCheckout');
@@ -42,12 +42,17 @@ function composeFile(dir, config) {
 
 function compose(args, cwd, envFile) {
   const base = ['compose', ...(envFile ? ['--env-file', envFile] : []), ...args];
-  try {
-    return execFileSync('docker', base, { cwd, stdio: 'pipe', timeout: 900000 }).toString();
-  } catch (err) {
-    const detail = (err.stderr || err.stdout || '').toString().trim() || err.message;
+  // spawnSync, not execFileSync: compose reports pulls, builds and container
+  // starts on stderr, and a successful run's stderr is what the deploy log
+  // shows (lib/deployLog.js).
+  const r = spawnSync('docker', base, { cwd, timeout: 900000, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (r.error) throw new Error(r.error.message);
+  require('../lib/deployLog').note([r.stdout, r.stderr].filter(Boolean).join('\n'));
+  if (r.status !== 0) {
+    const detail = (r.stderr || r.stdout || '').toString().trim() || `docker compose exited with ${r.status}`;
     throw new Error(detail.split('\n').slice(-6).join('\n'));
   }
+  return r.stdout;
 }
 
 // Create the external networks a stack declares but does not own.

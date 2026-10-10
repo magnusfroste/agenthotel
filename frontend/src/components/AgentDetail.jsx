@@ -5,8 +5,9 @@ import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
   Settings as SettingsIcon, FileText, Terminal as TerminalIcon, Save, Box, Globe, Download, Hammer, Activity,
-  Zap, GitBranch, MessagesSquare
+  Zap, GitBranch, MessagesSquare, History
 } from 'lucide-react'
+import Deployments from './Deployments'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -24,6 +25,7 @@ const CARRIES_SECRETS = /^(MCP_SERVERS|COMPOSE_ENV|CUSTOM_ENV)$/
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Box },
+  { id: 'deployments', label: 'Deployments', icon: History },
   { id: 'logs', label: 'Logs', icon: FileText },
   { id: 'console', label: 'Console', icon: TerminalIcon },
   { id: 'environment', label: 'Environment', icon: SettingsIcon },
@@ -95,6 +97,8 @@ function AgentDetail() {
   function notify(type, text) { toast[type](text) }
 
   async function handleAction(path, method = 'POST', body = null) {
+    // A redeploy request lasts as long as the deploy; show its log while it runs.
+    if (path === 'redeploy') setTab('deployments')
     try {
       await authFetchOk(`/api/agents/${id}/${path}`, {
         method,
@@ -314,6 +318,8 @@ function AgentDetail() {
           <AgentUptime agentId={id} />
         </div>
       )}
+
+      {tab === 'deployments' && <Deployments agentId={id} />}
 
       {/* Logs */}
       {tab === 'logs' && (

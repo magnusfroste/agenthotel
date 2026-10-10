@@ -36,6 +36,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // MCP built beside the Redeploy button's build of the same agent, and the
   // image between the two was never removed (2026-10-09).
   const enqueueDeploy = extras.enqueueDeploy || ((work) => work());
+  const deployLog = extras.deployLog || null;
   // See server.js: ask the plugin whether it runs its own containers, rather
   // than matching the runtime's name.
   const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
@@ -87,6 +88,18 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         properties: {
           agent_id: { type: 'string', description: 'The agent ID to redeploy' },
           rebuild: { type: 'boolean', description: 'Rebuild the runtime template image first, picking up edits to templates/<runtime>/Dockerfile (slower)' }
+        },
+        required: ['agent_id']
+      }
+    },
+    get_deploy_log: {
+      description: "An agent's recent deploys (status, what started each, commit, duration) and the log of one — the latest unless deployment_id is given. Read it when a create, redeploy or set_agent_env failed or is still running: the build output, pulls and container start are all there. Secret config values are masked in it.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID' },
+          deployment_id: { type: 'number', description: 'A deploy from the list; the latest when omitted' },
+          tail: { type: 'number', description: 'Lines from the end of the log (default 200)' }
         },
         required: ['agent_id']
       }
@@ -289,7 +302,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
             } else {
               await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
             }
-          }, id);
+          }, id, { kind: 'create', trigger: 'MCP', config: agentConfig });
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: id, status: 'running' }) }] };
         } catch (err) {
@@ -418,7 +431,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
             try { await container.stop(); } catch (e) {}
             try { await container.remove({ force: true }); } catch (e) {}
             await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, deployConfig, plugin, { alreadyBuilt: true });
-          }, args.agent_id);
+          }, args.agent_id, { kind: 'update', trigger: 'MCP', config: deployConfig });
           if (buildError) {
             db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
             return { content: [{ type: 'text', text: JSON.stringify({ error: `Build failed, the agent was left running: ${buildError.message}` }) }], isError: true };
@@ -442,11 +455,28 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         // that ran outside the queue — a redeploy here a minute after one from
         // the button built the same commit twice, side by side (2026-10-09).
         try {
-          await redeployAgent(agent.id, { rebuildImage: args.rebuild === true });
+          await redeployAgent(agent.id, { rebuildImage: args.rebuild === true, trigger: 'MCP' });
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
         } catch (err) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
         }
+      }
+
+      case 'get_deploy_log': {
+        if (!deployLog) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Deploy log unavailable' }) }], isError: true };
+        const deploys = deployLog.list(args.agent_id, 10);
+        if (!deploys.length) return { content: [{ type: 'text', text: JSON.stringify({ deployments: [], note: 'No deploys recorded for this agent yet' }) }] };
+        const chosen = args.deployment_id ? deploys.find(d => d.id === Number(args.deployment_id)) || deployLog.get(args.deployment_id) : deploys[0];
+        if (!chosen || chosen.agent_id !== args.agent_id) return { content: [{ type: 'text', text: JSON.stringify({ error: 'No such deployment for this agent' }) }], isError: true };
+        const log = deployLog.read(chosen.id, 0);
+        const tail = Math.max(1, Math.min(2000, parseInt(args.tail) || 200));
+        const summary = d => ({ id: d.id, kind: d.kind, trigger: d.trigger, status: d.status, commit: d.commit_sha,
+          queued_at: new Date(d.queued_at).toISOString(),
+          seconds: d.finished_at && d.started_at ? Math.round((d.finished_at - d.started_at) / 1000) : null, error: d.error });
+        return { content: [{ type: 'text', text: JSON.stringify({
+          deployments: deploys.map(summary), deployment: summary(chosen), done: log.done,
+          log: log.text.split('\n').slice(-tail - 1).join('\n')
+        }) }] };
       }
 
       case 'get_agent_logs': {

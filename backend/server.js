@@ -108,6 +108,11 @@ db.exec(`
 `);
 const sessions = require('./lib/sessions');
 const acpBridge = require('./lib/acpBridge');
+// Every deploy's row and full log (lib/deployLog.js). A deploy a restart cut
+// off is closed as interrupted before anything new is queued.
+const deployLog = require('./lib/deployLog').createDeployLog(db, path.dirname(process.env.DB_PATH || '/data/agenthotel.db'));
+deployLog.teeConsole();
+{ const n = deployLog.interruptStale(); if (n) console.log(`[Deploys] ${n} deploy(s) interrupted by the restart marked as such`); }
 sessions.init(db);
 // Expired sessions cost nothing but rows; sweep hourly.
 setInterval(() => { try { sessions.purgeExpired(db); } catch (e) {} }, 60 * 60 * 1000).unref?.();
@@ -1085,7 +1090,7 @@ const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 const { createMcpServer } = require('./mcp');
 // enqueueDeploy and redeployAgent are function declarations further down, so
 // they are hoisted: MCP deploys share the REST queue and the REST redeploy.
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent, deployLog });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1156,6 +1161,19 @@ app.post('/api/agents/:id/actions/:actionId', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// The agent's deploys, newest first (lib/deployLog.js), and one deploy's log
+// from a byte offset on — the Deployments tab polls it to follow a running
+// deploy without fetching what it already has.
+app.get('/api/agents/:id/deployments', requireAuth, (req, res) => {
+  res.json({ deployments: deployLog.list(req.params.id) });
+});
+
+app.get('/api/agents/:id/deployments/:deployId/log', requireAuth, (req, res) => {
+  const log = deployLog.read(req.params.deployId, req.query.offset);
+  if (!log || log.deployment.agent_id !== req.params.id) return res.status(404).json({ error: 'No such deployment' });
+  res.json(log);
 });
 
 app.get('/api/agents/:id/build-log', requireAuth, (req, res) => {
@@ -1390,10 +1408,10 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     // Handle compose runtime separately
     if (composeManaged(runtime)) {
-      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin), id);
+      await enqueueDeploy(() => plugin.deploy(id, name, agentConfig, plugin), id, { kind: 'create', trigger: 'panel', config: agentConfig });
       await attachComposeRoute({ id }, plugin, agentConfig, domain);
     } else {
-      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin), id);
+      await enqueueDeploy(() => deployAgent(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, agentConfig, plugin), id, { kind: 'create', trigger: 'panel', config: agentConfig });
     }
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
@@ -1538,10 +1556,17 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
 let deployChain = Promise.resolve();
 const deployQueue = new Map();
 let deploySeq = 0;
-function enqueueDeploy(work, agentId = null) {
+// meta { kind, trigger, config } names the deploy in its log; config's secret
+// values are masked out of it.
+function enqueueDeploy(work, agentId = null, meta = {}) {
   const entry = { seq: ++deploySeq, startedAt: null };
   if (agentId) deployQueue.set(agentId, entry);
-  const run = deployChain.then(() => { entry.startedAt = Date.now(); return work(); });
+  const logId = agentId ? deployLog.queued(agentId, meta) : null;
+  if (logId && deployQueue.size > 1) deployLog.line(`Waiting for ${deployQueue.size - 1} deploy(s) ahead`, agentId);
+  const run = deployChain.then(() => {
+    entry.startedAt = Date.now();
+    return logId ? deployLog.run(logId, agentId, work) : work();
+  });
   const leave = () => { if (deployQueue.get(agentId) === entry) deployQueue.delete(agentId); };
   run.then(leave, leave);
   deployChain = run.catch(() => {});
@@ -1597,6 +1622,7 @@ function noteBuildEvent(id, o) {
     const m = /^Step (\d+)\/(\d+)\s*:\s*(.*)$/.exec(line);
     if (m) { p.step = parseInt(m[1]); p.total = parseInt(m[2]); p.line = m[3].trim(); }
     else p.line = line.slice(0, 160);
+    deployLog.line(line, id);
     p.lines.push(line.slice(0, 200));
     if (p.lines.length > 60) p.lines.shift();
     return;
@@ -1609,8 +1635,14 @@ function noteBuildEvent(id, o) {
     const tot = Object.values(p.pulls).reduce((a, x) => a + x.total, 0);
     p.pullPercent = tot ? Math.min(100, Math.round((cur / tot) * 100)) : null;
     p.line = `${o.status} base image ${p.pullPercent}%`;
+    // Every 10%, not every chunk: a pull reports thousands of them.
+    const decile = Math.floor((p.pullPercent || 0) / 10);
+    if (decile > (p.loggedDecile ?? -1)) { p.loggedDecile = decile; deployLog.line(`Pulling base image: ${p.pullPercent}%`, id); }
   } else if (o.status && !o.id) {
     p.line = String(o.status).slice(0, 160);
+    deployLog.line(p.line, id);
+  } else if (o.error) {
+    deployLog.line(`ERROR: ${o.error}`, id);
   }
 }
 
@@ -1645,6 +1677,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     // torn down and once after.
     if (prepared.rebuild && !alreadyBuilt) forceRebuild = true;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
+    if (prepared.commit) deployLog.setCommit(id, prepared.commit);
     if (prepared.commit && onSource) onSource(prepared.commit);
   }
 
@@ -2373,7 +2406,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
 
         await deployAgent(agent.id, agent.name, agent.runtime, updatedDomain, agent.image, agent.port, withCurrentLimits(agent.id, updatedConfig), plugin, { alreadyBuilt: true });
       }
-    }, req.params.id);
+    }, req.params.id, { kind: 'update', trigger: 'settings saved', config: updatedConfig });
     if (buildError) {
       db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
       return res.status(500).json({ error: `Build failed, the agent was left running: ${buildError.message}` });
@@ -2465,7 +2498,7 @@ function withCurrentLimits(agentId, config) {
 // twice — see lib/redeployGate.js.
 const redeployGate = require('./lib/redeployGate').createRedeployGate();
 
-async function redeployAgent(agentId, { rebuildImage = false } = {}) {
+async function redeployAgent(agentId, { rebuildImage = false, trigger = null } = {}) {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
   if (!agent) { const e = new Error('Agent not found'); e.status = 404; throw e; }
   // Re-inject provider env on redeploy: providers added after the agent was
@@ -2478,7 +2511,7 @@ async function redeployAgent(agentId, { rebuildImage = false } = {}) {
     ? () => plugin.remoteRevision(agentId, config)
     : null;
   const { promise, joined, revision } = await redeployGate.redeploy(agentId, key,
-    entry => runRedeploy(agent, plugin, config, rebuildImage, entry),
+    entry => { entry.trigger = trigger; return runRedeploy(agent, plugin, config, rebuildImage, entry); },
     { remoteRevision, sourceless: !config.GIT_REPO });
   if (joined) {
     const what = `the identical redeploy already ${joined}${revision ? ` (commit ${revision})` : ''}`;
@@ -2518,7 +2551,7 @@ async function runRedeploy(agent, plugin, config, rebuildImage, gateEntry) {
         // The image is already built; deployAgent must not build it twice.
         await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, withCurrentLimits(agent.id, config), plugin, { rebuildImage: false, alreadyBuilt: true });
       }
-    }, agentId);
+    }, agentId, { kind: rebuildImage ? 'rebuild' : 'redeploy', trigger: gateEntry.trigger || null, config });
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
     logEvent('agent.redeploy', agentId, `Redeployed agent ${agent.name}`);
@@ -2544,7 +2577,7 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     // Opt-in: rebuild the runtime's template image first, so edits to
     // templates/<runtime>/Dockerfile actually reach the agent. Off by default
     // because a rebuild is slow and pulls a fresh base image.
-    await redeployAgent(req.params.id, { rebuildImage: req.body?.rebuild === true });
+    await redeployAgent(req.params.id, { rebuildImage: req.body?.rebuild === true, trigger: 'panel' });
     res.json({ redeployed: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -3274,7 +3307,7 @@ app.post('/api/agents/:id/skillhub', requireAuth, async (req, res) => {
     logEvent('agent.skillhub', agent.id, `Connected to ${hub.name} as ${slot.id}${caretaker ? ' with the administrator door' : ''}`);
     // The agent picks MCP_SERVERS up on redeploy. In the background: it takes
     // longer than the proxy in front of the panel waits for an answer.
-    redeployAgent(agent.id).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after connecting failed: ${err.message}`));
+    redeployAgent(agent.id, { trigger: 'SkillHub connected' }).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after connecting failed: ${err.message}`));
     res.json({ connected: true, hub: hub.name, slot: slot.id, caretaker, named, whoami, whoamiError, redeploying: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -3309,7 +3342,7 @@ app.delete('/api/agents/:id/skillhub', requireAuth, async (req, res) => {
     if (!released) return res.status(404).json({ error: 'This agent is not connected to a SkillHub' });
     db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), agent.id);
     logEvent('agent.skillhub', agent.id, `Disconnected from ${released.hub}${released.slot ? ', freeing ' + released.slot : ''}`);
-    redeployAgent(agent.id).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after disconnecting failed: ${err.message}`));
+    redeployAgent(agent.id, { trigger: 'SkillHub disconnected' }).catch(err => console.error(`[SkillHub] Redeploy of ${agent.name} after disconnecting failed: ${err.message}`));
     res.json({ disconnected: true, ...released, redeploying: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -3329,7 +3362,7 @@ app.post('/api/skillhubs/:id/keys', requireAuth, async (req, res) => {
     config.COMPOSE_ENV = text;
     db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(config), hub.id);
     logEvent('agent.skillhub', hub.id, `Generated ${filled} agent key(s) for ${hub.name}`);
-    redeployAgent(hub.id).catch(err => console.error(`[SkillHub] Redeploy of ${hub.name} after generating keys failed: ${err.message}`));
+    redeployAgent(hub.id, { trigger: 'SkillHub keys generated' }).catch(err => console.error(`[SkillHub] Redeploy of ${hub.name} after generating keys failed: ${err.message}`));
     res.json({ filled, redeploying: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });

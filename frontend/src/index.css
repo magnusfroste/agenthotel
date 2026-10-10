@@ -2162,3 +2162,24 @@ input[type="checkbox"] {
   .chat-pane { min-height: 420px; }
   .chat-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* Deployments tab: the list of deploys beside the selected one's log. */
+.deployments { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.deployments-list { display: flex; flex-direction: column; gap: 0.4rem; max-height: 70vh; overflow-y: auto; }
+.deployment-row {
+  display: block; width: 100%; padding: 0.6rem 0.75rem; border-radius: 0.5rem; cursor: pointer;
+  background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); font: inherit;
+}
+.deployment-row:hover { border-color: var(--accent-blue); }
+.deployment-row.selected { border-color: var(--accent-blue); background: var(--accent-blue-light); }
+.deployments-pre {
+  background: #0f172a; color: #cbd5e1; padding: 1rem; border-radius: 0.5rem; margin: 0;
+  height: 65vh; overflow: auto; font-size: 0.78rem; font-family: Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.spin { animation: spin 1s linear infinite; }
+@media (max-width: 760px) {
+  .deployments { grid-template-columns: minmax(0, 1fr); }
+  .deployments-list { max-height: 40vh; }
+  .deployments-pre { height: 50vh; }
+}
