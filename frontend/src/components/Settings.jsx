@@ -198,8 +198,8 @@ function Settings() {
         </div>
         {settings.rate_limit_enabled === 'true' && field({ name: 'rate_limit_requests', label: 'Requests per minute', type: 'number', fallback: '600',
           help: 'Generous on purpose: the dashboard polls stats every few seconds per open tab. This catches a runaway script, not a person.' })}
-        {field({ name: 'session_timeout', label: 'Session timeout (minutes)', type: 'number', fallback: '60',
-          help: 'How long a browser session stays signed in without activity. API and MCP clients use the panel token and are not affected.' })}
+        {field({ name: 'session_timeout', label: 'Session timeout (minutes)', type: 'number', fallback: '720',
+          help: 'How long a browser session stays signed in without activity — a tab in the background counts as idle. API and MCP clients use the panel token and are not affected.' })}
       </>)}
 
       {card(notifications, <>

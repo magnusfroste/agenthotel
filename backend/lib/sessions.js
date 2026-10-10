@@ -10,7 +10,11 @@
 
 const crypto = require('crypto');
 
-const DEFAULT_TIMEOUT_MIN = 60;
+// Twelve hours: a panel kept open in a background tab polls nothing (hidden
+// tabs stop polling), so at 60 minutes the admin was signed out every time
+// they came back from watching a video or working elsewhere (2026-10-10). It
+// is still idle time — a tab forgotten over the weekend is signed out.
+const DEFAULT_TIMEOUT_MIN = 720;
 const MIN_TIMEOUT_MIN = 5;
 // A session's expiry is pushed forward at most this often, so a dashboard that
 // polls every five seconds does not turn every request into a write.
