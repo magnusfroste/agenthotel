@@ -130,3 +130,120 @@ test('a request resolves with its response and fails when the socket closes', as
   socket.onclose();
   await assert.rejects(pending, /closed/);
 });
+
+// The fake echoes what is written, so a response line sent in comes back out
+// as if the agent had answered.
+const tick = () => new Promise(r => setImmediate(r));
+
+test('a closed socket detaches the session; its key brings the same process back', async () => {
+  const docker = fakeDocker();
+  const session = await acpBridge.openAcpSession(docker, { agentId: 'r1', containerName: 'c', command: ['x'] });
+  const first = [];
+  session.attach({ onLine: l => first.push(l) });
+  session.detach();
+  assert.ok(session.isDetached());
+  assert.strictEqual(acpBridge.findDetached('r1', 'wrong'), null);
+  assert.strictEqual(acpBridge.findDetached('r1', session.key), session);
+  // Detached sessions still hold a process, so they still count.
+  assert.strictEqual(acpBridge.liveCount('r1'), 1);
+
+  const second = [];
+  session.attach({ onLine: l => second.push(l) });
+  assert.ok(!session.isDetached());
+  session.send('{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+  await tick();
+  assert.strictEqual(first.length, 0);
+  assert.strictEqual(second.length, 1);
+  await session.close();
+});
+
+test('a detached session ends after its grace, but not while a turn runs', async () => {
+  const docker = fakeDocker();
+  const session = await acpBridge.openAcpSession(docker, { agentId: 'r2', containerName: 'c', command: ['x'] });
+  session.attach({ onLine: () => {} });
+  session.send('{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{}}');
+  await tick();
+  assert.ok(session.busy());
+  session.detach();
+  const t0 = Date.now();
+  session.sweep(t0 + acpBridge.DETACH_GRACE_MS + 1000);
+  assert.ok(session.isDetached(), 'kept while its turn runs');
+  // The turn finishes; the next sweep past the grace ends it.
+  session.send('{"jsonrpc":"2.0","id":7,"result":{"stopReason":"end_turn"}}');
+  await tick();
+  assert.ok(!session.busy());
+  session.sweep(t0 + acpBridge.DETACH_GRACE_MS + 2000);
+  assert.strictEqual(acpBridge.liveCount('r2'), 0);
+});
+
+test('a detached session with a turn that never ends is still ended at the maximum', async () => {
+  const docker = fakeDocker();
+  const session = await acpBridge.openAcpSession(docker, { agentId: 'r3', containerName: 'c', command: ['x'] });
+  session.attach({ onLine: () => {} });
+  session.send('{"jsonrpc":"2.0","id":9,"method":"session/prompt","params":{}}');
+  await tick();
+  session.detach();
+  session.sweep(Date.now() + acpBridge.DETACH_MAX_MS + 1000);
+  assert.strictEqual(acpBridge.liveCount('r3'), 0);
+});
+
+test('a turn from before the reload is reported done to the new socket', async () => {
+  const docker = fakeDocker();
+  const session = await acpBridge.openAcpSession(docker, { agentId: 'r4', containerName: 'c', command: ['x'] });
+  session.attach({ onLine: () => {} });
+  session.send('{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{}}');
+  await tick();
+  session.detach();
+  let done = 0;
+  session.attach({ onLine: () => {}, onTurnDone: () => done++ });
+  session.send('{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}');
+  await tick();
+  assert.strictEqual(done, 1);
+  await session.close();
+});
+
+test('an idle attached session is paused and its pane told so', async () => {
+  const docker = fakeDocker();
+  const session = await acpBridge.openAcpSession(docker, { agentId: 'r5', containerName: 'c', command: ['x'] });
+  let idle = 0;
+  session.attach({ onLine: () => {}, onIdle: () => idle++ });
+  session.sweep(Date.now() + acpBridge.IDLE_MS - 60000);
+  assert.strictEqual(idle, 0);
+  session.sweep(Date.now() + acpBridge.IDLE_MS + 1000);
+  assert.strictEqual(idle, 1);
+  assert.strictEqual(acpBridge.liveCount('r5'), 0);
+});
+
+test('no new chat starts while the host is short of memory', () => {
+  assert.match(acpBridge.capacityError('m1', 120), /only 120 MB/);
+  assert.strictEqual(acpBridge.capacityError('m1', 4000), null);
+  assert.strictEqual(acpBridge.capacityError('m1', null), null);
+  assert.strictEqual(acpBridge.hostAvailableMB(() => 'MemTotal: 8000000 kB\nMemAvailable: 1251416 kB\n'), 1222);
+  assert.strictEqual(acpBridge.hostAvailableMB(() => { throw new Error('no proc'); }), null);
+});
+
+test('the client keeps the bridge key, loads a session and ends on purpose', async () => {
+  const { AcpClient } = await client();
+  const sent = [];
+  let closed = 0;
+  const panels = [];
+  const socket = { send: s => sent.push(s), close() { closed++; }, onmessage: null, onclose: null };
+  const c = new AcpClient(socket, { onPanel: p => panels.push(p.type) });
+  await socket.onmessage({ data: JSON.stringify({ panel: { type: 'session', key: 'k1', resumed: true, busy: false } }) });
+  assert.strictEqual(c.bridgeKey, 'k1');
+  assert.strictEqual(c.resumed, true);
+  assert.deepStrictEqual(panels, ['session']);
+
+  c.agentCapabilities = { loadSession: true };
+  assert.ok(c.canLoad());
+  const loading = c.loadSession('s-1', '/opt/data');
+  const req = JSON.parse(sent[0]);
+  assert.strictEqual(req.method, 'session/load');
+  assert.deepStrictEqual(req.params, { sessionId: 's-1', cwd: '/opt/data', mcpServers: [] });
+  await socket.onmessage({ data: JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }) });
+  await loading;
+
+  c.end();
+  assert.strictEqual(sent[sent.length - 1], '{"panel":"end"}');
+  assert.strictEqual(closed, 1);
+});

@@ -92,8 +92,21 @@ initialize, session/new (authenticating with the agent's configured method if
 it asks), session/prompt, session/cancel, permission requests as buttons. The
 client offers no filesystem or terminal of its own; the agent works with its
 own tools in its own container. Every pane is a process (`hermes acp` is a full
-Hermes, 200-300 MB), so sessions are capped at 4 per agent and 8 in total, and a
-session ends with its socket: stdin closes, then SIGTERM by host pid after 3 s.
+Hermes, 200-300 MB), so sessions are capped at 4 per agent and 8 in total, and
+none starts while the host has under 400 MB available.
+
+A chat survives a reload, a visit to another page or a network blip. A closed
+socket *detaches* the session: the process keeps running for 2 minutes (longer
+while a turn is in progress, 15 at most), and a pane that reconnects with the
+session's key (`?resume=`, from the bridge's `{"panel":{"type":"session"}}`
+message) gets the same process back; a reply that finished meanwhile is
+reported with `turn_done`. Past that the pane restores the conversation in a
+new process with ACP `session/load` — each pane remembers `{agentId,
+sessionId, bridgeKey}` in localStorage `chat.sessions`. An attached session
+idle for 30 minutes with no turn running is ended (`idle`), and the pane picks
+up where it left off when you next write. New chat and closing the pane send
+`{"panel":"end"}`, which ends the process at once: stdin closes, then SIGTERM by
+host pid after 3 s.
 
 ## Persistent Web Terminal
 

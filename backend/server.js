@@ -2603,10 +2603,13 @@ app.get('/api/agents/:id/logs', requireAuth, async (req, res) => {
 
 // Chat: one WebSocket per chat pane, bridged to the agent's ACP process in
 // its container (lib/acpBridge.js). The browser speaks the protocol; this end
-// moves lines, enforces the session cap, and ends the process with the socket.
+// moves lines and enforces the session cap. A closed socket detaches the
+// session rather than ending it, and ?resume=<key> reattaches to it; the
+// browser sends {"panel":"end"} when the chat itself is over (New chat, close
+// the pane), which ends the process at once.
 app.ws('/api/agents/:id/acp', (ws, req) => {
-  const panel = (type, message) => {
-    try { ws.send(JSON.stringify({ panel: { type, message } })) } catch (_) {}
+  const panel = (type, message, extra = {}) => {
+    try { ws.send(JSON.stringify({ panel: { type, message, ...extra } })) } catch (_) {}
   };
   const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
   if (!sessions.verify(db, token)) {
@@ -2618,20 +2621,33 @@ app.ws('/api/agents/:id/acp', (ws, req) => {
   // agent's process is still starting: hold what arrives until it is up, or
   // the first message is lost and the chat never starts.
   let session = null;
-  let closedEarly = false;
+  let socketGone = false;
+  let ended = false;
   const waiting = [];
   ws.on('message', msg => {
-    if (session) session.send(msg.toString());
-    else waiting.push(msg.toString());
-  });
-  ws.on('close', () => {
-    closedEarly = !session;
-    if (session) {
-      session.close();
-      console.log(`[Chat] ACP session closed (${acpBridge.liveCount()} open)`);
+    const text = msg.toString();
+    if (text === '{"panel":"end"}') {
+      ended = true;
+      if (session) session.close();
+      return;
     }
+    if (session) session.send(text);
+    else waiting.push(text);
   });
-  ws.on('error', () => { if (session) session.close(); });
+  const gone = () => {
+    if (socketGone) return;
+    socketGone = true;
+    if (!session) return;
+    if (ended) {
+      session.close();
+      console.log(`[Chat] ACP session ended (${acpBridge.liveCount()} open)`);
+    } else {
+      session.detach();
+      console.log(`[Chat] ACP session detached — kept for a returning pane (${acpBridge.liveCount()} open)`);
+    }
+  };
+  ws.on('close', gone);
+  ws.on('error', gone);
   (async () => {
     const agent = db.prepare('SELECT id, name, runtime, config FROM agents WHERE id = ?').get(req.params.id);
     const plugin = agent && runtimes[agent.runtime];
@@ -2640,40 +2656,54 @@ app.ws('/api/agents/:id/acp', (ws, req) => {
       ws.close();
       return;
     }
-    const full = acpBridge.capacityError(agent.id);
-    if (full) {
-      panel('error', full);
-      ws.close();
-      return;
-    }
-    let opened;
-    try {
-      opened = await acpBridge.openAcpSession(docker, {
-        agentId: agent.id,
-        containerName: containerNameFor(runtimes, agent),
-        command: plugin.acp.command,
-        user: plugin.terminalUser || null,
-        cwd: plugin.acp.cwd || null
+    let opened = acpBridge.findDetached(agent.id, String(req.query.resume || ''));
+    const resumed = !!opened;
+    if (!opened) {
+      const full = acpBridge.capacityError(agent.id);
+      if (full) {
+        panel('error', full);
+        ws.close();
+        return;
+      }
+      try {
+        opened = await acpBridge.openAcpSession(docker, {
+          agentId: agent.id,
+          containerName: containerNameFor(runtimes, agent),
+          command: plugin.acp.command,
+          user: plugin.terminalUser || null,
+          cwd: plugin.acp.cwd || null
+        });
+      } catch (err) {
+        panel('error', `Could not start a chat with ${agent.name}: ${err.message}`);
+        ws.close();
+        return;
+      }
+      opened.onExit(() => {
+        const tail = opened.stderrTail().slice(-3).join(' | ');
+        if (tail) console.log(`[Chat] ${agent.name}: ACP process ended — ${tail.slice(0, 300)}`);
+        const current = opened.socket;
+        if (current && current.readyState === 1) {
+          try { current.send(JSON.stringify({ panel: { type: 'exit', message: `${agent.name}'s chat process ended.` } })); current.close(); } catch (_) {}
+        }
       });
-    } catch (err) {
-      panel('error', `Could not start a chat with ${agent.name}: ${err.message}`);
-      ws.close();
+    }
+    if (socketGone || ws.readyState !== 1) {
+      // The pane went away while the process started: keep it for its return.
+      if (!resumed) { if (ended) opened.close(); else opened.detach(); }
       return;
     }
-    if (closedEarly || ws.readyState !== 1) {
-      // The pane was closed while the process started.
-      opened.close();
-      return;
-    }
-    console.log(`[Chat] ${agent.name}: ACP session opened (${acpBridge.liveCount()} open)`);
-    opened.onLine(line => { if (ws.readyState === 1) ws.send(line); });
-    opened.onExit(() => {
-      const tail = opened.stderrTail().slice(-3).join(' | ');
-      if (tail) console.log(`[Chat] ${agent.name}: ACP process ended — ${tail.slice(0, 300)}`);
-      panel('exit', `${agent.name}'s chat process ended.`);
-      try { ws.close(); } catch (_) {}
+    console.log(`[Chat] ${agent.name}: ACP session ${resumed ? 'reattached' : 'opened'} (${acpBridge.liveCount()} open)`);
+    opened.socket = ws;
+    opened.attach({
+      onLine: line => { if (ws.readyState === 1) ws.send(line); },
+      onIdle: () => {
+        panel('idle', `Paused after ${Math.round(acpBridge.IDLE_MS / 60000)} minutes without activity — it picks up where it left off when you write.`);
+        try { ws.close(); } catch (_) {}
+      },
+      onTurnDone: () => panel('turn_done', 'The reply that was running when the page reloaded has finished.')
     });
     session = opened;
+    panel('session', null, { key: opened.key, resumed, busy: opened.busy() });
     waiting.splice(0).forEach(line => session.send(line));
   })().catch(err => {
     panel('error', err.message);

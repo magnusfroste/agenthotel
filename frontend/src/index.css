@@ -1972,6 +1972,7 @@ input[type="checkbox"] {
 .chat-dot-working, .chat-dot-connecting { background: var(--accent-blue); animation: chat-pulse 1.2s ease-in-out infinite; }
 .chat-dot-error { background: var(--accent-red); }
 .chat-dot-closed, .chat-dot-off { background: var(--text-muted); }
+.chat-dot-paused { background: var(--accent-yellow); }
 
 @keyframes chat-pulse { 50% { opacity: 0.35; } }
 

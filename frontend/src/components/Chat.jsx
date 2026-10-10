@@ -10,7 +10,10 @@ import {
 
 // Chat with up to four agents at once, each in its own pane, over the Agent
 // Client Protocol (lib/acpClient.js ↔ backend/lib/acpBridge.js). A pane is a
-// live process in the agent's container for as long as it is open.
+// process in the agent's container. It survives a reload or a visit to
+// another page: the pane remembers its session (chat.sessions) and comes back
+// to the same process if it is still running, or restores the conversation in
+// a new one with ACP session/load. New chat and closing the pane end it.
 
 const LAYOUTS = [
   { panes: 1, label: 'One agent', Icon: Single },
@@ -22,6 +25,16 @@ const remembered = (key, fallback) => {
   try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback } catch (_) { return fallback }
 }
 const remember = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)) } catch (_) {} }
+
+// Per pane: { agentId, sessionId, bridgeKey } of the conversation it shows.
+const SESSIONS_KEY = 'chat.sessions'
+const paneRecord = (paneKey) => remembered(SESSIONS_KEY, {})[paneKey] || null
+const savePaneRecord = (paneKey, record) => {
+  const all = remembered(SESSIONS_KEY, {})
+  if (record) all[paneKey] = record
+  else delete all[paneKey]
+  remember(SESSIONS_KEY, all)
+}
 
 const TOOL_ICON = { read: FileText, search: Search, edit: Pencil, execute: Terminal, fetch: Globe, think: Brain }
 
@@ -101,7 +114,7 @@ function AgentPicker({ agents, taken, onPick }) {
 }
 
 function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
-  const [status, setStatus] = useState('connecting') // connecting | ready | working | closed | error
+  const [status, setStatus] = useState('connecting') // connecting | ready | working | paused | closed | error
   const [entries, setEntries] = useState([])
   const [input, setInput] = useState('')
   const [permission, setPermission] = useState(null)
@@ -111,32 +124,79 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
   const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const stickRef = useRef(true)
+  // endRef: the next disconnect ends the conversation (New chat, close).
+  // freshRef: the next connect starts a new one instead of restoring.
+  // queuedRef: a message written while paused, sent once the pane is back.
+  const endRef = useRef(false)
+  const freshRef = useRef(false)
+  const queuedRef = useRef(null)
+  const sendRef = useRef(null)
+  const statusRef = useRef(status)
+  statusRef.current = status
 
-  // One connection per agent and attempt; "New chat" bumps the attempt.
+  // One connection per agent and attempt.
   useEffect(() => {
     let cancelled = false
+    let busy = false
+    endRef.current = false
+    const fresh = freshRef.current
+    freshRef.current = false
+    let record = paneRecord(paneKey)
+    if (fresh || record?.agentId !== agent.id) { record = null; savePaneRecord(paneKey, null) }
     setStatus('connecting')
     setEntries([])
     setPermission(null)
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${proto}//${window.location.host}/api/agents/${agent.id}/acp?token=${encodeURIComponent(getToken() || '')}`)
+    const resume = record?.bridgeKey ? `&resume=${encodeURIComponent(record.bridgeKey)}` : ''
+    const socket = new WebSocket(`${proto}//${window.location.host}/api/agents/${agent.id}/acp?token=${encodeURIComponent(getToken() || '')}${resume}`)
     const client = new AcpClient(socket, {
       onUpdate: (update) => { if (!cancelled) setEntries(prev => applyUpdate(prev, update)) },
       onPermission: (request) => new Promise(resolve => {
         if (cancelled) return resolve(null)
         setPermission({ request, resolve: (optionId) => { setPermission(null); resolve(optionId) } })
       }),
-      onClose: () => { if (!cancelled) setStatus(s => (s === 'error' ? s : 'closed')) }
+      onPanel: (panel) => {
+        if (cancelled) return
+        if (panel.type === 'session') busy = !!panel.busy
+        if (panel.type === 'idle') {
+          setEntries(prev => [...prev.map(e => ({ ...e, closed: true })), { kind: 'notice', level: 'info', text: panel.message }])
+          setStatus('paused')
+        }
+        if (panel.type === 'turn_done') {
+          setEntries(prev => prev.map(e => ({ ...e, closed: true })))
+          setStatus('ready')
+        }
+      },
+      onClose: () => { if (!cancelled) setStatus(s => (s === 'error' || s === 'paused' ? s : 'closed')) }
     })
     clientRef.current = client
     socket.onopen = async () => {
       try {
         await client.initialize()
-        const session = await client.newSession(cwd || '/')
+        let sessionId = null
+        if (record?.sessionId && client.canLoad()) {
+          try {
+            const loaded = await client.loadSession(record.sessionId, cwd || '/')
+            sessionId = record.sessionId
+            setModel(loaded?.models?.currentModelId || '')
+          } catch (err) {
+            if (cancelled) return
+            setEntries(prev => [...prev, { kind: 'notice', level: 'info', text: `The earlier conversation could not be restored (${err.message}) — this is a new one.` }])
+          }
+        }
+        if (!sessionId) {
+          const session = await client.newSession(cwd || '/')
+          sessionId = session.sessionId
+          setModel(session?.models?.currentModelId || '')
+        }
         if (cancelled) return
-        sessionRef.current = session.sessionId
-        setModel(session?.models?.currentModelId || '')
-        setStatus('ready')
+        sessionRef.current = sessionId
+        savePaneRecord(paneKey, { agentId: agent.id, sessionId, bridgeKey: client.bridgeKey })
+        setEntries(prev => prev.map(e => ({ ...e, closed: true })))
+        setStatus(busy ? 'working' : 'ready')
+        const queued = queuedRef.current
+        queuedRef.current = null
+        if (queued && !busy) sendRef.current?.(queued)
       } catch (err) {
         if (cancelled) return
         setEntries(prev => [...prev, { kind: 'notice', level: 'error', text: `Could not start the chat: ${err.message}` }])
@@ -146,14 +206,22 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
     socket.onerror = () => { if (!cancelled) setStatus('error') }
     return () => {
       cancelled = true
-      client.close()
+      if (endRef.current) client.end()
+      else client.close()
     }
   }, [agent.id, attempt])
 
   const send = useCallback(async (text) => {
     const message = (text ?? '').trim()
+    if (!message) return false
+    // Paused for being idle: reconnect, restore, then send.
+    if (statusRef.current === 'paused') {
+      queuedRef.current = message
+      setAttempt(a => a + 1)
+      return true
+    }
     const client = clientRef.current
-    if (!message || !client || !sessionRef.current) return false
+    if (!client || !sessionRef.current) return false
     stickRef.current = true
     setEntries(prev => [...prev.map(e => ({ ...e, closed: true })), { kind: 'user', text: message, closed: true }])
     setStatus('working')
@@ -168,16 +236,21 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
       })
       setStatus('ready')
     } catch (err) {
-      setEntries(prev => [...prev, { kind: 'notice', level: 'error', text: err.message }])
-      setStatus(clientRef.current ? 'ready' : 'error')
+      // A pane paused or closed mid-turn says so itself.
+      if (statusRef.current !== 'paused') setEntries(prev => [...prev, { kind: 'notice', level: 'error', text: err.message }])
+      setStatus(s => (s === 'paused' ? s : clientRef.current ? 'ready' : 'error'))
     }
     return true
   }, [])
+  sendRef.current = send
+
+  const newChat = () => { endRef.current = true; freshRef.current = true; setAttempt(a => a + 1) }
+  const closePane = () => { endRef.current = true; savePaneRecord(paneKey, null); onClose() }
 
   // Registered while the pane has a live session, with whether it can take a
   // message now — so "Send to all" counts the panes that are open, not just
   // the ones idle this second (it read "Send to all 0" while both answered).
-  useEffect(() => registerSender(paneKey, (status === 'ready' || status === 'working') ? { send, ready: status === 'ready' } : null), [status, send, paneKey])
+  useEffect(() => registerSender(paneKey, (status === 'ready' || status === 'working' || status === 'paused') ? { send, ready: status !== 'working' } : null), [status, send, paneKey])
   useEffect(() => () => registerSender(paneKey, null), [paneKey])
 
   // Follow the conversation unless the reader has scrolled up.
@@ -193,13 +266,13 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
 
   const submit = async (e) => {
     e?.preventDefault()
-    if (status !== 'ready' || !input.trim()) return
+    if ((status !== 'ready' && status !== 'paused') || !input.trim()) return
     const text = input
     setInput('')
     await send(text)
   }
 
-  const statusLabel = { connecting: 'Connecting…', ready: 'Ready', working: 'Working…', closed: 'Disconnected', error: 'Error' }[status]
+  const statusLabel = { connecting: 'Connecting…', ready: 'Ready', working: 'Working…', paused: 'Paused', closed: 'Disconnected', error: 'Error' }[status]
 
   return (
     <section className={`chat-pane ${compact ? 'chat-pane-compact' : ''}`}>
@@ -209,8 +282,8 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
         <span className="chat-pane-meta">{model || agent.runtime}</span>
         <span className="chat-pane-status">{statusLabel}</span>
         <span className="chat-pane-actions">
-          <button type="button" title="New chat" aria-label="New chat" onClick={() => setAttempt(a => a + 1)}><RotateCcw size={14} /></button>
-          <button type="button" title="Close" aria-label="Close" onClick={onClose}><X size={15} /></button>
+          <button type="button" title="New chat" aria-label="New chat" onClick={newChat}><RotateCcw size={14} /></button>
+          <button type="button" title="Close" aria-label="Close" onClick={closePane}><X size={15} /></button>
         </span>
       </header>
 
@@ -246,15 +319,15 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
         <textarea
           value={input}
           rows={1}
-          placeholder={status === 'ready' ? `Message ${agent.name}…` : statusLabel}
-          disabled={status !== 'ready'}
+          placeholder={status === 'ready' || status === 'paused' ? `Message ${agent.name}…` : statusLabel}
+          disabled={status !== 'ready' && status !== 'paused'}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
         />
         {status === 'working'
           ? <button type="button" className="chat-send chat-stop" title="Stop" aria-label="Stop"
               onClick={() => sessionRef.current && clientRef.current?.cancel(sessionRef.current)}><Square size={14} /></button>
-          : <button type="submit" className="chat-send" title="Send" aria-label="Send" disabled={status !== 'ready' || !input.trim()}><Send size={15} /></button>}
+          : <button type="submit" className="chat-send" title="Send" aria-label="Send" disabled={(status !== 'ready' && status !== 'paused') || !input.trim()}><Send size={15} /></button>}
       </form>
     </section>
   )

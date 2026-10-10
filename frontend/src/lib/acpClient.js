@@ -14,13 +14,18 @@
 export const PROTOCOL_VERSION = 1
 
 export class AcpClient {
-  constructor(socket, { onUpdate, onPermission, onClose } = {}) {
+  constructor(socket, { onUpdate, onPermission, onClose, onPanel } = {}) {
     this.socket = socket
     this.nextId = 1
     this.pending = new Map()
     this.onUpdate = onUpdate || (() => {})
     this.onPermission = onPermission || (async () => null)
     this.onClose = onClose || (() => {})
+    this.onPanel = onPanel || (() => {})
+    // The bridge's key for this session's process: a pane that reconnects
+    // with it (?resume=) gets the same process back if it is still running.
+    this.bridgeKey = null
+    this.resumed = false
     this.agentInfo = null
     this.authMethods = []
     socket.onmessage = (event) => this._receive(event.data)
@@ -97,10 +102,16 @@ export class AcpClient {
   }
 
   _panelMessage(panel) {
-    // The bridge's own notes, e.g. that the agent's process ended.
+    // The bridge's own notes: which process this is, that it ended, that it
+    // was paused for being idle, or that a turn from before a reload is done.
+    if (panel.type === 'session') {
+      this.bridgeKey = panel.key || null
+      this.resumed = !!panel.resumed
+    }
     if (panel.type === 'error' || panel.type === 'exit') {
       this.onUpdate({ sessionUpdate: 'panel_notice', level: panel.type, text: panel.message }, null)
     }
+    this.onPanel(panel)
   }
 
   async initialize() {
@@ -131,6 +142,16 @@ export class AcpClient {
     }
   }
 
+  // An earlier conversation, by id. The agent replays it as session/update
+  // notifications before it answers, so the pane fills in as it would have.
+  loadSession(sessionId, cwd) {
+    return this.request('session/load', { sessionId, cwd, mcpServers: [] }, { timeoutMs: 120000 })
+  }
+
+  canLoad() {
+    return !!this.agentCapabilities?.loadSession
+  }
+
   prompt(sessionId, text) {
     return this.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] })
   }
@@ -139,8 +160,16 @@ export class AcpClient {
     this.notify('session/cancel', { sessionId })
   }
 
+  // Leaving without ending: the bridge keeps the process a while for a pane
+  // that comes back (a reload, another page and back).
   close() {
     try { this.socket.close() } catch (_) {}
+  }
+
+  // The conversation is over (New chat, pane closed): the process ends now.
+  end() {
+    try { this.socket.send('{"panel":"end"}') } catch (_) {}
+    this.close()
   }
 }
 
