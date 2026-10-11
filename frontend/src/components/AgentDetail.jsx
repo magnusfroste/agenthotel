@@ -33,6 +33,41 @@ const TABS = [
   { id: 'settings', label: 'Settings', icon: Globe }
 ]
 
+// The agent's name, changed on its own: nothing that runs is keyed to it, so
+// it saves at once, without the redeploy the settings below need.
+function AgentRename({ agent, onRenamed }) {
+  const toast = useToast()
+  const [name, setName] = useState(agent.name)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => setName(agent.name), [agent.name])
+  const cleaned = name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '')
+  async function rename() {
+    setSaving(true)
+    try {
+      await authFetchOk(`/api/agents/${agent.id}/rename`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cleaned })
+      })
+      toast.success(`Renamed to ${cleaned}`)
+      await onRenamed()
+    } catch (err) { toast.error('Rename failed: ' + err.message) }
+    setSaving(false)
+  }
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Name</label>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.3rem' }}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 1 }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && cleaned && cleaned !== agent.name) rename() }} />
+        <button className="btn btn-secondary" disabled={saving || !cleaned || cleaned === agent.name} onClick={rename}>{saving ? 'Renaming…' : 'Rename'}</button>
+      </div>
+      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+        {cleaned && cleaned !== name.trim() ? <>Saved as <code>{cleaned}</code> — lowercase letters, digits and hyphens. </> : null}
+        Only what the panel shows changes; the container, data and address stay as they are, and nothing restarts.
+      </div>
+    </div>
+  )
+}
+
 function AgentDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -460,6 +495,7 @@ function AgentDetail() {
       {/* Settings */}
       {tab === 'settings' && (
         <div style={{ maxWidth: '560px' }}>
+          <AgentRename agent={agent} onRenamed={fetchAgent} />
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Domain (subdomain or FQDN)</label>
             <input type="text" value={settings.domain} placeholder="myapp.froste.eu" onChange={(e) => setSettings({ ...settings, domain: e.target.value })} style={{ width: '100%', marginTop: '0.3rem' }} />

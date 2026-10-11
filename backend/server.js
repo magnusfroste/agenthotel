@@ -2344,6 +2344,26 @@ async function removeUnownedRoutes() {
   return removed;
 }
 
+// Rename an agent. The name is what the panel, Chat and MCP show; containers,
+// volumes, routes and compose projects are keyed to the agent's id, so a
+// rename touches nothing that runs and needs no redeploy. Same rule as at
+// create: lowercase letters, digits and hyphens, unique.
+app.post('/api/agents/:id/rename', requireAuth, (req, res) => {
+  const agent = db.prepare('SELECT id, name FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const name = String(req.body?.name || '').trim();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || name.length > 63) {
+    return res.status(400).json({ error: 'Invalid name: use lowercase letters, digits and hyphens, starting with a letter or digit' });
+  }
+  if (name === agent.name) return res.json({ id: agent.id, name });
+  if (db.prepare('SELECT id FROM agents WHERE name = ? AND id != ?').get(name, agent.id)) {
+    return res.status(409).json({ error: `An agent named ${name} already exists` });
+  }
+  db.prepare('UPDATE agents SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(name, agent.id);
+  logEvent('agent.rename', agent.id, `Renamed ${agent.name} to ${name}`);
+  res.json({ id: agent.id, name });
+});
+
 app.put('/api/agents/:id', requireAuth, async (req, res) => {
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
