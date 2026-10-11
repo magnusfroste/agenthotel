@@ -29,7 +29,17 @@ export class AcpClient {
     this.agentInfo = null
     this.authMethods = []
     socket.onmessage = (event) => this._receive(event.data)
+    // A keepalive the bridge drops: Cloudflare closes a WebSocket idle for
+    // 100 s, and a pane waiting for its next question is exactly that.
+    this.keepalive = setInterval(() => {
+      if (socket.readyState === undefined || socket.readyState === 1) {
+        try { socket.send('{"panel":"ping"}') } catch (_) {}
+      }
+    }, 30000)
+    // In Node (the tests) a pending interval would keep the process alive.
+    this.keepalive?.unref?.()
     socket.onclose = () => {
+      clearInterval(this.keepalive)
       for (const { reject } of this.pending.values()) reject(new Error('The connection to the agent closed'))
       this.pending.clear()
       this.onClose()
@@ -163,6 +173,7 @@ export class AcpClient {
   // Leaving without ending: the bridge keeps the process a while for a pane
   // that comes back (a reload, another page and back).
   close() {
+    clearInterval(this.keepalive)
     try { this.socket.close() } catch (_) {}
   }
 

@@ -131,6 +131,9 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
   const freshRef = useRef(false)
   const queuedRef = useRef(null)
   const sendRef = useRef(null)
+  // Reconnects in a row without reaching Ready; reset when the pane is ready.
+  const retriesRef = useRef(0)
+  const reconnectingRef = useRef(false)
   const statusRef = useRef(status)
   statusRef.current = status
 
@@ -158,16 +161,36 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
       onPanel: (panel) => {
         if (cancelled) return
         if (panel.type === 'session') busy = !!panel.busy
+        // Set on the ref at once: the socket closes right after these, and
+        // onClose must not mistake a pause or a refusal for a dropped line.
         if (panel.type === 'idle') {
+          statusRef.current = 'paused'
           setEntries(prev => [...prev.map(e => ({ ...e, closed: true })), { kind: 'notice', level: 'info', text: panel.message }])
           setStatus('paused')
+        }
+        if (panel.type === 'error') {
+          statusRef.current = 'error'
+          setStatus('error')
         }
         if (panel.type === 'turn_done') {
           setEntries(prev => prev.map(e => ({ ...e, closed: true })))
           setStatus('ready')
         }
       },
-      onClose: () => { if (!cancelled) setStatus(s => (s === 'error' || s === 'paused' ? s : 'closed')) }
+      onClose: () => {
+        if (cancelled) return
+        // A dropped connection (a proxy timeout, a network blip, the agent's
+        // process restarting) comes back by itself: the bridge kept the
+        // process, or the conversation is restored in a new one.
+        if (statusRef.current !== 'error' && statusRef.current !== 'paused' && retriesRef.current < 3) {
+          retriesRef.current += 1
+          reconnectingRef.current = true
+          setStatus('connecting')
+          setTimeout(() => { if (!cancelled) setAttempt(a => a + 1) }, 1000 * retriesRef.current)
+          return
+        }
+        setStatus(s => (s === 'error' || s === 'paused' ? s : 'closed'))
+      }
     })
     clientRef.current = client
     socket.onopen = async () => {
@@ -193,6 +216,8 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
         sessionRef.current = sessionId
         savePaneRecord(paneKey, { agentId: agent.id, sessionId, bridgeKey: client.bridgeKey })
         setEntries(prev => prev.map(e => ({ ...e, closed: true })))
+        retriesRef.current = 0
+        reconnectingRef.current = false
         setStatus(busy ? 'working' : 'ready')
         const queued = queuedRef.current
         queuedRef.current = null
@@ -237,8 +262,11 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
       setStatus('ready')
     } catch (err) {
       // A pane paused or closed mid-turn says so itself.
-      if (statusRef.current !== 'paused') setEntries(prev => [...prev, { kind: 'notice', level: 'error', text: err.message }])
-      setStatus(s => (s === 'paused' ? s : clientRef.current ? 'ready' : 'error'))
+      // A pane that was paused or is reconnecting says so itself; the reply
+      // in progress is restored with the conversation.
+      if (statusRef.current === 'paused' || reconnectingRef.current) return true
+      setEntries(prev => [...prev, { kind: 'notice', level: 'error', text: err.message }])
+      setStatus(clientRef.current ? 'ready' : 'error')
     }
     return true
   }, [])

@@ -2644,8 +2644,14 @@ app.ws('/api/agents/:id/acp', (ws, req) => {
   let socketGone = false;
   let ended = false;
   const waiting = [];
+  // Cloudflare closes a WebSocket that carries nothing for 100 s (measured:
+  // 1006 after ~2 minutes), which is any chat pane waiting for its next
+  // question. Pings keep it open; the browser sends its own keepalive too.
+  const keepalive = setInterval(() => { try { ws.ping(); } catch (_) {} }, 25000);
+  ws.on('close', () => clearInterval(keepalive));
   ws.on('message', msg => {
     const text = msg.toString();
+    if (text === '{"panel":"ping"}') return;
     if (text === '{"panel":"end"}') {
       ended = true;
       if (session) session.close();

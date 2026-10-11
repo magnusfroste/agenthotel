@@ -102,7 +102,10 @@ session's key (`?resume=`, from the bridge's `{"panel":{"type":"session"}}`
 message) gets the same process back; a reply that finished meanwhile is
 reported with `turn_done`. Past that the pane restores the conversation in a
 new process with ACP `session/load` — each pane remembers `{agentId,
-sessionId, bridgeKey}` in localStorage `chat.sessions`. An attached session
+sessionId, bridgeKey}` in localStorage `chat.sessions`. Cloudflare closes a WebSocket idle for 100 s, so the
+backend pings every 25 s and the browser sends `{"panel":"ping"}` every 30 s
+(dropped, not counted as activity); a pane whose socket drops anyway
+reconnects by itself, up to three times. An attached session
 idle for 30 minutes with no turn running is ended (`idle`), and the pane picks
 up where it left off when you next write. New chat and closing the pane send
 `{"panel":"end"}`, which ends the process at once: stdin closes, then SIGTERM by
