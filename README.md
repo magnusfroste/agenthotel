@@ -4,6 +4,18 @@
 
 AgentHotel turns one VPS into a hotel for AI agents. Each guest gets its own room — an isolated container with its own memory and CPU allowance, its own domain with automatic HTTPS, and persistent state that survives restarts, redeploys and nights. You run the front desk: a web UI, a live view of every room, and an MCP server so your own AI tools can check guests in and out for you.
 
+**Any agent, on any model.** Hermes Agent, OpenClaw or any other open-source harness, each always on at its own address. Point them at a frontier model, at your own model on your own hardware, or at European models shared by the [GarageAI](https://garageai.eu) community — and ask several of them the same question at once in **Chat**.
+
+[![Two agents on two different models answering the same question in AgentHotel's Chat](docs/media/demo-chat.jpg)](https://reel.froste.eu/watch/eadb09c7f7954004a620e12e24794526)
+
+<sub>▶ [Watch the 45-second demo](https://reel.froste.eu/watch/eadb09c7f7954004a620e12e24794526) — directed end to end by an agent on this hotel, with [reel-studio](https://github.com/magnusfroste/reel-studio), an agent tool that lives here too.</sub>
+
+**Try it** on a fresh Ubuntu/Debian VPS, as root ([details](#quick-start)):
+
+```bash
+git clone https://github.com/magnusfroste/agenthotel.git && cd agenthotel && ./install.sh
+```
+
 ## Why a hotel?
 
 Because that is what running several agents actually is. The metaphor is not decoration — it is how the panel is built:
@@ -22,6 +34,12 @@ Because that is what running several agents actually is. The metaphor is not dec
 Running AI agents on your own server otherwise means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentHotel removes all of that.
 
 ## Features
+
+### Chat with your agents
+- **Up to four at once** — one, two or four panes, each a live session with an agent in its own container, on whatever model that agent runs
+- **Ask them all the same thing** — one message to every open agent, answers side by side: the quickest way to compare two models, or two harnesses, on a real question
+- **Agent Client Protocol** — panes speak [ACP](https://agentclientprotocol.com) to `hermes acp` and `openclaw acp`: streamed answers, thinking, tool calls and plans as they happen, and permission requests as buttons
+- **Survives a reload** — a closed tab or a network blip detaches the session instead of ending it; the pane comes back to the same process, or restores the conversation in a new one. An idle chat pauses after 30 minutes and picks up where it left off
 
 ### Agent Management
 - **Is it current?** — each agent's page shows the runtime version it runs, and says when the panel has a newer build (redeploy) or a newer one is published upstream (rebuild)
@@ -58,9 +76,10 @@ Running AI agents on your own server otherwise means hand-rolled Docker commands
 - **Cloudflare Tunnel (optional)** — no open ports, no DNS record pointing here and no local certificate; works behind NAT. One origin for every hostname, since Caddy still routes on the Host header ([manual](docs/MANUAL.md#cloudflare-tunnel))
 
 ### Providers & Models
+- **Any model** — a frontier model through a built-in provider, your own model on your own hardware, or a shared endpoint such as [GarageAI](https://garageai.eu), where the community runs European open models on its own GPUs. Each agent picks its `provider/model`, and switching is routine
 - **Add your own model** — paste the address of a vLLM, llama.cpp, Ollama or LM Studio server; the panel lists what it serves with each model's context window, flags those too small for Hermes, and shows the exact `provider/model` an agent should write. Local-server context windows are read correctly, including vLLM's `max_model_len`
 - **Built-in providers need only a key** — OpenAI, OpenRouter, Anthropic, Gemini, DeepSeek, Groq, xAI, Mistral and Z.ai are known by name: pick one, paste the key, and the panel fetches what it serves. Only your own endpoints take an address
-- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HERTZNER_API_KEY` / `HERTZNER_BASE_URL` / `HERTZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
+- **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HETZNER_API_KEY` / `HETZNER_BASE_URL` / `HETZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
 - **Provider testing** — list available models and test them per provider, right from the UI
 - **Default model for new agents** — pick one `provider/model` on the Providers page and every agent deployed without a model gets it; leave it on Automatic and the panel chooses one that works
 - **Private models** — point the whole fleet at your own hardware with one setting; the panel probes each provider's models, declines any too small for a runtime to run, and says so rather than falling back to a hosted API without telling you
@@ -71,6 +90,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
 - **Resource guardrails** — the panel can never be frozen out by its own fleet: every agent gets a CPU cap (default 1 core, `CPU_LIMIT`) and RAM cap (default 1024 MB, `MEMORY_LIMIT_MB`), low cpu-shares (256) and a high OOM-kill priority, while the panel containers run at 2048 shares with `oom_score_adj: -500`. Shares only matter under saturation, so agents still use all idle capacity — but the panel always stays responsive, no reboot needed. Host-wide defaults via `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB`
 - **Serialized deploys** — one build/deploy at a time, so concurrent deploys can't saturate the host
+- **Deploy log** — every create, redeploy and settings change is kept with its full log (build output, pulls, container start, the error if it failed), followed live on the agent's **Deployments** tab and readable over MCP; secrets are masked
 - **Routes that heal** — Caddy holds its routes in memory, and a compose stack's containers come back on their own networks when recreated. Both are re-checked every minute: a present route over a lost network is a 502 that no route check would catch
 - **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
 - **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
@@ -107,7 +127,9 @@ That is the whole install. `install.sh` installs Docker, Git and lsof, creates a
 commit baked in, and starts everything — no separate `docker compose up`
 afterwards, and no parameters.
 
-Open `http://your-server-ip`, create your admin account, set your panel domain —
+Open the link `install.sh` prints (`http://your-server-ip/?setup=<code>` — the
+one-time setup code keeps a stranger from claiming a fresh panel; `agenthotel
+setup-code` shows it again), create your admin account, set your panel domain —
 and deploy your first agent.
 
 Requirements: ports 80/443 free, and DNS as above. Docker is installed for you
