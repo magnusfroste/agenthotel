@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk, setToken } from '../lib/auth'
 import { useToast } from './Toast'
+import NetBirdCard from './NetBirdCard'
 import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers, Copy, Network } from 'lucide-react'
 import SettingCard from './SettingCard'
 import InstanceBackup from './InstanceBackup'
@@ -569,7 +570,7 @@ sysctl -w vm.swappiness=10`}</pre>
           </div>
 
           {tunnelStatus.logs && (
-            <pre className="log-tail" style={{ marginTop: '1rem', maxHeight: '180px', overflow: 'auto' }}>
+            <pre data-secret="" className="log-tail" style={{ marginTop: '1rem', maxHeight: '180px', overflow: 'auto' }}>
               {tunnelStatus.logs}
             </pre>
           )}
@@ -582,6 +583,8 @@ sysctl -w vm.swappiness=10`}</pre>
           </p>
         </section>
       )}
+
+      <NetBirdCard />
 
       {mcpStatus && (
         <section className="settings-section">

@@ -38,6 +38,16 @@
 const dns = require('dns').promises;
 
 const proxies = { caddy: new Set(), tunnel: new Set() };
+// NetBird's reverse proxy reaches Caddy from the mesh range (100.64.0.0/10)
+// and says in X-Forwarded-For who it is serving. Believed only while NetBird
+// is switched on — then the only senders in that range are peers of the
+// hotel's own mesh.
+let meshTrusted = false;
+function setMeshTrusted(on) { meshTrusted = !!on; }
+function inMeshRange(ip) {
+  const m = /^100\.(\d{1,3})\./.exec(ip);
+  return !!m && Number(m[1]) >= 64 && Number(m[1]) <= 127;
+}
 
 function bare(ip) {
   return String(ip || '').trim().replace(/^::ffff:/, '');
@@ -66,6 +76,8 @@ function clientIp(req) {
   const hops = typeof fwd === 'string' ? fwd.split(',').map(bare).filter(Boolean) : [];
   const seen = hops.length ? hops[hops.length - 1] : (peer || 'unknown');
   if (proxies.tunnel.has(seen)) return cfAddress(req) || seen;
+  // The NetBird proxy is the hop Caddy saw; the hop before it is the visitor.
+  if (meshTrusted && inMeshRange(seen) && hops.length >= 2) return hops[hops.length - 2];
   return seen;
 }
 
@@ -129,4 +141,4 @@ setInterval(() => {
   for (const [key, entry] of windows) if (entry.resetAt <= now) windows.delete(key);
 }, 5 * 60 * 1000).unref?.();
 
-module.exports = { clientIp, hit, reset, setProxies, refreshProxies };
+module.exports = { clientIp, hit, reset, setProxies, refreshProxies, setMeshTrusted };

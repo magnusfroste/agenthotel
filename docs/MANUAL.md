@@ -330,6 +330,55 @@ and gets nothing back.
   hostname, so the tunnel must pass the public name through rather than an
   internal one.
 
+## NetBird
+
+[NetBird](https://netbird.io) (NetBird GmbH, Berlin; open source) is a
+WireGuard mesh, and the European alternative to a Cloudflare Tunnel. The hotel
+joins your NetBird network as a peer, which gives you:
+
+- **A front door with no open ports.** NetBird's reverse proxy (NetBird v0.65+,
+  in NetBird Cloud and self-hosted) publishes a public hostname — a free
+  `*.proxy.netbird.io` name or your own domain by CNAME — with automatic TLS,
+  and carries the traffic through the mesh to the hotel.
+- **A private way in.** The panel and every guest answer at the hotel's mesh
+  address from any device on your NetBird network.
+- **A private way out.** Agents can reach what is on the mesh — an internal
+  database, a model server — through the hotel's peer, under NetBird's access
+  policies.
+
+Enable it under **System → NetBird**: paste a setup key and press *Join the
+mesh*. NetBird Cloud is the default (its free plan covers 5 users and 100
+machines); tick *My own NetBird server* to give a self-hosted management URL.
+The panel runs the NetBird client as a container it manages — nothing to
+install on the host — in the host's network namespace, so the hotel's mesh
+address is the host itself. Its identity is kept in the `agenthotel-netbird`
+volume: a restart is the same peer, and the setup key is used once. A different
+key or management server starts a new peer; *Leave and forget* removes the key
+and the identity.
+
+### Publishing a guest
+
+In NetBird, add a **Reverse Proxy** service per hostname — the panel's and each
+guest's — with this hotel's peer as the target, port **80**, HTTP. Caddy routes
+on the `Host` header exactly as behind a tunnel, so every service points at the
+same target. As with a tunnel, the guest needs its domain set in the panel —
+that is what creates its route.
+
+The proxy terminates TLS and reaches Caddy from the mesh range
+(`100.64.0.0/10`), which Caddy trusts as a proxy, so guests receive
+`X-Forwarded-Proto: https`. While NetBird is on, the login throttle reads the
+visitor's address from the proxy's `X-Forwarded-For`.
+
+### Things that bite
+
+- **Use a one-off setup key.** A reusable key that leaks lets anyone join your
+  mesh; the panel needs it only once.
+- **The reverse proxy is beta** in NetBird as of October 2026. A Cloudflare
+  Tunnel and NetBird can run side by side while you move hostnames over.
+- **Pick one path per hostname**, as with a tunnel: an A record straight at the
+  host and a NetBird CNAME both work, and running both hides which one a broken
+  request took. Once every hostname is on NetBird, 80 and 443 can be closed.
+
 ## Resource Guardrails
 
 Agents can never starve the panel or freeze the host:

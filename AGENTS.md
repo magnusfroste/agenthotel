@@ -144,6 +144,10 @@ Consequence worth knowing: a forgotten session keeps running. That is the point,
 but a runaway command will keep consuming the agent's CPU allowance with nobody
 attached; the resource caps bound it and the health check surfaces the fallout.
 
+## NetBird
+
+The hotel can join a NetBird mesh (`backend/lib/netbird.js`, System → NetBird): the European alternative to the Cloudflare Tunnel, and a private network. The panel runs `netbirdio/netbird` as `agenthotel-netbird`, like `cloudflared`, but with `NetworkMode: host` (NET_ADMIN, SYS_ADMIN, SYS_RESOURCE, `/dev/net/tun`), so the hotel's mesh address is the host and NetBird reverse-proxy services point at this peer, port 80 — one origin, Caddy routes on Host. Identity lives in the `agenthotel-netbird` volume (`/var/lib/netbird`); a new key or management URL starts a fresh peer. NetBird Cloud is the default (`https://api.netbird.io:443`, no `NB_MANAGEMENT_URL`); self-hosted sets it. Settings: `netbird_setup_key` (secret, shown as its last four), `netbird_management_url`, `netbird_hostname`. The mesh range `100.64.0.0/10` is in Caddy's `trusted_proxies` (`docker/caddy.json`, and patched in at start), and while NetBird is configured `rateLimit.setMeshTrusted(true)` makes the throttle take the hop before a mesh-range proxy in `X-Forwarded-For`.
+
 ## Install Script
 
 `install.sh` installs Docker via official apt repository (not `curl | sh`), following Easypanel's pattern. It performs pre-flight checks (root, ports 80/443 free, not in container). **No parameters required** - just run as root.

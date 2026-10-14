@@ -4066,6 +4066,113 @@ app.delete('/api/system/tunnel', requireAuth, async (req, res) => {
   }
 });
 
+// NetBird: the hotel as a peer on a WireGuard mesh (lib/netbird.js) — a front
+// door through NetBird's reverse proxy, NetBird Cloud by default or
+// self-hosted, and a private way in for the operator. The setup key is stored
+// like any other secret and never returned in full.
+const netbird = require('./lib/netbird');
+const { setMeshTrusted } = require('./lib/rateLimit');
+
+// NetBird's reverse proxy reaches Caddy from the mesh range, so Caddy must
+// believe its X-Forwarded-* headers (guests then see https), and the throttle
+// must read the visitor's address from them. Applied at start and whenever
+// NetBird is switched on; the range is also in docker/caddy.json.
+async function trustMeshProxies() {
+  const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+  try {
+    const res = await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/trusted_proxies`);
+    const current = res.ok ? await res.json() : null;
+    const ranges = current?.ranges || ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+    if (!ranges.includes(netbird.MESH_RANGE)) {
+      await caddyFetch(`${caddyApiUrl}/config/apps/http/servers/srv0/trusted_proxies`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'static', ranges: [...ranges, netbird.MESH_RANGE] })
+      });
+    }
+  } catch (err) {
+    console.warn(`[NetBird] Could not add the mesh range to Caddy's trusted proxies: ${err.message}`);
+  }
+}
+{
+  const on = !!db.prepare("SELECT value FROM settings WHERE key = 'netbird_setup_key'").get()?.value;
+  setMeshTrusted(on);
+  if (on) setTimeout(() => trustMeshProxies(), 5000).unref?.();
+}
+
+app.get('/api/system/netbird', requireAuth, async (req, res) => {
+  try {
+    const key = db.prepare("SELECT value FROM settings WHERE key = 'netbird_setup_key'").get()?.value;
+    const mgmt = db.prepare("SELECT value FROM settings WHERE key = 'netbird_management_url'").get()?.value || null;
+    const name = db.prepare("SELECT value FROM settings WHERE key = 'netbird_hostname'").get()?.value || null;
+    const state = await netbird.status(docker);
+    res.json({
+      ...state,
+      configured: !!key,
+      setupKey: key ? '***' + key.slice(-4) : null,
+      managementUrl: mgmt || netbird.CLOUD_MANAGEMENT_URL,
+      selfHosted: !!mgmt && mgmt !== netbird.CLOUD_MANAGEMENT_URL,
+      hostname: name,
+      originPort: netbird.ORIGIN_PORT,
+      logs: state.installed ? await netbird.logs(docker, 20) : ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/netbird', requireAuth, async (req, res) => {
+  try {
+    const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || null;
+    const storedKey = get('netbird_setup_key');
+    const storedMgmt = get('netbird_management_url');
+    const setupKey = (req.body?.setupKey || '').trim() || storedKey;
+    if (!setupKey) return res.status(400).json({ error: 'A NetBird setup key is required' });
+    if (setupKey.length < 20) return res.status(400).json({ error: 'That does not look like a NetBird setup key' });
+    let managementUrl;
+    try {
+      managementUrl = req.body && 'managementUrl' in req.body
+        ? netbird.normalizeManagementUrl(req.body.managementUrl)
+        : (storedMgmt || netbird.CLOUD_MANAGEMENT_URL);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    const panelDomain = get('panel_domain');
+    const hostname = (req.body?.hostname || '').trim() || get('netbird_hostname') || (panelDomain ? panelDomain.split('.')[0] : 'agenthotel');
+    // A different key or management server is a different peer.
+    const fresh = !!storedKey && (setupKey !== storedKey || managementUrl !== (storedMgmt || netbird.CLOUD_MANAGEMENT_URL));
+
+    const result = await netbird.start(docker, { setupKey, managementUrl, hostname, fresh });
+    const put = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    put.run('netbird_setup_key', setupKey);
+    put.run('netbird_management_url', managementUrl);
+    put.run('netbird_hostname', result.hostname);
+    setMeshTrusted(true);
+    await trustMeshProxies();
+    logEvent('netbird.started', null, `NetBird started as ${result.hostname} on ${result.managementUrl}`);
+    res.json({ running: true, ...result });
+  } catch (err) {
+    logEvent('netbird.error', null, `NetBird failed to start: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/system/netbird', requireAuth, async (req, res) => {
+  try {
+    await netbird.remove(docker);
+    if (req.query?.forget) {
+      for (const k of ['netbird_setup_key', 'netbird_management_url', 'netbird_hostname']) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(k);
+      }
+      try { await docker.getVolume(netbird.VOLUME).remove(); } catch (_) {}
+      setMeshTrusted(false);
+    }
+    logEvent('netbird.stopped', null, req.query?.forget ? 'NetBird stopped and forgotten' : 'NetBird stopped');
+    res.json({ running: false, forgotten: !!req.query?.forget });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/system/mcp-status', requireAuth, (req, res) => {
   try {
     const fs = require('fs');
