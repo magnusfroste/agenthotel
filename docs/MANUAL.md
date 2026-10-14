@@ -338,10 +338,12 @@ joins your NetBird network as a peer, which gives you:
 
 - **A front door with no open ports.** NetBird's reverse proxy (NetBird v0.65+,
   in NetBird Cloud and self-hosted) publishes a public hostname — a free
-  `*.proxy.netbird.io` name or your own domain by CNAME — with automatic TLS,
+  name under NetBird's own domain (such as `*.eu1.netbird.services`) or your
+  own domain by CNAME — with automatic TLS,
   and carries the traffic through the mesh to the hotel.
-- **A private way in.** The panel and every guest answer at the hotel's mesh
-  address from any device on your NetBird network.
+- **A private way in.** Any device on your NetBird network reaches the hotel's
+  peer. Caddy answers by name, not by address, so give the panel the hotel's
+  NetBird name (*Also answers on*, below) and open that.
 - **A private way out.** Agents can reach what is on the mesh — an internal
   database, a model server — through the hotel's peer, under NetBird's access
   policies.
@@ -364,6 +366,17 @@ on the `Host` header exactly as behind a tunnel, so every service points at the
 same target. As with a tunnel, the guest needs its domain set in the panel —
 that is what creates its route.
 
+Two settings make it work, and both are easy to miss:
+
+- **Turn on *Pass Host Header*** in the service's *Advanced Settings*. Off (the
+  default), NetBird replaces the hostname with the target's address, Caddy
+  finds no route for it and redirects to `https://100.x.x.x/`, which the
+  visitor cannot reach.
+- **The panel must know the name.** For the panel itself under a NetBird name
+  (`agenthotel.eu1.netbird.services`), add it on **Domains → Panel domain →
+  Also answers on**; the panel keeps its own domain as well. A guest's name is
+  its domain, set on the guest.
+
 The proxy terminates TLS and reaches Caddy from the mesh range
 (`100.64.0.0/10`), which Caddy trusts as a proxy, so guests receive
 `X-Forwarded-Proto: https`. While NetBird is on, the login throttle reads the
@@ -375,6 +388,10 @@ visitor's address from the proxy's `X-Forwarded-For`.
   mesh; the panel needs it only once.
 - **The reverse proxy is beta** in NetBird as of October 2026. A Cloudflare
   Tunnel and NetBird can run side by side while you move hostnames over.
+- **A browser remembers a wrong redirect.** The redirect a service gave before
+  *Pass Host Header* was on is permanent (308), so the browser keeps going to
+  the mesh address after the fix. An incognito window, or clearing the site's
+  data, shows the panel.
 - **Pick one path per hostname**, as with a tunnel: an A record straight at the
   host and a NetBird CNAME both work, and running both hides which one a broken
   request took. Once every hostname is on NetBird, 80 and 443 can be closed.

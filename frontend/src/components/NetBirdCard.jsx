@@ -160,7 +160,9 @@ export default function NetBirdCard() {
         Create a setup key in NetBird (Setup Keys → reusable off, one peer). To publish a
         hostname, add a Reverse Proxy service in NetBird with this peer as the target, port{' '}
         <span className="text-mono">{status.originPort}</span>, HTTP — one per guest, as with
-        a tunnel. The guest needs its domain set here, which is what creates its route.
+        a tunnel — and turn on <strong>Pass Host Header</strong> under Advanced Settings, or
+        Caddy never sees the name. The guest needs its domain set here, which is what creates
+        its route; for the panel itself, add the name on Domains → Also answers on.
       </p>
     </section>
   )
