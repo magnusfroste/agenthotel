@@ -446,6 +446,7 @@ app.put('/api/settings', requireAuth, async (req, res) => {
     let newDomain = null;
     let oldDomain = null;
     let caddyEmailChanged = false;
+    let aliasesChanged = false;
 
     for (const [key, value] of Object.entries(req.body)) {
       if (['admin_email', 'admin_password_hash', 'admin_password_salt', 'auth_token'].includes(key)) continue;
@@ -461,6 +462,11 @@ app.put('/api/settings', requireAuth, async (req, res) => {
         caddyEmailChanged = true;
       }
 
+      if (key === 'panel_domain_aliases') {
+        const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('panel_domain_aliases');
+        if ((existing?.value || '') !== (value || '')) aliasesChanged = true;
+      }
+
       const existing = db.prepare('SELECT key FROM settings WHERE key = ?').get(key);
       if (existing) {
         db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(value, key);
@@ -469,6 +475,10 @@ app.put('/api/settings', requireAuth, async (req, res) => {
       }
     }
 
+    if (!domainChanged && aliasesChanged) {
+      const current = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
+      if (current) await updatePanelCaddyRoute(current, current);
+    }
     if (domainChanged) {
       await updatePanelCaddyRoute(oldDomain, newDomain);
     }
@@ -948,6 +958,21 @@ const PANEL_SECURITY_HEADERS = {
 // How Caddy reaches the backend: the socket when there is one (see listen()).
 const BACKEND_DIAL = process.env.BACKEND_SOCKET ? `unix/${process.env.BACKEND_SOCKET}` : 'backend:8080';
 
+// Every hostname the panel answers on: its domain, plus any aliases — for
+// instance the name NetBird's reverse proxy publishes it under, which keeps
+// the panel reachable on its own domain too. Same hostname rules as a
+// guest's DOMAIN_ALIASES, minus wildcards.
+function panelHostnames(primary) {
+  if (!primary) return [];
+  const raw = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain_aliases'").get()?.value || '';
+  const hosts = [primary];
+  for (const part of String(raw).split(/[,\s]+/)) {
+    const host = part.trim().toLowerCase().replace(/\.$/, '');
+    if (host && !hosts.includes(host) && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) hosts.push(host);
+  }
+  return hosts;
+}
+
 function buildPanelRoute(domain) {
   const route = {
     '@id': 'panel-route',
@@ -980,7 +1005,7 @@ function buildPanelRoute(domain) {
       ]
     }]
   };
-  if (domain) route.match = [{ host: [domain] }];
+  if (domain) route.match = [{ host: panelHostnames(domain) }];
   return route;
 }
 
@@ -3878,7 +3903,7 @@ app.post('/api/system/notify-test', requireAuth, async (req, res) => {
 // Instance export/import (Easypanel-style VPS-to-VPS migration).
 // Exports agents (incl. compose definitions), providers and non-secret
 // settings. Admin credentials and auth_token are NEVER exported.
-const EXPORTABLE_SETTINGS = ['panel_domain', 'caddy_email', 'default_network'];
+const EXPORTABLE_SETTINGS = ['panel_domain', 'panel_domain_aliases', 'caddy_email', 'default_network'];
 
 app.get('/api/system/export', requireAuth, (req, res) => {
   try {
@@ -5166,12 +5191,14 @@ async function initPanelRoute({ quiet = false } = {}) {
       if (panelRoute) {
         const existingDomain = panelRoute.match?.[0]?.host?.[0];
         const expectedDomain = panelDomain?.value || null;
+        // Aliases count too: an upgrade or a restart must not drop them.
+        const sameHosts = JSON.stringify(panelRoute.match?.[0]?.host || []) === JSON.stringify(panelHostnames(expectedDomain));
         
         // A route from before the security headers is replaced like a changed
         // domain would be — otherwise an upgrade never delivers them.
         const json = JSON.stringify(panelRoute);
         const current = json.includes('frame-ancestors') && json.includes(BACKEND_DIAL);
-        if (existingDomain === expectedDomain && current) {
+        if (existingDomain === expectedDomain && sameHosts && current) {
           if (!quiet) console.log(`Panel route already exists for ${existingDomain || 'catch-all'}`);
           return;
         }

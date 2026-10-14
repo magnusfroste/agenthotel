@@ -60,6 +60,8 @@ function Domains() {
       <SettingCard title="Panel domain" icon={Globe} fields={[
         { name: 'panel_domain', label: 'Panel domain', placeholder: 'panel.example.com',
           help: 'The hostname this panel answers on. Changing it rewrites the panel\'s own Caddy route and requests a certificate for the new name — DNS must already point here.' },
+        { name: 'panel_domain_aliases', label: 'Also answers on', placeholder: 'agenthotel.eu1.netbird.services',
+          help: 'More hostnames for the panel, comma-separated — for instance the name a NetBird or Cloudflare front door publishes it under. The panel keeps its own domain as well.' },
       ]} />
 
       {domains.length === 0 ? (
