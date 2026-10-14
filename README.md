@@ -172,6 +172,7 @@ Ready-made templates on top of those runtimes, each deployed from one form with 
 | **SkillHub** | A shared memory for your agents — self-hosted Supabase with search by meaning |
 | **Reel-studio** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
 | **Lobby** | A web hotel for landing pages — one markdown file per site, written by agents over MCP |
+| **Sluss** | A self-hosted LLM gateway for EU organisations: every prompt classified and routed under a fail-closed policy, with an audit trail — put the hotel's agents behind it as a provider |
 
 ## MCP Integration
 

@@ -174,6 +174,12 @@ module.exports = {
     }
 
     const commit = git(['rev-parse', '--short', 'HEAD'], repoDir).toString().trim();
+    // The full sha and the commit time go to the build as GIT_SHA and
+    // BUILD_TIME. A Dockerfile that declares those args (Sluss does) stamps
+    // them into the binary, so the guest can say which commit it runs.
+    // Docker only warns about build args a Dockerfile never declares.
+    const commitFull = git(['rev-parse', 'HEAD'], repoDir).toString().trim();
+    const committedAt = git(['log', '-1', '--format=%cI'], repoDir).toString().trim();
     return {
       contextDir,
       // The id already carries the runtime, so `agenthotel-${id}` reads as
@@ -182,7 +188,8 @@ module.exports = {
       // Always rebuild: a redeploy exists to pick up the repository's new
       // commits. Docker's layer cache makes this cheap when nothing changed.
       rebuild: true,
-      commit
+      commit,
+      buildArgs: { GIT_SHA: commitFull, BUILD_TIME: committedAt }
     };
   }
 };

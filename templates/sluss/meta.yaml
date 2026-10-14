@@ -1,0 +1,81 @@
+name: Sluss
+category: Gateway
+icon: shield
+color: '#fad100'
+source: builtin
+description: 'A self-hosted LLM gateway for EU organisations. Every prompt is classified by deterministic rules — task, risk, personal or confidential data — and routed under a fail-closed policy: harmless traffic to a cheap cloud model, personal data to a model on your own hardware, and a 403 with an audit entry when no compliant model exists. Speaks the OpenAI and Anthropic wire formats, so every agent in the hotel can go through it.
+
+  '
+instructions: 'Open https://<domain>/router/login and sign in as `admin` with the generated password under Credentials. **Quick start** on the first page takes four steps: a cloud model, a local model, one rule that keeps personal data local, and a dry run. The hotel''s OpenRouter key is injected as `OPENROUTER_API_KEY`, so the built-in cloud models are routable at once; a private model from the Providers page is added on Sluss''s own Providers page, tagged `local`.
+
+
+  To put the hotel''s agents behind it, add Sluss as a provider on this panel''s **Providers** page: base URL `https://<domain>/v1`, key = the `LOCAL_API_KEY` under Credentials (or a department key minted on Sluss''s Keys page), model `auto`. Hermes and OpenClaw then list it by name; every request they make is classified, routed and logged by Sluss before any model sees it.
+
+
+  Employees can sign in with the company account: set the three OIDC fields (Entra ID, Okta, Google, Keycloak) and Sluss keeps no accounts of its own. The console footer shows the commit the guest runs, so a redeploy is verifiable.
+
+  '
+tags:
+- llm gateway
+- compliance
+- nis2
+- gdpr
+- openai-compatible
+- anthropic-compatible
+- audit
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/sluss-eu
+- label: Product
+  url: https://www.sluss.eu
+benefits:
+- title: Control before the call
+  description: Classification and policy run in memory before any provider is contacted — personal data never reaches a cloud model by accident, and nothing falls back silently
+- title: Evidence you can hand over
+  description: A hash-chained audit log with an offline verifier, 24h/72h incident evidence on one URL, and a dashboard that shows where the data went
+- title: Fits the hotel
+  description: Every agent that takes an OpenAI-compatible endpoint can route through it, and the hotel''s provider keys are injected on deploy
+features:
+- title: Two wire formats
+  description: OpenAI chat completions and Anthropic messages, streaming and tool use included
+- title: Agent tool gating
+  description: Declared tools are classified read ‹ write ‹ external ‹ destructive, and policy can keep a delete-capable agent on-prem
+- title: Compliance packs
+  description: builtin:nis2-baseline, dora-baseline, gdpr-sovereign and pii-local, or rules clicked together in the console
+- title: Sign in with the company account
+  description: OpenID Connect against the organisation''s IdP; groups map to the console or to chat, and to the department every request is logged under
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/sluss-eu
+  ref: main
+  port: 8080
+  healthcheck: /healthz
+  envFile: |
+    ROUTER_PUBLIC_URL=https://${DOMAIN}
+    LOCAL_API_KEY=${LOCAL_API_KEY}
+    ROUTER_ADMIN_USER=admin
+    ROUTER_ADMIN_PASSWORD=${ROUTER_ADMIN_PASSWORD}
+    INJECT_PROVIDER_ENV=true
+  env:
+  - key: ROUTER_POLICY_PATH
+    label: Compliance pack
+    type: text
+    default: builtin:nis2-baseline
+    description: builtin:nis2-baseline, builtin:dora-baseline, builtin:gdpr-sovereign or builtin:pii-local. Rules can be added in the console afterwards
+  - key: ROUTER_OIDC_ISSUER
+    label: OIDC issuer (optional)
+    type: text
+    description: 'Sign in with the company account. Entra ID: https://login.microsoftonline.com/<tenant-id>/v2.0. Register the redirect URI https://<domain>/router/oidc/callback at the IdP'
+  - key: ROUTER_OIDC_CLIENT_ID
+    label: OIDC client id (optional)
+    type: text
+  - key: ROUTER_OIDC_CLIENT_SECRET
+    label: OIDC client secret (optional)
+    type: password
+  secrets:
+  - key: LOCAL_API_KEY
+    generate: hex
+    bytes: 24
+  - key: ROUTER_ADMIN_PASSWORD
+    generate: password
+    length: 24

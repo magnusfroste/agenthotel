@@ -1847,6 +1847,8 @@ function noteBuildEvent(id, o) {
 async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebuildImage = false, alreadyBuilt = false, onSource = null } = {}) {
   const baseImage = `${runtime}-agenthotel:latest`;
   let imageToRun = image;
+  // Build args a runtime wants stamped into the image (git-app: the commit).
+  let buildArgs = null;
 
   // A runtime may supply its own build context instead of using the shared
   // template directory — Git App clones a repository and builds that. Such an
@@ -1867,6 +1869,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     // image itself, or the work happens twice — once before the container is
     // torn down and once after.
     if (prepared.rebuild && !alreadyBuilt) forceRebuild = true;
+    if (prepared.buildArgs) buildArgs = prepared.buildArgs;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
     if (prepared.commit) deployLog.setCommit(id, prepared.commit);
     if (prepared.commit && onSource) onSource(prepared.commit);
@@ -1901,7 +1904,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
         const tarStream = tar.pack(buildContext);
         // forcerm: remove intermediate containers even when the build fails or is
         // cut off — an upgrade that killed a build mid-RUN left a ~1.5 GB one.
-        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile, forcerm: true });
+        const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile, forcerm: true, ...(buildArgs ? { buildargs: buildArgs } : {}) });
         let buildOutput;
         try {
           buildOutput = await new Promise((resolve, reject) => {

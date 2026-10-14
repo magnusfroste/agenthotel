@@ -89,6 +89,29 @@ test('a git-app template needs a repository', () => {
   assert.strictEqual(normalizeDeploy({ runtime: 'git-app' }), null);
 });
 
+test('the sluss template is a git-app with generated secrets, the hotel\'s provider keys and its public address', () => {
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/sluss/meta.yaml'), 'utf8'));
+  const deploy = normalizeDeploy(meta.deploy);
+  assert.strictEqual(deploy.runtime, 'git-app');
+  assert.strictEqual(deploy.port, 8080);
+  assert.strictEqual(deploy.healthcheck, '/healthz');
+  const { config } = materializeDeploy(deploy, { DOMAIN: 'sluss.example.eu', AGENT_NAME: 'sluss' });
+  assert.strictEqual(config.ROUTER_PUBLIC_URL, 'https://sluss.example.eu');
+  assert.strictEqual(config.INJECT_PROVIDER_ENV, 'true');
+  assert.strictEqual(config.ROUTER_POLICY_PATH, 'builtin:nis2-baseline');
+  assert.strictEqual(config.ROUTER_ADMIN_USER, 'admin');
+  assert.match(config.LOCAL_API_KEY, /^[0-9a-f]{48}$/);
+  assert.strictEqual(config.ROUTER_ADMIN_PASSWORD.length, 24);
+  // Optional OIDC fields are not in the env file on purpose: an unfilled
+  // ${PLACEHOLDER} would reach Sluss as a literal issuer. Left empty on the
+  // form they never become environment, and SSO stays off.
+  assert.strictEqual(config.ROUTER_OIDC_ISSUER, undefined);
+  const withSSO = materializeDeploy(deploy, { DOMAIN: 'sluss.example.eu', ROUTER_OIDC_ISSUER: 'https://login.microsoftonline.com/t/v2.0' }).config;
+  assert.strictEqual(withSSO.ROUTER_OIDC_ISSUER, 'https://login.microsoftonline.com/t/v2.0');
+  assert.strictEqual(config.AGENT_NAME, undefined);
+});
+
 test('the reel-studio template asks for two cores — a recording needs one for the encoder alone', () => {
   const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
   const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/reel-studio/meta.yaml'), 'utf8'));
