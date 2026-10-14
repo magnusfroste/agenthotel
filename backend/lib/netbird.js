@@ -90,7 +90,7 @@ async function status(docker) {
       if (s) {
         out.daemonStatus = s.daemonStatus;
         out.connected = s.daemonStatus === 'Connected' && !!s.management?.connected;
-        out.ip = s.netbirdIp || null;
+        out.ip = s.netbirdIp ? String(s.netbirdIp).split('/')[0] : null;
         out.fqdn = s.fqdn || null;
         out.management = s.management?.url || null;
         out.peers = s.peers ? { total: s.peers.total, connected: s.peers.connected } : null;
