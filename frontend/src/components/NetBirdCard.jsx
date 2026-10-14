@@ -13,6 +13,8 @@ export default function NetBirdCard() {
   const [selfHosted, setSelfHosted] = useState(false)
   const [managementUrl, setManagementUrl] = useState('')
   const [busy, setBusy] = useState(false)
+  const [apiToken, setApiToken] = useState('')
+  const [publishBusy, setPublishBusy] = useState(false)
 
   async function refresh() {
     try {
@@ -62,7 +64,47 @@ export default function NetBirdCard() {
     }
   }
 
+  async function setPublish(enabled) {
+    if (!enabled && !confirm('Stop publishing guests through NetBird? The services the panel created there are removed; ones you made by hand stay.')) return
+    setPublishBusy(true)
+    try {
+      const res = await authFetch('/api/system/netbird/publish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, apiToken })
+      })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'NetBird refused'); return }
+      setApiToken('')
+      if (enabled) {
+        const r = data.report || {}
+        toast.success(`Published ${r.published?.length || 0} guest(s) through NetBird${r.failed?.length ? `, ${r.failed.length} failed` : ''}`)
+      } else {
+        toast.success(`Stopped publishing — ${data.removed} service(s) removed from NetBird`)
+      }
+      refresh()
+    } catch (_) {
+      toast.error('Could not reach the panel')
+    } finally {
+      setPublishBusy(false)
+    }
+  }
+
+  async function syncNow() {
+    setPublishBusy(true)
+    try {
+      const res = await authFetch('/api/system/netbird/publish/sync', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) toast.error(data.error || 'Sync failed')
+      else toast.success('In step with NetBird')
+      refresh()
+    } finally {
+      setPublishBusy(false)
+    }
+  }
+
   if (!status) return null
+  const publish = status.publish || {}
+  const report = publish.report || null
   const color = status.connected ? 'var(--accent-green)'
     : status.running ? 'var(--accent-yellow)'
     : status.configured ? 'var(--accent-yellow)' : 'var(--accent-red)'
@@ -154,6 +196,78 @@ export default function NetBirdCard() {
 
       {status.logs && (
         <pre data-secret="" className="log-tail" style={{ marginTop: '1rem', maxHeight: '180px', overflow: 'auto' }}>{status.logs}</pre>
+      )}
+
+      {status.configured && (
+        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+          <h3 style={{ fontSize: '0.95rem', margin: '0 0 0.4rem' }}>Publish every guest</h3>
+          <p className="section-hint">
+            With a NetBird API token the panel makes the reverse-proxy service for each guest with
+            a domain itself — this peer, port {status.originPort}, Host passed through — and removes
+            it when the guest goes. A guest under a custom domain validated in NetBird keeps its own
+            name; any other gets one under NetBird's free domain. Services you made by hand are
+            never touched.
+          </p>
+
+          {publish.enabled ? (
+            <>
+              {report?.error && (
+                <p className="section-hint" style={{ color: 'var(--accent-red)' }}>{report.error}</p>
+              )}
+              {report?.published?.length > 0 && (
+                <table className="data-table" style={{ marginTop: '0.5rem', width: '100%' }}>
+                  <thead><tr><th>Guest</th><th>Public on NetBird</th></tr></thead>
+                  <tbody>
+                    {report.published.map(p => (
+                      <tr key={p.domain}>
+                        <td className="text-mono">{p.domain}</td>
+                        <td className="text-mono">
+                          <a href={`https://${p.publicName}`} target="_blank" rel="noreferrer">{p.publicName}</a>
+                          {p.error && <div style={{ color: 'var(--accent-red)', fontSize: '0.8rem' }}>{p.error}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {report?.failed?.map(f => (
+                <p key={f.domain} className="section-hint" style={{ color: 'var(--accent-yellow)' }}>
+                  <span className="text-mono">{f.domain}</span>: {f.error}
+                </p>
+              ))}
+              {report?.customDomains?.filter(d => d.validated).map(d => (
+                <p key={d.domain} className="section-hint">
+                  Guests under <span className="text-mono">{d.domain}</span> keep their names — point
+                  each (or <span className="text-mono">*.{d.domain}</span>) at{' '}
+                  <span className="text-mono">{d.cluster}</span> with a CNAME.
+                </p>
+              ))}
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem', alignItems: 'center' }}>
+                <button className="btn btn-secondary" onClick={syncNow} disabled={publishBusy}>
+                  {publishBusy ? 'Working…' : 'Sync now'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => setPublish(false)} disabled={publishBusy}>Stop publishing</button>
+                <span className="section-hint" style={{ margin: 0 }}>
+                  Token <span data-secret="" className="text-mono">{publish.apiToken}</span>
+                  {report?.at && <> · synced {new Date(report.at).toLocaleTimeString()}</>}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'grid', gap: '0.6rem', maxWidth: '520px', marginTop: '0.5rem' }}>
+              <input data-secret="" type="password" className="input"
+                placeholder={publish.apiToken ? 'Stored API token in use — paste a new one to replace it' : 'NetBird API token (Settings → Personal Access Tokens, or a service user)'}
+                value={apiToken} onChange={e => setApiToken(e.target.value)} />
+              <div>
+                <button className="btn btn-primary" onClick={() => setPublish(true)}
+                  disabled={publishBusy || !status.connected || (!apiToken && !publish.apiToken)}>
+                  <Network size={15} /> {publishBusy ? 'Publishing…' : 'Publish guests'}
+                </button>
+                {!status.connected && <span className="section-hint" style={{ marginLeft: '0.6rem' }}>Waits until NetBird is connected</span>}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <p className="section-hint" style={{ marginTop: '0.75rem' }}>

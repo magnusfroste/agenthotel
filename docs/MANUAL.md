@@ -382,6 +382,30 @@ The proxy terminates TLS and reaches Caddy from the mesh range
 `X-Forwarded-Proto: https`. While NetBird is on, the login throttle reads the
 visitor's address from the proxy's `X-Forwarded-For`.
 
+### Publishing every guest automatically
+
+Making a service by hand per guest gets old. Paste a NetBird **API token**
+(NetBird → Settings → Personal Access Tokens, or a service user's token) under
+*Publish every guest* on the NetBird card and press *Publish guests*. From then
+on the panel keeps one service per guest that has a domain — this peer, port
+80, *Pass Host Header* on — and removes it when the guest is deleted or loses
+its domain. It is in step within a minute of a change; *Sync now* does it at
+once.
+
+- A guest whose domain falls under a **custom domain you validated in NetBird**
+  keeps its own name (`reel.froste.eu`). Point the name — or a wildcard,
+  `*.froste.eu` — at the proxy cluster the card shows, with a CNAME.
+- Any other guest gets a name under NetBird's **free domain**,
+  `reel-froste-eu.eu1.netbird.services`, which the panel adds to the guest's
+  route by itself.
+- Wildcard guests (`*.sites.example.com`) are not published; a proxy service is
+  one name.
+- **Services you made by hand are never touched**, the panel's own included. If
+  one already claims a guest's name, the card says so and leaves it.
+
+*Stop publishing* removes the services the panel created. Publishing only runs
+while NetBird is on.
+
 ### Things that bite
 
 - **Use a one-off setup key.** A reusable key that leaks lets anyone join your

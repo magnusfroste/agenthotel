@@ -17,6 +17,7 @@ const { injectProviderEnv } = require('./lib/providerEnv');
 const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
+const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
 const { caddyFetch } = require('./lib/caddyAdmin');
@@ -414,7 +415,9 @@ app.get('/api/settings', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   for (const row of rows) {
-    if (!['admin_password_hash', 'admin_password_salt', 'auth_token'].includes(row.key)) {
+    // The tunnel and NetBird credentials have their own endpoints, which show
+    // only the last four characters; this list is not where they are read.
+    if (!['admin_password_hash', 'admin_password_salt', 'auth_token', 'cloudflare_tunnel_token', 'netbird_setup_key', 'netbird_api_token'].includes(row.key)) {
       settings[row.key] = row.value;
     }
   }
@@ -2109,7 +2112,7 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     if (domain) {
       await addCaddyRoute(domain, containerName, port);
     }
-    for (const alias of parseDomainAliases(config, domain)) {
+    for (const alias of agentAliases(config, domain)) {
       await addCaddyRoute(alias, containerName, port);
     }
   } catch (err) {
@@ -2241,6 +2244,16 @@ function parseDomainAliases(config, primary) {
   return out;
 }
 
+// A guest's extra hostnames: the aliases in its config, and the name NetBird
+// publishes it under when that is not its own domain (lib/netbirdPublish.js).
+function agentAliases(config, primary) {
+  const out = parseDomainAliases(config, primary);
+  for (const host of netbirdPublish.extraHosts(db, primary)) {
+    if (host !== primary && !out.includes(host)) out.push(host);
+  }
+  return out;
+}
+
 // Give a compose-managed guest a domain.
 //
 // Its containers live on the stack's own network, which Caddy cannot reach, so
@@ -2284,7 +2297,7 @@ async function attachComposeRoute(agent, plugin, config, domain) {
 
   await joinPanelNetwork(target.container);
   await addCaddyRoute(domain, target.container, target.port);
-  for (const alias of parseDomainAliases(config, domain)) {
+  for (const alias of agentAliases(config, domain)) {
     await addCaddyRoute(alias, target.container, target.port);
   }
 }
@@ -2489,7 +2502,7 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
 async function removeAgentRoutes(agent) {
   let config = {};
   try { config = JSON.parse(agent.config || '{}'); } catch (e) {}
-  const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)].filter(Boolean);
+  const hosts = [agent.domain, ...agentAliases(config, agent.domain)].filter(Boolean);
   for (const host of hosts) {
     try { await removeCaddyRoute(host); } catch (e) {}
   }
@@ -2521,7 +2534,7 @@ async function removeUnownedRoutes() {
   for (const a of db.prepare("SELECT domain, config FROM agents WHERE domain IS NOT NULL AND domain != ''").all()) {
     let config = {};
     try { config = JSON.parse(a.config || '{}'); } catch (e) {}
-    owned.push(a.domain, ...parseDomainAliases(config, a.domain));
+    owned.push(a.domain, ...agentAliases(config, a.domain));
   }
   const panel = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
   if (panel) owned.push(panel);
@@ -4127,6 +4140,54 @@ async function trustMeshProxies() {
   if (on) setTimeout(() => trustMeshProxies(), 5000).unref?.();
 }
 
+// Publishing guests through NetBird (lib/netbirdPublish.js): on only while
+// NetBird is configured, publishing is switched on and an API token is stored.
+// Runs from the minute loop, but calls NetBird only when the guests' domains
+// changed or ten minutes passed, so the API sees a few calls an hour.
+let netbirdPublishReport = null;
+let netbirdPublishSig = null;
+let netbirdPublishAt = 0;
+let netbirdPublishRunning = null;
+function netbirdSetting(key) {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null;
+}
+function netbirdPublishOn() {
+  return !!netbirdSetting('netbird_setup_key') && netbirdSetting('netbird_publish') === 'true' && !!netbirdSetting('netbird_api_token');
+}
+async function syncNetbirdPublish({ force = false, token = null } = {}) {
+  if (!force && !netbirdPublishOn()) return null;
+  const guests = db.prepare("SELECT domain FROM agents WHERE domain IS NOT NULL AND domain != '' ORDER BY domain").all().map(r => r.domain);
+  const sig = JSON.stringify(guests);
+  if (!force && sig === netbirdPublishSig && Date.now() - netbirdPublishAt < 10 * 60 * 1000) return netbirdPublishReport;
+  if (netbirdPublishRunning) return netbirdPublishRunning;
+  netbirdPublishRunning = (async () => {
+    try {
+      const state = await netbird.status(docker);
+      if (!state.connected || !state.ip) throw new Error('NetBird is not connected — publishing waits until it is');
+      const report = await netbirdPublish.sync({
+        db,
+        token: token || netbirdSetting('netbird_api_token'),
+        managementUrl: netbirdSetting('netbird_management_url') || netbird.CLOUD_MANAGEMENT_URL,
+        peerIp: state.ip,
+        guests,
+        originPort: netbird.ORIGIN_PORT
+      });
+      netbirdPublishReport = report;
+      netbirdPublishSig = sig;
+      netbirdPublishAt = Date.now();
+      for (const f of report.failed) logEvent('netbird.publish_failed', null, `NetBird could not publish ${f.domain}: ${f.error}`);
+      return report;
+    } catch (err) {
+      netbirdPublishReport = { ...(netbirdPublishReport || {}), error: err.message, at: new Date().toISOString() };
+      netbirdPublishAt = Date.now();
+      throw err;
+    } finally {
+      netbirdPublishRunning = null;
+    }
+  })();
+  return netbirdPublishRunning;
+}
+
 app.get('/api/system/netbird', requireAuth, async (req, res) => {
   try {
     const key = db.prepare("SELECT value FROM settings WHERE key = 'netbird_setup_key'").get()?.value;
@@ -4141,7 +4202,15 @@ app.get('/api/system/netbird', requireAuth, async (req, res) => {
       selfHosted: !!mgmt && mgmt !== netbird.CLOUD_MANAGEMENT_URL,
       hostname: name,
       originPort: netbird.ORIGIN_PORT,
-      logs: state.installed ? await netbird.logs(docker, 20) : ''
+      logs: state.installed ? await netbird.logs(docker, 20) : '',
+      publish: (() => {
+        const token = netbirdSetting('netbird_api_token');
+        return {
+          enabled: netbirdSetting('netbird_publish') === 'true',
+          apiToken: token ? '***' + token.slice(-4) : null,
+          report: netbirdPublishReport
+        };
+      })()
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4184,11 +4253,73 @@ app.post('/api/system/netbird', requireAuth, async (req, res) => {
   }
 });
 
+// Switch publishing on or off, and store the API token. A token is tried
+// before it is stored, so a wrong one never switches publishing on.
+app.post('/api/system/netbird/publish', requireAuth, async (req, res) => {
+  const put = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  const enabled = req.body?.enabled !== false;
+  try {
+    if (!enabled) {
+      const result = await netbirdPublish.unpublishAll({
+        db,
+        token: netbirdSetting('netbird_api_token'),
+        managementUrl: netbirdSetting('netbird_management_url') || netbird.CLOUD_MANAGEMENT_URL
+      });
+      put.run('netbird_publish', 'false');
+      netbirdPublishReport = null;
+      netbirdPublishSig = null;
+      await removeUnownedRoutes().catch(() => {});
+      logEvent('netbird.unpublished', null, `Stopped publishing guests through NetBird (${result.removed} service(s) removed)`);
+      return res.json({ enabled: false, ...result });
+    }
+    if (!netbirdSetting('netbird_setup_key')) return res.status(400).json({ error: 'Join the NetBird mesh first' });
+    const token = String(req.body?.apiToken || '').trim() || netbirdSetting('netbird_api_token');
+    if (!token) return res.status(400).json({ error: 'A NetBird API token is required' });
+    let report;
+    try {
+      report = await syncNetbirdPublish({ force: true, token });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    put.run('netbird_api_token', token);
+    put.run('netbird_publish', 'true');
+    await reconcileAgentRoutes({ onlyMissing: true }).catch(() => {});
+    logEvent('netbird.published', null, `Publishing guests through NetBird: ${report.published.length} published, ${report.failed.length} failed`);
+    res.json({ enabled: true, report });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync now, without waiting for the minute loop.
+app.post('/api/system/netbird/publish/sync', requireAuth, async (req, res) => {
+  if (!netbirdPublishOn()) return res.status(400).json({ error: 'Publishing through NetBird is off' });
+  try {
+    const report = await syncNetbirdPublish({ force: true });
+    await reconcileAgentRoutes({ onlyMissing: true }).catch(() => {});
+    await removeUnownedRoutes().catch(() => {});
+    res.json({ report });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.delete('/api/system/netbird', requireAuth, async (req, res) => {
   try {
+    // Leaving the mesh for good takes down what the panel published first:
+    // services pointing at a peer that is gone would only answer errors.
+    if (req.query?.forget) {
+      await netbirdPublish.unpublishAll({
+        db,
+        token: netbirdSetting('netbird_api_token'),
+        managementUrl: netbirdSetting('netbird_management_url') || netbird.CLOUD_MANAGEMENT_URL
+      }).catch(err => console.warn(`[NetBird] Could not unpublish: ${err.message}`));
+      netbirdPublishReport = null;
+      netbirdPublishSig = null;
+    }
     await netbird.remove(docker);
     if (req.query?.forget) {
-      for (const k of ['netbird_setup_key', 'netbird_management_url', 'netbird_hostname']) {
+      for (const k of ['netbird_setup_key', 'netbird_management_url', 'netbird_hostname', 'netbird_api_token', 'netbird_publish']) {
         db.prepare('DELETE FROM settings WHERE key = ?').run(k);
       }
       try { await docker.getVolume(netbird.VOLUME).remove(); } catch (_) {}
@@ -5074,6 +5205,9 @@ listen(async () => {
     // The panel's own route first: the same restart drops it, and until the
     // backend itself restarted nobody could reach the panel to find out why.
     initPanelRoute({ quiet: true })
+      // Before the routes: a guest NetBird just published under a free name
+      // gets that name on its route in the same pass.
+      .then(() => syncNetbirdPublish().catch(err => console.error('[NetBird] Publish sync failed:', err.message)))
       .then(() => reconcileAgentRoutes({ onlyMissing: true }))
       .then(n => { if (n) console.log(`[Caddy] Restored ${n} route(s) that had gone missing`); })
       .then(() => removeUnownedRoutes())
@@ -5163,7 +5297,7 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
     }
     if (!targetPort) continue;
 
-    const hosts = [agent.domain, ...parseDomainAliases(config, agent.domain)];
+    const hosts = [agent.domain, ...agentAliases(config, agent.domain)];
     for (const host of hosts) {
       if (present && present.has(host)) continue;
       try {
