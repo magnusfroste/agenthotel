@@ -507,7 +507,15 @@ async function pruneDocker() {
   results.containers = containersPrune.ContainersDeleted || [];
   results.containersSpaceReclaimed = containersPrune.SpaceReclaimed || 0;
 
-  const imagesPrune = await docker.pruneImages();
+  // Untagged images younger than a week stay. With Docker's containerd image
+  // store (Docker 29), the classic builder's layer cache *is* those untagged
+  // intermediate images, and pruning them every night meant every rebuild of a
+  // Git App started from scratch — reel-studio re-downloaded Chromium on each
+  // redeploy despite a Dockerfile ordered for caching (2026-10-14).
+  // --cache-from, the obvious alternative, fails on that store. An image a
+  // rebuild replaced is still removed at once by lib/replacedImages.js; this
+  // only lets recent build cache live until it is a week old.
+  const imagesPrune = await docker.pruneImages({ filters: { until: ['168h'] } });
   results.images = imagesPrune.ImagesDeleted || [];
   results.imagesSpaceReclaimed = imagesPrune.SpaceReclaimed || 0;
 
