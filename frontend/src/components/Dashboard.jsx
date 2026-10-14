@@ -4,6 +4,7 @@ import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
 import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
+import { MoveIn } from './HotelTransfer'
 
 // What a card says while its image is being built. The backend records every
 // build step and pulled layer; without this the card read "creating" for
@@ -178,6 +179,8 @@ function Dashboard() {
       return a.name.localeCompare(b.name)
     })
 
+  const [showImport, setShowImport] = useState(false)
+
   async function handleImportService(e) {
     const file = e.target.files && e.target.files[0]
     if (!file) return
@@ -239,12 +242,24 @@ function Dashboard() {
           <button className="btn" onClick={handlePrune} disabled={pruning} style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Trash2 size={16} color="white" /> {pruning ? 'Pruning…' : 'Prune Docker'}
           </button>
-          <label className="btn btn-secondary" title="Import a service zip exported from any AgentHotel" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
+          <button className="btn btn-secondary" title="Bring in an agent from a zip or from another hotel" onClick={() => setShowImport(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Upload size={16} color="currentColor" /> Import Agent
-            <input type="file" accept=".zip,application/zip" onChange={handleImportService} style={{ display: 'none' }} />
-          </label>
+          </button>
         </div>
       </div>
+
+      {showImport && (
+        <div className="modal-overlay" onClick={() => setShowImport(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Import an agent</h3>
+            <label className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', cursor: 'pointer', margin: '0 0 0.25rem' }}>
+              <Upload size={16} color="currentColor" /> From a zip file
+              <input type="file" accept=".zip,application/zip" onChange={(e) => { setShowImport(false); handleImportService(e) }} style={{ display: 'none' }} />
+            </label>
+            <MoveIn onDone={(agent) => { fetchAgents(); toast.success(`${agent.name} moved in — point its DNS here and redeploy`) }} />
+          </div>
+        </div>
+      )}
 
       {systemStats && systemStats.cpu && systemStats.mem && systemStats.disk && (
         <div className="stats-grid">

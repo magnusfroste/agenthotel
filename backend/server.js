@@ -112,6 +112,10 @@ const acpBridge = require('./lib/acpBridge');
 // off is closed as interrupted before anything new is queued.
 const deployLog = require('./lib/deployLog').createDeployLog(db, path.dirname(process.env.DB_PATH || '/data/agenthotel.db'));
 deployLog.teeConsole();
+const transfers = require('./lib/transfers');
+transfers.init(db);
+const { fetchToFile } = require('./lib/fetchToFile');
+const importJobs = new Map(); // import-from jobs, by id
 { const n = deployLog.interruptStale(); if (n) console.log(`[Deploys] ${n} deploy(s) interrupted by the restart marked as such`); }
 sessions.init(db);
 // Expired sessions cost nothing but rows; sweep hourly.
@@ -1090,7 +1094,7 @@ const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 const { createMcpServer } = require('./mcp');
 // enqueueDeploy and redeployAgent are function declarations further down, so
 // they are hoisted: MCP deploys share the REST queue and the REST redeploy.
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent, deployLog });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent, deployLog, issueTransfer, startImportFrom, importJobs });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -1274,50 +1278,52 @@ async function tarVolumeToFile(volumeName) {
   return tmpFile;
 }
 
-app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
-  const tmpFiles = [];
-  try {
-    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
-    const includeData = req.query.data === '1';
-
-    let volumeNames = [];
-    if (includeData) {
-      // Consistency: copying a live volume can yield corrupt data (Easypanel
-      // has the same requirement).
-      const containers = await docker.listContainers({ all: false });
-      const containerName = `agenthotel-${agent.id}`;
-      const running = containers.some(c => (c.Names || []).some(n => n.replace(/^\//, '') === containerName));
-      if (running) {
-        return res.status(400).json({ error: 'Stop the agent before exporting its data' });
-      }
-      volumeNames = await listAgentVolumes(agent);
+// Write an agent's export zip — agent.json, a README and, with includeData,
+// a tar of each of its volumes — to out (an HTTP response). Data needs the
+// agent stopped, for a consistent copy (Easypanel has the same rule).
+// beforeWrite runs once nothing can fail early any more, so a caller can set
+// its headers then. Shared by the Export button and a transfer ticket's pull.
+async function writeAgentExport(agent, includeData, out, { beforeWrite = null } = {}) {
+  let volumeNames = [];
+  if (includeData) {
+    const containers = await docker.listContainers({ all: false });
+    const containerName = `agenthotel-${agent.id}`;
+    const running = containers.some(c => (c.Names || []).some(n => n.replace(/^\//, '') === containerName));
+    if (running) {
+      const err = new Error('Stop the agent before exporting its data');
+      err.status = 400;
+      throw err;
     }
+    volumeNames = await listAgentVolumes(agent);
+  }
 
-    const manifest = {
-      app: 'agenthotel-agent',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      includesVolumes: volumeNames.length > 0,
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        runtime: agent.runtime,
-        domain: agent.domain,
-        image: agent.image,
-        port: agent.port,
-        config: JSON.parse(agent.config || '{}')
-      }
-    };
+  const manifest = {
+    app: 'agenthotel-agent',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    includesVolumes: volumeNames.length > 0,
+    agent: {
+      id: agent.id,
+      name: agent.name,
+      runtime: agent.runtime,
+      domain: agent.domain,
+      image: agent.image,
+      port: agent.port,
+      config: JSON.parse(agent.config || '{}')
+    }
+  };
+  if (beforeWrite) beforeWrite(manifest);
 
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
+  const tmpFiles = [];
+  const cleanup = () => tmpFiles.splice(0).forEach(f => fs.unlink(f, () => {}));
+  out.on('finish', cleanup);
+  out.on('close', cleanup);
 
-    const archive = archiver('zip', { zlib: { level: 1 } });
-    archive.on('error', () => { if (!res.headersSent) res.status(500); res.end(); });
-    archive.pipe(res);
+  const archive = archiver('zip', { zlib: { level: 1 } });
+  archive.on('error', (err) => out.destroy(err));
+  archive.pipe(out);
 
-    archive.append(JSON.stringify(manifest, null, 2), { name: 'agent.json' });
+  archive.append(JSON.stringify(manifest, null, 2), { name: 'agent.json' });
     archive.append(
 `AgentHotel service export: ${agent.name}
 Exported: ${manifest.exportedAt}
@@ -1331,20 +1337,30 @@ NOTE: agent.json contains environment variables and API keys in plain text.
 Store this file safely.
 `, { name: 'README.txt' });
 
-    // Tar each volume to disk first (bounded memory), then add to the zip.
-    for (const vol of volumeNames) {
-      const tmp = await tarVolumeToFile(vol);
-      tmpFiles.push(tmp);
-      archive.file(tmp, { name: `volumes/${vol}.tar` });
-    }
+  // Tar each volume to disk first (bounded memory), then add to the zip.
+  for (const vol of volumeNames) {
+    const tmp = await tarVolumeToFile(vol);
+    tmpFiles.push(tmp);
+    archive.file(tmp, { name: `volumes/${vol}.tar` });
+  }
 
-    await archive.finalize();
+  await archive.finalize();
+  return { volumes: volumeNames.length };
+}
+
+app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    await writeAgentExport(agent, req.query.data === '1', res, {
+      beforeWrite: () => {
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
+      }
+    });
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(err.status || 500).json({ error: err.message });
     else res.end();
-  } finally {
-    // Clean up temp tars once the response has drained.
-    res.on('finish', () => tmpFiles.forEach(f => fs.unlink(f, () => {})));
   }
 });
 
@@ -1428,19 +1444,148 @@ app.post('/api/agents', requireAuth, async (req, res) => {
   }
 });
 
-// Per-service import: accepts the zip produced by GET /api/agents/:id/export
-// as a raw body (streamed to disk — volume data can make these large).
-// Creates the agent in stopped state — the user redeploys it to build/pull
-// the image on this host. volumes/*.tar entries are restored into freshly
-// created Docker volumes named for the new agent id.
-app.post('/api/agents/import', requireAuth, async (req, res) => {
-  const tmpZip = path.join(os.tmpdir(), `import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+// Moving an agent to another hotel (lib/transfers.js). This hotel issues a
+// one-time URL; the other hotel fetches the agent's export from it, server to
+// server, with POST /api/agents/import-from.
+function hotelBaseUrl(req) {
+  const panel = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
+  if (panel) return `https://${panel}`;
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  return `${proto}://${req.get('host')}`;
+}
+
+async function agentContainerRunning(agent) {
+  try {
+    const info = await docker.getContainer(containerNameFor(runtimes, agent)).inspect();
+    return !!info.State.Running;
+  } catch (_) { return false; }
+}
+
+// Issue a ticket. With data, the agent must be stopped by the time the other
+// hotel pulls: stopOnPull (the default for a move) stops it then, so it keeps
+// serving until the last moment and never runs in two hotels at once.
+async function issueTransfer(agentId, { includeData = true, stopOnPull = true, base }) {
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+  if (!agent) throw importError(404, 'Agent not found');
+  if (includeData && !stopOnPull && await agentContainerRunning(agent)) {
+    throw importError(400, 'With its data, the agent must be stopped — stop it, or let the pull stop it (stopOnPull)');
+  }
+  const { token, expiresAt } = transfers.issue(db, agent.id, { includeData, stopOnPull });
+  logEvent('agent.transfer', agent.id, `Transfer ticket issued for ${agent.name}${includeData ? ' with its data' : ' (config only)'}, valid until ${new Date(expiresAt).toISOString()}`);
+  return { url: transfers.ticketUrl(base, token), expiresAt: new Date(expiresAt).toISOString(), includeData, stopOnPull, agent: agent.name };
+}
+
+app.post('/api/agents/:id/transfer', requireAuth, async (req, res) => {
+  try {
+    res.json(await issueTransfer(req.params.id, {
+      includeData: req.body?.includeData !== false,
+      stopOnPull: req.body?.stopOnPull !== false,
+      base: hotelBaseUrl(req)
+    }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// The pull. No login: the ticket is the credential — one use, one hour.
+// Throttled per address, so tickets cannot be guessed at speed.
+app.get('/api/transfer/:token', async (req, res) => {
+  const ip = clientIp(req);
+  const seen = rateHit('transfer', ip, 30, 15 * 60 * 1000);
+  if (!seen.allowed) {
+    res.set('Retry-After', String(seen.retryAfter));
+    return res.status(429).json({ error: 'Too many transfer requests — try again later' });
+  }
+  const claimed = transfers.claim(db, req.params.token, { by: ip });
+  if (claimed.error) {
+    const message = { unknown: 'No such transfer ticket', expired: 'This transfer ticket has expired — issue a new one', used: 'This transfer ticket was already used — issue a new one' }[claimed.error];
+    return res.status(claimed.error === 'unknown' ? 404 : 410).json({ error: message });
+  }
+  const ticket = claimed.ticket;
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(ticket.agent_id);
+  if (!agent) return res.status(404).json({ error: 'The agent on this ticket no longer exists' });
+  try {
+    if (ticket.include_data && ticket.stop_on_pull && await agentContainerRunning(agent)) {
+      try { await docker.getContainer(containerNameFor(runtimes, agent)).stop(); } catch (e) { /* already stopping */ }
+      db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agent.id);
+      logEvent('agent.transfer', agent.id, `${agent.name} stopped for its move to another hotel`);
+    }
+    await writeAgentExport(agent, !!ticket.include_data, res, {
+      beforeWrite: () => {
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
+      }
+    });
+    const stoppedHere = ticket.include_data && ticket.stop_on_pull;
+    logEvent('agent.transfer', agent.id, `${agent.name} was pulled by another hotel (${ip})${ticket.include_data ? ' with its data' : ', config only'}. ${stoppedHere ? 'It stays here, stopped, until you delete it' : 'It still runs here'}`);
+  } catch (err) {
+    logEvent('agent.transfer', agent.id, `Transfer of ${agent.name} failed: ${err.message}`);
+    if (!res.headersSent) res.status(err.status || 500).json({ error: err.message });
+    else res.end();
+  }
+});
+
+// Pulling an agent from another hotel takes as long as its data takes to
+// travel, so it runs in the background and is followed by polling (importJobs,
+// declared with the transfer module near the top).
+
+function startImportFrom(rawUrl) {
+  const url = transfers.parseTicketUrl(rawUrl);
+  const id = crypto.randomBytes(8).toString('hex');
+  const job = { id, status: 'downloading', bytes: 0, total: null, startedAt: Date.now(), finishedAt: null, agent: null, error: null };
+  importJobs.set(id, job);
+  for (const [key, old] of importJobs) if (old.finishedAt && Date.now() - old.finishedAt > 60 * 60 * 1000) importJobs.delete(key);
+  const tmpZip = path.join(os.tmpdir(), `transfer-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+  const from = new URL(url).host;
+  (async () => {
+    try {
+      await fetchToFile(url, tmpZip, { onProgress: (bytes, total) => { job.bytes = bytes; job.total = total; } });
+      job.status = 'importing';
+      job.agent = await importAgentZip(tmpZip, { source: `the hotel at ${from}` });
+      job.status = 'done';
+    } catch (err) {
+      job.status = 'failed';
+      job.error = err.message;
+      logEvent('agent.import', null, `Import from the hotel at ${from} failed: ${err.message}`);
+    } finally {
+      job.finishedAt = Date.now();
+      fs.unlink(tmpZip, () => {});
+    }
+  })();
+  return job;
+}
+
+app.post('/api/agents/import-from', requireAuth, (req, res) => {
+  try {
+    res.status(202).json(startImportFrom(req.body?.url));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/agents/import-from/:job', requireAuth, (req, res) => {
+  const job = importJobs.get(req.params.job);
+  if (!job) return res.status(404).json({ error: 'No such import' });
+  res.json(job);
+});
+
+// Import an agent from an export zip on disk — an upload, or a pull from
+// another hotel (lib/transfers.js). The agent is created stopped; volumes/*.tar
+// entries are restored into fresh volumes named for the new agent id. Any
+// failure takes the row and the volumes it created with it. `source` names
+// where it came from, for the event log.
+function importError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
   let stagedZip = null;
   let importedId = null;
+  let a = null;
   const createdVolumes = [];
   try {
-    await pipeline(req, fs.createWriteStream(tmpZip));
-
     let manifest;
     let zip;
     try {
@@ -1449,28 +1594,28 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
       if (!entry) throw new Error('agent.json not found in zip');
       manifest = JSON.parse(entry.getData().toString('utf8'));
     } catch (err) {
-      return res.status(400).json({ error: 'Not a valid AgentHotel service zip: ' + err.message });
+      throw importError(400, 'Not a valid AgentHotel service zip: ' + err.message);
     }
 
     if (manifest.app !== 'agenthotel-agent' || !manifest.agent) {
-      return res.status(400).json({ error: 'Not a valid AgentHotel service zip' });
+      throw importError(400, 'Not a valid AgentHotel service zip');
     }
 
-    const a = manifest.agent;
+    a = manifest.agent;
     if (!a.name || !/^[a-z0-9][a-z0-9-]*$/.test(a.name)) {
-      return res.status(400).json({ error: 'Invalid agent name in export file' });
+      throw importError(400, 'Invalid agent name in export file');
     }
     const plugin = runtimes[a.runtime];
     if (!plugin) {
-      return res.status(400).json({ error: `Unknown runtime in export file: ${a.runtime}` });
+      throw importError(400, `Unknown runtime in export file: ${a.runtime}`);
     }
 
     // Refuse to clobber anything that already exists on this instance.
     if (db.prepare('SELECT id FROM agents WHERE name = ?').get(a.name)) {
-      return res.status(409).json({ error: `Agent "${a.name}" already exists — delete or rename it first` });
+      throw importError(409, `Agent "${a.name}" already exists — delete or rename it first`);
     }
     if (a.domain && db.prepare('SELECT id FROM agents WHERE domain = ?').get(a.domain)) {
-      return res.status(409).json({ error: `Domain "${a.domain}" is already used by another agent` });
+      throw importError(409, `Domain "${a.domain}" is already used by another agent`);
     }
 
     const id = `${a.runtime}-${a.name}-${Date.now()}`;
@@ -1530,8 +1675,8 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
       }
     }
 
-    logEvent('agent.import', id, `Imported agent ${a.name} from zip${volumesRestored ? ` (${volumesRestored} volume(s) restored)` : ''}`);
-    res.json({ id, name: a.name, status: 'stopped', volumesRestored });
+    logEvent('agent.import', id, `Imported agent ${a.name} from ${source}${volumesRestored ? ` (${volumesRestored} volume(s) restored)` : ''}`);
+    return { id, name: a.name, domain: a.domain || null, status: 'stopped', volumesRestored };
   } catch (err) {
     if (importedId) {
       try { db.prepare('DELETE FROM agents WHERE id = ?').run(importedId); } catch (e) {}
@@ -1540,10 +1685,23 @@ app.post('/api/agents/import', requireAuth, async (req, res) => {
       }
       logEvent('agent.import', importedId, `Import of ${a?.name || importedId} failed and was rolled back: ${err.message}`);
     }
-    res.status(500).json({ error: err.message });
+    throw err;
+  } finally {
+    if (stagedZip) fs.unlink(stagedZip, () => {});
+  }
+}
+
+// Per-service import: accepts the zip produced by GET /api/agents/:id/export
+// as a raw body (streamed to disk — volume data can make these large).
+app.post('/api/agents/import', requireAuth, async (req, res) => {
+  const tmpZip = path.join(os.tmpdir(), `import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+  try {
+    await pipeline(req, fs.createWriteStream(tmpZip));
+    res.json(await importAgentZip(tmpZip));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   } finally {
     fs.unlink(tmpZip, () => {});
-    if (stagedZip) fs.unlink(stagedZip, () => {});
   }
 });
 

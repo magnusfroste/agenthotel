@@ -37,6 +37,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // image between the two was never removed (2026-10-09).
   const enqueueDeploy = extras.enqueueDeploy || ((work) => work());
   const deployLog = extras.deployLog || null;
+  const { issueTransfer, startImportFrom, importJobs } = extras;
   // See server.js: ask the plugin whether it runs its own containers, rather
   // than matching the runtime's name.
   const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
@@ -90,6 +91,34 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           rebuild: { type: 'boolean', description: 'Rebuild the runtime template image first, picking up edits to templates/<runtime>/Dockerfile (slower)' }
         },
         required: ['agent_id']
+      }
+    },
+    create_transfer: {
+      description: "Move an agent to another AgentHotel: issue a one-time transfer URL (valid one hour) that the other hotel pulls the agent from with its import_from_hotel tool, or its Import Agent > From another hotel. With include_data (default true) the agent's memory goes too — its volumes — and stop_on_pull (default true) stops it here at the moment of the pull, so it never runs in two hotels at once; it stays here, stopped, until deleted. The URL is a credential: hand it only to the hotel that should receive the agent",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent to move' },
+          include_data: { type: 'boolean', description: "Include the agent's volume data (default true)" },
+          stop_on_pull: { type: 'boolean', description: 'Stop the agent when the other hotel pulls it (default true)' }
+        },
+        required: ['agent_id']
+      }
+    },
+    import_from_hotel: {
+      description: "Move an agent into this hotel from another AgentHotel: give the transfer URL that hotel issued (its create_transfer tool, or Export > Move to another hotel). This hotel fetches the agent itself, server to server, in the background — returns a job id for get_import_status. The agent arrives stopped: point its domain's DNS here, then redeploy_agent",
+      inputSchema: {
+        type: 'object',
+        properties: { url: { type: 'string', description: 'The transfer URL, ending in /api/transfer/<token>' } },
+        required: ['url']
+      }
+    },
+    get_import_status: {
+      description: 'Progress of an import_from_hotel job: downloading (bytes so far, total when known), importing, done (with the new agent) or failed (with why)',
+      inputSchema: {
+        type: 'object',
+        properties: { job_id: { type: 'string' } },
+        required: ['job_id']
       }
     },
     get_deploy_log: {
@@ -460,6 +489,34 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         } catch (err) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
         }
+      }
+
+      case 'create_transfer': {
+        if (!issueTransfer) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Transfers unavailable' }) }], isError: true };
+        const domain = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value;
+        if (!domain) return { content: [{ type: 'text', text: JSON.stringify({ error: "This hotel has no panel domain set, so it cannot say where to fetch from — set one on the Domains page" }) }], isError: true };
+        try {
+          const t = await issueTransfer(args.agent_id, { includeData: args.include_data !== false, stopOnPull: args.stop_on_pull !== false, base: `https://${domain}` });
+          return { content: [{ type: 'text', text: JSON.stringify(t) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+        }
+      }
+
+      case 'import_from_hotel': {
+        if (!startImportFrom) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Transfers unavailable' }) }], isError: true };
+        try {
+          const job = startImportFrom(args.url);
+          return { content: [{ type: 'text', text: JSON.stringify({ job_id: job.id, status: job.status, next: 'get_import_status(job_id) until done or failed' }) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+        }
+      }
+
+      case 'get_import_status': {
+        const job = importJobs && importJobs.get(args.job_id);
+        if (!job) return { content: [{ type: 'text', text: JSON.stringify({ error: 'No such import job' }) }], isError: true };
+        return { content: [{ type: 'text', text: JSON.stringify(job) }] };
       }
 
       case 'get_deploy_log': {

@@ -8,6 +8,7 @@ import {
   Zap, GitBranch, MessagesSquare, History
 } from 'lucide-react'
 import Deployments from './Deployments'
+import { MoveOut } from './HotelTransfer'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -544,6 +545,7 @@ function AgentDetail() {
                 Volume data requires a stopped agent for a consistent copy — same as Easypanel.
               </p>
             )}
+            <MoveOut agent={agent} />
           </div>
         </div>
       )}

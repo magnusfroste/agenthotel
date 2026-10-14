@@ -107,3 +107,22 @@ test('get_deploy_log hands an agent the latest deploy and its log, masked', asyn
   const other = await call(server, 'get_deploy_log', { agent_id: 'someone-else', deployment_id: id });
   assert.ok(other.note || other.error);
 });
+
+test('create_transfer needs the hotel address; import_from_hotel checks the link first', async () => {
+  const { db, docker } = setup();
+  const issued = [];
+  const server = createMcpServer(db, docker, runtimes, async () => {}, async () => {}, {
+    issueTransfer: async (id, opts) => { issued.push([id, opts]); return { url: `${opts.base}/api/transfer/${'a'.repeat(64)}` }; },
+    startImportFrom: (url) => { if (!/\/api\/transfer\/[0-9a-f]{64}$/.test(url)) throw new Error('Not an AgentHotel transfer URL'); return { id: 'job1', status: 'downloading' }; },
+    importJobs: new Map([['job1', { id: 'job1', status: 'done', agent: { name: 'reel-studio' } }]])
+  });
+  const noDomain = await call(server, 'create_transfer', { agent_id: REEL });
+  assert.match(noDomain.error, /panel domain/);
+  db.prepare("INSERT INTO settings (key, value) VALUES ('panel_domain', 'hotel-a.example.com')").run();
+  const t = await call(server, 'create_transfer', { agent_id: REEL, include_data: false });
+  assert.strictEqual(t.url, `https://hotel-a.example.com/api/transfer/${'a'.repeat(64)}`);
+  assert.deepStrictEqual(issued[0][1], { includeData: false, stopOnPull: true, base: 'https://hotel-a.example.com' });
+  assert.match((await call(server, 'import_from_hotel', { url: 'https://evil.example.com/x' })).error, /transfer URL/);
+  assert.strictEqual((await call(server, 'import_from_hotel', { url: t.url })).job_id, 'job1');
+  assert.strictEqual((await call(server, 'get_import_status', { job_id: 'job1' })).status, 'done');
+});
