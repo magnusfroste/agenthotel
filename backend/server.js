@@ -4359,10 +4359,11 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
       mcpToken = authToken ? '***' + authToken.slice(-4) : null;
     }
     
-    try {
-      const ps = execSync('ps aux | grep -E "node.*mcp.*server" | grep -v grep', { encoding: 'utf8' });
-      mcpRunning = ps.trim().length > 0;
-    } catch (e) {}
+    // /mcp is served by this process (mcp.js), so it answers whenever it is
+    // switched on. This used to look for a separate "node … mcp … server"
+    // process from an early version, found none, and showed a working
+    // endpoint as merely "Configured".
+    mcpRunning = mcpConfigured;
     
     res.json({
       installed: mcpInstalled,
