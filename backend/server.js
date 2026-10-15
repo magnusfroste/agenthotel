@@ -4348,12 +4348,15 @@ app.get('/api/system/mcp-status', requireAuth, (req, res) => {
     let mcpEndpoint = null;
     let mcpToken = null;
     
+    // The endpoint and the token are read from what /mcp actually checks — the
+    // settings — not from config.json. That file lives in the image, so every
+    // upgrade deleted it, and with it the Token row: the copy and rotate
+    // buttons vanished, and after a rotation it showed the old token's last
+    // four.
     if (mcpConfigured) {
-      try {
-        const config = JSON.parse(fs.readFileSync(mcpConfigFile, 'utf8'));
-        mcpEndpoint = config.endpoint || null;
-        mcpToken = config.token ? '***' + config.token.slice(-4) : null;
-      } catch (e) {}
+      const authToken = db.prepare("SELECT value FROM settings WHERE key = 'auth_token'").get()?.value;
+      mcpEndpoint = '/mcp';
+      mcpToken = authToken ? '***' + authToken.slice(-4) : null;
     }
     
     try {
