@@ -4,7 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentHotel</title>
+    <meta name="description" content="Any agent, any model, always on — on your own server." />
+    <meta name="theme-color" content="#141414" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- A shared link to the panel previews as AgentHotel. Link previews need
+         an absolute image URL and every installation has its own domain, so
+         nginx writes the origin in as it serves this file (__ORIGIN__,
+         frontend/nginx.conf). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AgentHotel" />
+    <meta property="og:title" content="AgentHotel" />
+    <meta property="og:description" content="Any agent, any model, always on — on your own server." />
+    <meta property="og:image" content="__ORIGIN__/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="__ORIGIN__/og.png" />
   </head>
   <body>
     <div id="root"></div>
