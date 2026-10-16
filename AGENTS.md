@@ -42,7 +42,7 @@ Backend supports seven runtimes in `backend/plugins/`:
 - `openclaw`: OpenClaw persistent agent
 - `odysseus`: Self-hosted AI workspace
 - `docker-app`: Generic Docker image deployment
-- `git-app`: Builds a repository's Dockerfile (how reel-studio and Lobby deploy)
+- `git-app`: Builds a repository's Dockerfile (how Take — AgentTake, formerly reel-studio — and Lobby deploy)
 - `git-compose`: Runs a repository's compose file, for stacks that mount their own files (SkillHub)
 - `compose`: A compose file given as text
 
@@ -220,7 +220,7 @@ the login page follows it too; `system` tracks `prefers-color-scheme` live.
 Any element that can show a secret — a key, token, password, a credentials
 value, MCP server headers, a compose .env, logs, the terminal — carries a
 `data-secret` attribute. It does nothing in the panel; it is what a screen
-recording blurs: reel-studio's `start_session(mask=["[data-secret]",
+recording blurs: Take's (AgentTake, formerly reel-studio) `start_session(mask=["[data-secret]",
 "input[type=password]"])` keeps every marked element unreadable from the first
 frame. A new component that renders a secret must add it, or a demo video of
 that page shows the secret.

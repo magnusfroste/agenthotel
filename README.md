@@ -8,7 +8,7 @@ AgentHotel turns one VPS into a hotel for AI agents. Each guest gets its own roo
 
 [![Two agents on two different models answering the same question in AgentHotel's Chat](docs/media/demo-chat.jpg)](https://reel.froste.eu/watch/eadb09c7f7954004a620e12e24794526)
 
-<sub>▶ [Watch the 45-second demo](https://reel.froste.eu/watch/eadb09c7f7954004a620e12e24794526) — directed end to end by an agent on this hotel, with [reel-studio](https://github.com/magnusfroste/reel-studio), an agent tool that lives here too.</sub>
+<sub>▶ [Watch the 45-second demo](https://reel.froste.eu/watch/eadb09c7f7954004a620e12e24794526) — directed end to end by an agent on this hotel, with [Take](https://github.com/magnusfroste/agenttake) (AgentTake), an agent tool that lives here too.</sub>
 
 **Try it** on a fresh Ubuntu/Debian VPS, as root ([details](#quick-start)):
 
@@ -170,7 +170,7 @@ Ready-made templates on top of those runtimes, each deployed from one form with 
 | Template | What it is |
 | --- | --- |
 | **SkillHub** | A shared memory for your agents — self-hosted Supabase with search by meaning |
-| **Reel-studio** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
+| **Take** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
 | **Lobby** | A web hotel for landing pages — one markdown file per site, written by agents over MCP |
 | **Sluss** | A self-hosted LLM gateway for EU organisations: every prompt classified and routed under a fail-closed policy, with an audit trail — put the hotel's agents behind it as a provider |
 

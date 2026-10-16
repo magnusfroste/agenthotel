@@ -1,9 +1,9 @@
-name: Reel-studio
+name: Take
 category: MCP Tool
 icon: film
 color: '#e11d48'
 source: builtin
-description: 'Hand the camera to an agent. Reel-studio drives a real browser, records the screen and puts narration on the beat — the agent decides what to click and what to say, and walks away with a finished MP4 and a public link.
+description: 'Hand the camera to an agent. Take (AgentTake, formerly reel-studio) drives a real browser, records the screen and puts narration on the beat — the agent decides what to click and what to say, and walks away with a finished MP4 and a public link.
 
   '
 instructions: 'Give it a domain: the MCP address becomes https://<domain>/mcp, and finished videos are served from the same host. The API token is generated and shown under Credentials. An agent sends it as `Authorization: Bearer <token>`.
@@ -26,7 +26,7 @@ tags:
 - playwright
 links:
 - label: Repository
-  url: https://github.com/magnusfroste/reel-studio
+  url: https://github.com/magnusfroste/agenttake
 benefits:
 - title: The agent directs
   description: It observes the page, decides the shot and writes the narration. You describe the video, you do not record it
@@ -43,7 +43,7 @@ features:
   description: Every finished film gets a public page at /theater, with its storyboard
 deploy:
   runtime: git-app
-  repo: https://github.com/magnusfroste/reel-studio
+  repo: https://github.com/magnusfroste/agenttake
   ref: main
   port: 8000
   healthcheck: /health
