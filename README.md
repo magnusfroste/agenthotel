@@ -6,9 +6,9 @@ AgentHotel turns one VPS into a hotel for AI agents. Each guest gets its own roo
 
 **Any agent, on any model.** Hermes Agent, OpenClaw or any other open-source harness, each always on at its own address. Point them at a frontier model, at your own model on your own hardware, or at European models shared by the [GarageAI](https://garageai.eu) community — and ask several of them the same question at once in **Chat**.
 
-[![Two agents on two different models answering the same question in AgentHotel's Chat](docs/media/demo-chat.jpg)](https://media.liteit.se/video%20(1).mp4)
+[![Two agents on two different models answering the same question in AgentHotel's Chat](docs/media/demo-chat.jpg)](https://media.liteit.se/agenthotel.mp4)
 
-<sub>▶ [Watch the 45-second demo](https://media.liteit.se/video%20(1).mp4) — directed end to end by an agent on this hotel, with [Take](https://github.com/magnusfroste/agenttake) (AgentTake), an agent tool that lives here too.</sub>
+<sub>▶ [Watch the 45-second demo](https://media.liteit.se/agenthotel.mp4) — directed end to end by an agent on this hotel, with [Take](https://github.com/magnusfroste/agenttake) (AgentTake), an agent tool that lives here too.</sub>
 
 **Try it** on a fresh Ubuntu/Debian VPS, as root ([details](#quick-start)):
 
