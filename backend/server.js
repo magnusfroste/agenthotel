@@ -3436,15 +3436,43 @@ app.put('/api/providers/:id', requireAuth, async (req, res) => {
     const row = providerRowFromRequest(req.body, existing);
     db.prepare('UPDATE providers SET name = ?, type = ?, baseUrl = ?, apiKey = ?, models = ? WHERE id = ?')
       .run(row.name, row.type, row.baseUrl, row.apiKey, JSON.stringify(row.models), req.params.id);
+    // A new name is a new env prefix: take the old one out of every agent, or
+    // it stays beside the new one for good. The new one arrives on redeploy.
+    if (builtinProviders.slugify(row.name) !== builtinProviders.slugify(existing.name)) {
+      const n = forgetProviderEnv(existing);
+      if (n) logEvent('provider.renamed', null, `${existing.name} renamed to ${row.name}: its old env removed from ${n} agent(s) — redeploy them to get the new one`);
+    }
     res.json(await withFreshModels({ id: req.params.id, ...row }));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
+// Remove what a provider injected from every agent's stored config. Takes
+// effect in the containers on their next redeploy.
+function forgetProviderEnv(provider) {
+  const { withoutProviderEnv } = require('./lib/providerEnv');
+  let changed = 0;
+  for (const agent of db.prepare('SELECT id, config FROM agents').all()) {
+    let config;
+    try { config = JSON.parse(agent.config || '{}'); } catch (_) { continue; }
+    const next = withoutProviderEnv(config, provider);
+    if (Object.keys(next).length !== Object.keys(config).length) {
+      db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(next), agent.id);
+      changed++;
+    }
+  }
+  return changed;
+}
+
 app.delete('/api/providers/:id', requireAuth, (req, res) => {
   try {
+    const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
     db.prepare('DELETE FROM providers WHERE id = ?').run(req.params.id);
+    if (existing) {
+      const n = forgetProviderEnv(existing);
+      if (n) logEvent('provider.deleted', null, `${existing.name} deleted: its env removed from ${n} agent(s) — redeploy them to apply`);
+    }
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

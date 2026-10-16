@@ -228,4 +228,34 @@ function builtinLeftovers(config) {
   return out;
 }
 
-module.exports = { injectProviderEnv, pinnedDefaultModel, builtinLeftovers, PROVIDER_ENV_MAP };
+// The env vars a provider put into an agent, taken out again — for when the
+// provider is renamed or deleted. Injection only ever adds, so renaming "api"
+// to "garageai" left API_API_KEY / API_BASE_URL / API_MODELS in every agent
+// for good, beside the new GARAGEAI_* ones, and Hermes listed both (2026-10-16).
+// Only values that are still what the panel injected are removed: a key the
+// operator typed into an agent by hand under the same name stays.
+function withoutProviderEnv(config, provider) {
+  const out = { ...(config || {}) };
+  const slugUpper = slugify(provider && provider.name).toUpperCase();
+  if (!slugUpper) return out;
+  let models = null;
+  try {
+    const list = JSON.parse(provider.models || '[]');
+    if (Array.isArray(list) && list.length) models = list.join(',');
+  } catch (_) {}
+  const injected = {
+    [`${slugUpper}_API_KEY`]: provider.apiKey || null,
+    [`${slugUpper}_BASE_URL`]: effectiveBaseUrl(provider) || null,
+    [`${slugUpper}_MODELS`]: models
+  };
+  for (const [key, value] of Object.entries(injected)) {
+    if (value != null && out[key] === value) delete out[key];
+  }
+  // The model list is refreshed after injection, so it rarely still matches;
+  // once its address is gone it describes an endpoint the agent no longer has.
+  const modelsKey = `${slugUpper}_MODELS`;
+  if (modelsKey in out && !(`${slugUpper}_BASE_URL` in out) && (config || {})[`${slugUpper}_BASE_URL`] !== undefined) delete out[modelsKey];
+  return out;
+}
+
+module.exports = { injectProviderEnv, pinnedDefaultModel, builtinLeftovers, withoutProviderEnv, PROVIDER_ENV_MAP };

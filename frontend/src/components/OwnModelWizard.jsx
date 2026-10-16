@@ -13,12 +13,24 @@ import { Search, Check, AlertTriangle, X } from 'lucide-react'
 
 const slugOf = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
-// A readable default name from the host: the first label, or "local" for an IP.
+// Second-level suffixes where the name is one label further left
+// (models.example.co.uk is "example", not "co").
+const TWO_PART_SUFFIXES = new Set(['co.uk', 'org.uk', 'ac.uk', 'com.au', 'net.au', 'co.nz', 'co.jp', 'com.br', 'co.za', 'com.cn'])
+
+// A readable default name from the host: the organisation's label, the one
+// before the top-level domain, or "local" for an IP. It used to be the first
+// label, so api.garageai.eu became "api" and the agents got API_API_KEY and
+// models written api/... (2026-10-16); llm., gpu. and inference. hosts fared
+// no better. A single-label host (a container name, "ollama") is used as is.
 function nameFromUrl(url) {
   try {
-    const host = new URL(url).hostname
+    const host = new URL(url).hostname.replace(/\.$/, '')
     if (/^[\d.]+$/.test(host) || host.includes(':')) return 'local'
-    return slugOf(host.split('.')[0]) || 'local'
+    const labels = host.split('.')
+    if (labels.length === 1) return slugOf(labels[0]) || 'local'
+    const lastTwo = labels.slice(-2).join('.')
+    const at = TWO_PART_SUFFIXES.has(lastTwo) && labels.length > 2 ? labels.length - 3 : labels.length - 2
+    return slugOf(labels[at]) || 'local'
   } catch (e) { return '' }
 }
 
@@ -146,7 +158,7 @@ export default function OwnModelWizard({ existing = [], onDone, onCancel }) {
               placeholder="dgxspark" style={{ fontFamily: 'monospace' }} />
             <div style={hint}>
               This name is the prefix agents write, so keep it short.
-              {slug && picked[0] && <> An agent will use <code>{slug}/{picked[0].id}</code>.</>}
+              {slug && picked[0] && <> An agent will use <code>{slug}/{picked[0].id}</code>, with the key in <code>{slug.toUpperCase()}_API_KEY</code>.</>}
             </div>
             {clash && <div style={{ ...hint, color: '#f59e0b' }}>A provider named {slug} already exists. Its keys would collide — pick another name.</div>}
           </div>
