@@ -113,7 +113,7 @@ function AgentPicker({ agents, taken, onPick }) {
   )
 }
 
-function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
+function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact, returning }) {
   const [status, setStatus] = useState('connecting') // connecting | ready | working | paused | closed | error
   const [entries, setEntries] = useState([])
   const [input, setInput] = useState('')
@@ -145,6 +145,14 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
     const fresh = freshRef.current
     freshRef.current = false
     let record = paneRecord(paneKey)
+    // Why the pane starts the way it does, said in the pane once it is up —
+    // "it forgot my conversation" was not something anyone could tell apart
+    // from "it never had one saved" (2026-10-17).
+    const reconnect = reconnectingRef.current
+    const why = fresh || !returning ? null
+      : !record ? 'none'
+      : record.agentId !== agent.id ? 'other-agent'
+      : null
     if (fresh || record?.agentId !== agent.id) { record = null; savePaneRecord(paneKey, null) }
     setStatus('connecting')
     setEntries([])
@@ -197,10 +205,12 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
       try {
         await client.initialize()
         let sessionId = null
+        let restored = null
         if (record?.sessionId && client.canLoad()) {
           try {
             const loaded = await client.loadSession(record.sessionId, cwd || '/')
             sessionId = record.sessionId
+            restored = client.resumed ? 'same' : 'loaded'
             setModel(loaded?.models?.currentModelId || '')
           } catch (err) {
             if (cancelled) return
@@ -215,7 +225,13 @@ function ChatPane({ paneKey, agent, cwd, onClose, registerSender, compact }) {
         if (cancelled) return
         sessionRef.current = sessionId
         savePaneRecord(paneKey, { agentId: agent.id, sessionId, bridgeKey: client.bridgeKey })
-        setEntries(prev => prev.map(e => ({ ...e, closed: true })))
+        const said = restored === 'same' ? (reconnect ? null : 'Back in the same conversation — it kept running while you were away.')
+          : restored === 'loaded' ? 'Restored the earlier conversation.'
+          : record?.sessionId && !client.canLoad() ? `A new conversation — ${agent.name} cannot restore an earlier one.`
+          : why === 'none' ? 'A new conversation — this pane had none saved.'
+          : why === 'other-agent' ? `A new conversation — this pane last held one with another agent.`
+          : null
+        setEntries(prev => [...prev.map(e => ({ ...e, closed: true })), ...(said ? [{ kind: 'notice', level: 'info', text: said, closed: true }] : [])])
         retriesRef.current = 0
         reconnectingRef.current = false
         setStatus(busy ? 'working' : 'ready')
@@ -367,6 +383,9 @@ function Chat() {
   const [runtimes, setRuntimes] = useState({})
   const [layout, setLayout] = useState(() => remembered('chat.layout', 1))
   const [panes, setPanes] = useState(() => remembered('chat.panes', [null, null, null, null]))
+  // The panes as the page found them: those are returning, the rest were just
+  // picked, and only a returning pane says how it came back.
+  const [initialPanes] = useState(() => remembered('chat.panes', [null, null, null, null]))
   const [broadcast, setBroadcast] = useState('')
   const sendersRef = useRef({})
   const [paneCounts, setPaneCounts] = useState({ open: 0, ready: 0 })
@@ -453,7 +472,7 @@ function Chat() {
           const agent = agentId && agentById[agentId]
           return agent ? (
             <ChatPane key={`${index}-${agent.id}`} paneKey={`pane-${index}`} agent={agent} cwd={runtimes[agent.runtime]?.acp?.cwd}
-              compact={layout === 4} registerSender={registerSender} onClose={() => setPane(index, null)} />
+              returning={initialPanes[index] === agent.id} compact={layout === 4} registerSender={registerSender} onClose={() => setPane(index, null)} />
           ) : (
             <section key={`${index}-empty`} className="chat-pane chat-pane-empty">
               <AgentPicker agents={agents} taken={visible.filter(Boolean)} onPick={id => setPane(index, id)} />
