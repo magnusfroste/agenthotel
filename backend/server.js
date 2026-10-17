@@ -4882,6 +4882,22 @@ async function upgradeHandler(req, res) {
     return res.status(409).json(deploys.upgradeConflict(running));
   }
 
+  // The upgrade builds two images on the host. With too little room the
+  // build dies part-way ("no space left on device"), the panel stays on the
+  // old version, and what the build wrote fills the disk the rest of the way
+  // — panel.froste.eu went to 100% that way on 2026-10-17. Refuse up front.
+  try {
+    const { disk } = await require('./lib/observability').collectHostMetrics();
+    const free = disk.total - disk.used;
+    const need = 2 * 1024 ** 3;
+    if (disk.total && free < need && req.body?.force !== true) {
+      return res.status(507).json({
+        error: `Only ${(free / 1024 ** 3).toFixed(1)} GB free on the host — an upgrade needs about 2 GB to build. ` +
+          'Free space first: System → Disk by agent shows where it goes, and Run Cleanup Now clears the build cache.'
+      });
+    }
+  } catch (_) { /* cannot measure: go ahead as before */ }
+
   let dir;
   try {
     dir = await hostProjectDir();
