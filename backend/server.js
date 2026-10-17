@@ -661,6 +661,37 @@ async function listOrphanedVolumes() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Where the disk goes, per agent (lib/diskUsage.js). `docker system df`
+// measures every volume, which takes seconds on a full disk, so the answer
+// is kept for two minutes unless ?refresh=1.
+let diskReport = null;
+async function buildDiskReport({ refresh = false } = {}) {
+  if (!refresh && diskReport && Date.now() - diskReport.at < 2 * 60 * 1000) return diskReport.value;
+  const { diskByAgent } = require('./lib/diskUsage');
+  const { collectHostMetrics } = require('./lib/observability');
+  const agents = db.prepare('SELECT id, name, runtime, config FROM agents').all();
+  const projects = {};
+  for (const a of agents) {
+    if (!composeManaged(a.runtime)) continue;
+    let config = {};
+    try { config = JSON.parse(a.config || '{}'); } catch (_) {}
+    // Docker stores compose project names lower-cased.
+    projects[a.id] = String(config.COMPOSE_PROJECT || `agenthotel-${a.id}`).toLowerCase();
+  }
+  const [df, host] = await Promise.all([docker.df(), collectHostMetrics()]);
+  const value = { ...diskByAgent(df, agents, projects), host: host.disk, measuredAt: new Date().toISOString() };
+  diskReport = { at: Date.now(), value };
+  return value;
+}
+
+app.get('/api/system/disk', requireAuth, async (req, res) => {
+  try {
+    res.json(await buildDiskReport({ refresh: req.query.refresh === '1' }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/docker/orphaned-volumes', requireAuth, async (req, res) => {
   try {
     res.json(await listOrphanedVolumes());
@@ -2650,7 +2681,12 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
           return;
         }
         const container = docker.getContainer(`agenthotel-${req.params.id}`);
-        try { await container.stop(); await container.remove(); } catch (e) {}
+        // Separately: stopping a container that is already stopped throws
+        // (304), and in one try that skipped the remove — the new container
+        // then collided with the old one's name and a stopped agent could
+        // not be redeployed (matthias, 2026-10-17).
+        try { await container.stop(); } catch (e) {}
+        try { await container.remove({ force: true }); } catch (e) {}
 
         await removeAgentRoutes(agent);
 
@@ -2794,7 +2830,12 @@ async function runRedeploy(agent, plugin, config, rebuildImage, gateEntry) {
           throw new Error(`Build failed, the agent was left running: ${err.message}`);
         }
         const container = docker.getContainer(`agenthotel-${agentId}`);
-        try { await container.stop(); await container.remove(); } catch (e) {}
+        // Separately: stopping a container that is already stopped throws
+        // (304), and in one try that skipped the remove — the new container
+        // then collided with the old one's name and a stopped agent could
+        // not be redeployed (matthias, 2026-10-17).
+        try { await container.stop(); } catch (e) {}
+        try { await container.remove({ force: true }); } catch (e) {}
 
         await removeAgentRoutes(agent);
 
