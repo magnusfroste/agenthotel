@@ -186,7 +186,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
     },
     get_docker_usage: {
-      description: 'Docker disk accounting: images, containers, volumes and build cache with reclaimable bytes',
+      description: 'Docker disk accounting: images, containers, volumes and build cache, and byAgent — what each agent holds (its volumes and container layer, bytes) with the image it runs. Image sizes overlap (shared layers); layersSize counts each layer once',
       inputSchema: { type: 'object', properties: {} }
     },
     get_events: {
@@ -588,7 +588,17 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
 
       case 'get_docker_usage': {
-        return { content: [{ type: 'text', text: JSON.stringify(await collectDockerUsage(docker), null, 2) }] };
+        const usage = await collectDockerUsage(docker);
+        // Per agent too: "which agent filled the disk" is the question this
+        // tool is asked, and the totals alone could not answer it.
+        try {
+          const { diskByAgent } = require('./lib/diskUsage');
+          const agents = db.prepare('SELECT id, name, runtime, config FROM agents').all();
+          const byAgent = diskByAgent(await docker.df(), agents);
+          usage.byAgent = byAgent.agents.map(a => ({ name: a.name, total: a.total, data: a.data, container: a.container, image: a.image }));
+          usage.layersSize = byAgent.layersSize;
+        } catch (_) { /* the totals still answer */ }
+        return { content: [{ type: 'text', text: JSON.stringify(usage, null, 2) }] };
       }
 
       case 'get_events': {

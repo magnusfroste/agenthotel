@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk, setToken } from '../lib/auth'
 import { useToast } from './Toast'
 import NetBirdCard from './NetBirdCard'
+import DiskByAgent from './DiskByAgent'
 import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers, Copy, Network } from 'lucide-react'
 import SettingCard from './SettingCard'
 import InstanceBackup from './InstanceBackup'
@@ -665,6 +666,8 @@ sysctl -w vm.swappiness=10`}</pre>
           )}
         </section>
       )}
+
+      <DiskByAgent />
 
       <section className="settings-section">
         <div className="section-header">
