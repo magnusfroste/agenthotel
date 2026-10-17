@@ -1918,6 +1918,22 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
           if (p) { p.done = true; p.finishedAt = Date.now(); p.error = err.message; p.line = `Build failed: ${err.message}`.slice(0, 200); }
           throw err;
         }
+        // A failed RUN arrives as an error entry in the output, not as a
+        // rejection — and when the tag already existed, the old image still
+        // answers to it, so the check below passed and the agent came back
+        // on the previous build with the deploy marked succeeded. A Hermes
+        // rebuild that ran out of disk at apt-get looked exactly like an
+        // upgrade that worked (agenthotel.froste.eu, 2026-10-17).
+        const failed = (buildOutput || []).find(o => o && (o.error || o.errorDetail));
+        if (failed) {
+          const message = String(failed.error || failed.errorDetail?.message || 'build step failed').trim();
+          const tail = (buildOutput || [])
+            .map(o => o.stream || o.error || '')
+            .join('').trim().split('\n').slice(-12).join('\n');
+          const p = buildProgress.get(id);
+          if (p) { p.done = true; p.finishedAt = Date.now(); p.error = message; p.line = `Build failed: ${message}`.slice(0, 200); }
+          throw new Error(`Image build failed: ${message}\n${tail}`);
+        }
         // Build failures can slip through followProgress without an error
         // (seen with buildkit: stream ends, no image tagged, deploy later
         // dies with a confusing "No such image"). Verify the image exists
