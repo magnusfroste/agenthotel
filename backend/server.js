@@ -2581,7 +2581,14 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     // place: pressing Remove in the environment editor and saving appeared to
     // work and changed nothing. Deleting has to be said out loud — and it must
     // be, now that each editor sends only the fields it owns.
-    const updatedConfig = config ? { ...JSON.parse(agent.config || '{}'), ...config } : JSON.parse(agent.config || '{}');
+    let updatedConfig = config ? { ...JSON.parse(agent.config || '{}'), ...config } : JSON.parse(agent.config || '{}');
+    // Saving settings restarts the agent like a redeploy does, so it picks up
+    // providers added since, the same way: only keys it does not have yet.
+    // Without this an agent whose settings were saved after a provider was
+    // added never got it — the operator's "redeploy" was a save, and nothing
+    // in the panel told the two apart (davida, 2026-10-17). Keys removed in
+    // this same request stay removed.
+    updatedConfig = await injectProviderEnv(db, updatedConfig, runtimes[agent.runtime]);
     if (Array.isArray(removeKeys)) for (const key of removeKeys) delete updatedConfig[key];
     let updatedDomain = domain !== undefined ? domain : agent.domain;
     // Values derived from the old domain follow it (see lib/orphans.js), unless

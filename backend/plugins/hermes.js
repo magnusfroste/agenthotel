@@ -262,7 +262,10 @@ module.exports = {
       const row = getProvider(providerName);
       if (row) {
         if (!autoConfig[keyEnv] && row.apiKey) autoConfig[keyEnv] = row.apiKey;
-        if (baseUrlEnv && !autoConfig[baseUrlEnv] && row.baseUrl) autoConfig[baseUrlEnv] = row.baseUrl;
+        // The override slot holds an address only when it differs from the
+        // provider's own: writing OpenAI's address into OPENAI_BASE_URL said
+        // nothing and read as a leftover custom endpoint (2026-10-17).
+        if (baseUrlEnv && !autoConfig[baseUrlEnv] && row.baseUrl && row.baseUrl !== PROVIDER_BASE_URL[providerName.toLowerCase()]) autoConfig[baseUrlEnv] = row.baseUrl;
       }
     }
     if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.6-luna';
