@@ -33,6 +33,20 @@ Because that is what running several agents actually is. The metaphor is not dec
 
 Running AI agents on your own server otherwise means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentHotel removes all of that.
 
+## Better together
+
+Two projects from the same family, each useful on its own and better with a hotel.
+
+### 🎬 [AgentTake](https://github.com/magnusfroste/agenttake) — your agents make the demo video
+
+Hand the camera to an agent. It drives a real browser, decides what to click and what to say, moves the camera onto what matters, and finishes a narrated MP4 with subtitles and a public watch page — no screen recorder, no editing suite. The launch film above was made exactly this way: a Hermes agent on this hotel directed, filmed and cut it.
+
+In AgentHotel it is one click: the **Take** template. It also runs anywhere on its own. → [agenttake.clawable.org](https://agenttake.clawable.org)
+
+### 🇪🇺 [GarageAI](https://www.garageai.eu) — European models for your agents
+
+Open models served from GPUs in European garages, through one OpenAI-compatible API. Add GarageAI as a provider and every agent in the hotel can use it — local and sovereign, instead of a hyperscaler, for the work that should stay in Europe. Own a GPU? GarageAI Bridge connects it in one line, and you get paid for every token it serves. → [garageai.eu](https://www.garageai.eu)
+
 ## Features
 
 ### Chat with your agents
