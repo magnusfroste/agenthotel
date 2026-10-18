@@ -87,7 +87,13 @@ async function injectProviderEnv(db, config, plugin) {
       if (own && !finalConfig[`${slugUpper}_BASE_URL`] && effectiveBaseUrl(provider)) {
         finalConfig[`${slugUpper}_BASE_URL`] = effectiveBaseUrl(provider);
       }
-      if (own && !finalConfig[`${slugUpper}_MODELS`] && provider.models) {
+      // The model list is the provider's, not the operator's: it is always
+      // refreshed, never only filled in. Kept as first injected, an agent went
+      // on with the endpoint's list from the day it was created — garageai
+      // later served "garageai/auto", the agent's list did not have it, so
+      // HERMES_MODEL garageai/auto was read as model "auto", which the endpoint
+      // refused, on camera (hermes-research, take 25, 2026-10-18).
+      if (own && provider.models) {
         try {
           const list = JSON.parse(provider.models);
           if (Array.isArray(list) && list.length) finalConfig[`${slugUpper}_MODELS`] = list.join(',');

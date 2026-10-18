@@ -55,3 +55,18 @@ test('leftover rows from a built-in are named for removal; an operator\'s proxy 
   assert.deepStrictEqual(gone.sort(), ['OPENAI_BASE_URL', 'OPENAI_MODELS', 'OPENROUTER_BASE_URL', 'OPENROUTER_MODELS']);
   assert.deepStrictEqual(builtinLeftovers({ OPENAI_BASE_URL: 'https://proxy.example/v1', OPENAI_API_KEY: 'sk' }), []);
 });
+
+test("an own endpoint's model list follows the provider; its key and address set by hand stay", async () => {
+  // hermes-research, take 25: created when garageai listed other models, it
+  // kept that list, so HERMES_MODEL garageai/auto was read as model "auto".
+  const db = dbWith([{ name: 'garageai', type: 'own', baseUrl: 'https://llm.garageai.eu/v1', apiKey: 'sk-garage', models: ['qwen/qwen3.8-27b', 'garageai/auto'] }]);
+  const out = await injectProviderEnv(db, {
+    GARAGEAI_MODELS: 'garage/old/deepseek,deepseek/old',
+    GARAGEAI_API_KEY: 'sk-typed-by-hand',
+    GARAGEAI_BASE_URL: 'https://my.own.proxy/v1',
+    HERMES_MODEL: 'garageai/auto'
+  }, plugin);
+  assert.strictEqual(out.GARAGEAI_MODELS, 'qwen/qwen3.8-27b,garageai/auto');
+  assert.strictEqual(out.GARAGEAI_API_KEY, 'sk-typed-by-hand');
+  assert.strictEqual(out.GARAGEAI_BASE_URL, 'https://my.own.proxy/v1');
+});
