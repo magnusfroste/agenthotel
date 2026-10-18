@@ -470,7 +470,7 @@ module.exports = {
     // which resolves auth from OPENAI_API_KEY and honours the override.
     // A private, OpenAI-compatible endpoint must NOT be pinned here. hermes
     // resolves those from OPENAI_BASE_URL + OPENAI_API_KEY + a bare
-    // HERMES_MODEL entirely on its own — that is how the earlier Easypanel
+    // HERMES_MODEL entirely on its own — that is how an earlier
     // deployment of this same image worked against this same endpoint, with no
     // config.yaml block at all. Patching one in fights that resolution: it
     // pinned `provider: custom`, which is absent from hermes's auth registry

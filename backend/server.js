@@ -1283,9 +1283,9 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
   res.json({ ...agent, config, source, configFields: plugin?.configFields || [], canSelfTest: typeof plugin?.selfTest === 'function', hasRuntimeImage: Boolean(plugin && typeof plugin.prepareBuild !== 'function' && require('./lib/runtimeImage').baseImageFor(agent.runtime)) });
 });
 
-// Per-service export (Easypanel-style): the agent's full configuration as a
+// Per-service export: the agent's full configuration as a
 // downloadable zip. With ?data=1 the persistent volume data is included as
-// volumes/*.tar entries (requires a stopped agent, like Easypanel). The
+// volumes/*.tar entries (requires a stopped agent). The
 // container image is never included — it is rebuilt from the runtime
 // template (or pulled) on redeploy.
 
@@ -1347,7 +1347,7 @@ async function tarVolumeToFile(volumeName) {
 
 // Write an agent's export zip — agent.json, a README and, with includeData,
 // a tar of each of its volumes — to out (an HTTP response). Data needs the
-// agent stopped, for a consistent copy (Easypanel has the same rule).
+// agent stopped, for a consistent copy.
 // beforeWrite runs once nothing can fail early any more, so a caller can set
 // its headers then. Shared by the Export button and a transfer ticket's pull.
 async function writeAgentExport(agent, includeData, out, { beforeWrite = null } = {}) {
@@ -4008,7 +4008,7 @@ app.post('/api/system/notify-test', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// Instance export/import (Easypanel-style VPS-to-VPS migration).
+// Instance export/import (VPS-to-VPS migration).
 // Exports agents (incl. compose definitions), providers and non-secret
 // settings. Admin credentials and auth_token are NEVER exported.
 const EXPORTABLE_SETTINGS = ['panel_domain', 'panel_domain_aliases', 'caddy_email', 'default_network'];

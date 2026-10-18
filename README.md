@@ -106,7 +106,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Built-in MCP server** — let external AI agents list, create, redeploy and delete agents, check system status and pull logs
 - **REST API** — everything the UI does is available over a token-authenticated JSON API
 - **Move to another hotel** — no lock-in: an agent's memory is its harness's own files, and they go with it. One hotel issues a one-time link, the other fetches the agent from it, server to server, memory included (Export → *Move to another hotel*, Import Agent → *From another hotel*, or the `create_transfer` / `import_from_hotel` MCP tools). The agent stops in the old hotel the moment it is pulled, so it never runs in two places
-- **Export / import** — one-click instance backup and VPS-to-VPS migration (agents, providers and settings; admin credentials are never exported), plus per-service export/import as a zip — move a single agent between instances like Easypanel, optionally including its persistent volume data (requires a stopped agent, for a consistent copy)
+- **Export / import** — one-click instance backup and VPS-to-VPS migration (agents, providers and settings; admin credentials are never exported), plus per-service export/import as a zip — move a single agent between instances, optionally including its persistent volume data (requires a stopped agent, for a consistent copy)
 
 ## Quick Start
 
@@ -256,7 +256,7 @@ docker compose up -d
 docker compose logs -f backend
 ```
 
-See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations), and [BACKLOG.md](BACKLOG.md) for the roadmap.
+See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations). Ideas and bugs are welcome as GitHub issues.
 
 ## Security model
 

@@ -3,3 +3,9 @@ node_modules/
 *.db
 data/
 kilo.json
+
+# Local working notes and editor tooling, not part of the product
+BACKLOG.md
+SESSION_STATUS.md
+.kilo/
+frontend/dist/

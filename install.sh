@@ -5,7 +5,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "╔════════════════════════════════════════╗"
 echo "║     AgentHotel Installer v1.0.0       ║"
-echo "║   Easypanel for AI Agents             ║"
+echo "║   A hotel for AI agents               ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
 

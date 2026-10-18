@@ -3,7 +3,7 @@ import { CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, GitCommit } from 
 import { authFetch } from '../lib/auth'
 
 // An agent's deploys, newest first, and the full log of the one selected —
-// Easypanel's deployment list. A running deploy's log is followed by polling
+// one row per deploy. A running deploy's log is followed by polling
 // from the byte offset already shown, so a long build costs one small request
 // every second and a half. The log can carry secrets (build output, compose
 // .env interpolation); the backend masks config secrets, and data-secret keeps

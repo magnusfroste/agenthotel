@@ -862,9 +862,9 @@ deploy:
 
     ############
 
-    # skillhub: name under which Kong is reachable on Easypanel''s shared network
+    # skillhub: name under which Kong is reachable on the shared Docker network
 
-    # (what the Cloudflare tunnel ingress or Traefik points at). Easypanel''s own convention
+    # (what a tunnel or reverse proxy points at). The usual convention
 
     # is <project>_<service>_kong; change only if the service lives under another name.
 

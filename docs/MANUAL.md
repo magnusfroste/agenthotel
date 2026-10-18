@@ -1,6 +1,6 @@
 # AgentHotel Manual
 
-Hands-on documentation for running AgentHotel day to day. For architecture and build conventions, see [AGENTS.md](../AGENTS.md); for the roadmap, see [BACKLOG.md](../BACKLOG.md).
+Hands-on documentation for running AgentHotel day to day. For architecture and build conventions, see [AGENTS.md](../AGENTS.md).
 
 ## Providers & Models
 

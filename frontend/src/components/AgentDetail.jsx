@@ -542,7 +542,7 @@ function AgentDetail() {
             </div>
             {agent.status !== 'stopped' && (
               <p className="modal-text" style={{ marginTop: '0.75rem', marginBottom: 0, fontSize: '0.8rem' }}>
-                Volume data requires a stopped agent for a consistent copy — same as Easypanel.
+                Volume data requires a stopped agent for a consistent copy.
               </p>
             )}
             <MoveOut agent={agent} />
@@ -830,7 +830,7 @@ function AgentSelfTest({ agentId, running }) {
 }
 
 // Where the guest's code comes from — repository, ref, which compose file,
-// which service the domain points at. Easypanel keeps this apart from the
+// which service the domain points at. Kept apart from the
 // environment and it is the right split: GIT_REF is not a variable the app
 // reads, it decides what the app *is*. Which fields belong here is the
 // plugin's call, declared as group: 'source' on the field.

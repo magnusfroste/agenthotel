@@ -2,7 +2,7 @@
 // log. Until now the panel held only a 60-line build tail in memory while a
 // build ran, so a redeploy that went wrong left nothing to read once it was
 // over, and nothing at all after a panel restart (2026-10-10, redeploying
-// davida). Easypanel's deployment list is the model: one row per deploy, a
+// davida). The model: one row per deploy, a
 // log that streams while it runs and stays afterwards.
 //
 // Rows live in the `deployments` table; each log is a plain file under

@@ -1,4 +1,4 @@
-// The Environment tab as one block of text, the way a .env file or Easypanel
+// The Environment tab as one block of text, the way a .env file
 // shows it. It is a view of the same key/value pairs, not a second store:
 // switching back to rows, or saving, turns the text into pairs again, and the
 // panel keeps storing one config key per variable. That is why the text view
