@@ -4,7 +4,7 @@
 
 AgentHotel turns one VPS into a hotel for AI agents. Each guest gets its own room — an isolated container with its own memory and CPU allowance, its own domain with automatic HTTPS, and persistent state that survives restarts, redeploys and nights. You run the front desk: a web UI, a live view of every room, and an MCP server so your own AI tools can check guests in and out for you.
 
-**Any agent, on any model.** Hermes Agent, OpenClaw or any other open-source harness, each always on at its own address. Point them at a frontier model, at your own model on your own hardware, or at European models shared by the [GarageAI](https://garageai.eu) community — and ask several of them the same question at once in **Chat**.
+**Any agent, on any model.** Hermes Agent, OpenClaw or any other open-source harness, each always on at its own address. Point them at a frontier model, at your own model on your own hardware, or at a shared endpoint — and ask several of them the same question at once in **Chat**.
 
 [![Three agents on three different models answering the same question in AgentHotel's Chat](docs/media/demo-chat.jpg)](https://take.clawable.org/watch/f8648f0d3bbb407689186de853d49f19)
 
@@ -33,19 +33,9 @@ Because that is what running several agents actually is. The metaphor is not dec
 
 Running AI agents on your own server otherwise means hand-rolled Docker commands, manual reverse-proxy config, and API keys copy-pasted into env files. AgentHotel removes all of that.
 
-## Better together
+## Made with AgentTake
 
-Two projects from the same family, each useful on its own and better with a hotel.
-
-### 🎬 [AgentTake](https://github.com/magnusfroste/agenttake) — your agents make the demo video
-
-Hand the camera to an agent. It drives a real browser, decides what to click and what to say, moves the camera onto what matters, and finishes a narrated MP4 with subtitles and a public watch page — no screen recorder, no editing suite. The launch film above was made exactly this way: a Hermes agent on this hotel directed, filmed and cut it.
-
-In AgentHotel it is one click: the **Take** template. It also runs anywhere on its own. → [agenttake.clawable.org](https://agenttake.clawable.org)
-
-### 🇪🇺 [GarageAI](https://www.garageai.eu) — European models for your agents
-
-Run a model on your own GPU — a Mac mini, a gaming PC, a box under the desk — and GarageAI Bridge connects it in one line, so your agents reach it through one OpenAI-compatible API, from any hotel, wherever it runs. Your model stays yours: sharing is never required. If you do want to, you can offer it to others and get paid for every token it serves. And when you need more than your own hardware, open models from GPUs in other European garages are one provider away. Add GarageAI as a provider and every agent in the hotel can use it — local and sovereign, for the work that should stay in Europe. → [garageai.eu](https://www.garageai.eu)
+The film above was directed, filmed and cut by a Hermes agent on this hotel, with [AgentTake](https://github.com/magnusfroste/agenttake): hand an agent the camera and it records a narrated product video. One click here as the **Take** template; it also runs on its own.
 
 ## Features
 
@@ -91,7 +81,7 @@ Run a model on your own GPU — a Mac mini, a gaming PC, a box under the desk �
 - **Cloudflare Tunnel (optional)** — no open ports, no DNS record pointing here and no local certificate; works behind NAT. One origin for every hostname, since Caddy still routes on the Host header ([manual](docs/MANUAL.md#cloudflare-tunnel))
 
 ### Providers & Models
-- **Any model** — a frontier model through a built-in provider, your own model on your own hardware, or a shared endpoint such as [GarageAI](https://garageai.eu), where the community runs European open models on its own GPUs. Each agent picks its `provider/model`, and switching is routine
+- **Any model** — a frontier model through a built-in provider, your own model on your own hardware, or a shared endpoint, where the community runs European open models on its own GPUs. Each agent picks its `provider/model`, and switching is routine
 - **Add your own model** — paste the address of a vLLM, llama.cpp, Ollama or LM Studio server; the panel lists what it serves with each model's context window, flags those too small for Hermes, and shows the exact `provider/model` an agent should write. Local-server context windows are read correctly, including vLLM's `max_model_len`
 - **Built-in providers need only a key** — OpenAI, OpenRouter, Anthropic, Gemini, DeepSeek, Groq, xAI, Mistral and Z.ai are known by name: pick one, paste the key, and the panel fetches what it serves. Only your own endpoints take an address
 - **Multi-provider system** — add providers once, keys are injected into new agents automatically (and into existing agents on redeploy); every provider gets its own slug-based env vars (`Hetzner` → `HETZNER_API_KEY` / `HETZNER_BASE_URL` / `HETZNER_MODELS`) alongside the canonical slots. **OpenClaw** and **Hermes** both list every configured provider — including private, self-hosted endpoints — by name in their model pickers, so switching model or provider is a live choice rather than a redeploy. Odysseus takes one endpoint, added in its own admin UI
