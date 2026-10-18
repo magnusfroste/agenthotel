@@ -45,7 +45,7 @@ In AgentHotel it is one click: the **Take** template. It also runs anywhere on i
 
 ### 🇪🇺 [GarageAI](https://www.garageai.eu) — European models for your agents
 
-Open models served from GPUs in European garages, through one OpenAI-compatible API. Add GarageAI as a provider and every agent in the hotel can use it — local and sovereign, instead of a hyperscaler, for the work that should stay in Europe. Own a GPU? GarageAI Bridge connects it in one line, and you get paid for every token it serves. → [garageai.eu](https://www.garageai.eu)
+Run a model on your own GPU — a Mac mini, a gaming PC, a box under the desk — and GarageAI Bridge connects it in one line, so your agents reach it through one OpenAI-compatible API, from any hotel, wherever it runs. Your model stays yours: sharing is never required. If you do want to, you can offer it to others and get paid for every token it serves. And when you need more than your own hardware, open models from GPUs in other European garages are one provider away. Add GarageAI as a provider and every agent in the hotel can use it — local and sovereign, for the work that should stay in Europe. → [garageai.eu](https://www.garageai.eu)
 
 ## Features
 
