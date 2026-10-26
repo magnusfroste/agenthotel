@@ -1,4 +1,4 @@
-import { Bot, PawPrint, Layers, Container, Zap, Boxes, Server, Database, Film, Globe, Shield } from 'lucide-react'
+import { Bot, PawPrint, Layers, Container, Zap, Boxes, Server, Database, Film, Globe, Shield, ChartColumn } from 'lucide-react'
 
 // meta.yaml carries an icon *name* so templates stay data — the mapping to a
 // component lives here, shared by the library grid and the detail page.
@@ -13,7 +13,8 @@ const ICONS = {
   database: Database,
   film: Film,
   globe: Globe,
-  shield: Shield
+  shield: Shield,
+  chart: ChartColumn
 }
 
 export function templateIcon(name) {
