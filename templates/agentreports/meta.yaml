@@ -1,0 +1,88 @@
+name: Reports
+category: MCP Tool
+icon: chart
+color: '#7c3aed'
+source: builtin
+description: 'Somewhere for your agents to put what they found. AgentReports lets an agent publish a report over MCP and gives people a start page to read it on, behind a password. Every publish is a version, and no agent can delete or hide a report.
+
+  '
+instructions: 'Give it a domain. People sign in at https://<domain> with the password under Credentials. Agents use https://<domain>/mcp with the agent key under Credentials as `Authorization: Bearer <key>`; the key is named after the first agent you gave (hermes by default), and every version records that name.
+
+
+  One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy. AGENT_NAMES=name=Shown name shows a friendlier name on the cards.
+
+
+  The start page is generated from each report''s title, description and category. Agents get `/static/report.css` and the tool report_style, so their reports look like the site; set REPORT_STYLE=off to let them style reports freely.
+
+
+  Your own logo, fonts and colours go in the folder `/data/brand` of the data volume (logo.svg, favicon.svg, brand.json; see the README). Redeploy to load them.
+
+  '
+tags:
+- mcp
+- reports
+- dashboards
+- versioning
+- hermes
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/agentreports
+benefits:
+- title: Agents add, never take away
+  description: Every publish is a version, the start page is generated, and only people archive or restore
+- title: A page, not a chat log
+  description: Cards by category with search and sort, a list view, and every version a click away
+- title: Looks like you
+  description: Your logo, fonts and colours on the site and in every report the agents write
+features:
+- title: Five MCP tools
+  description: publish_report, update_report_details, list_reports, read_report and report_versions, plus report_style
+- title: Sandboxed reports
+  description: Agent-written HTML runs without access to the reader's session
+- title: Who did what
+  description: One key per agent, a name on every version, and requested_by when several people share an agent
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/agentreports
+  ref: main
+  port: 8000
+  healthcheck: /health
+  envFile: |
+    REPORTS_PASSWORD=${REPORTS_PASSWORD}
+    MCP_KEYS=${FIRST_AGENT}:${REPORTS_AGENT_KEY}
+    PUBLIC_URL=https://${DOMAIN}
+    TRUSTED_PROXY_HEADER=X-Forwarded-For
+    BRAND_DIR=/data/brand
+    CPU_LIMIT=0.5
+    MEMORY_LIMIT_MB=256
+  env:
+  - key: SITE_TITLE
+    label: Site title
+    type: text
+    default: Reports
+  - key: SITE_SUBTITLE
+    label: Subtitle
+    type: text
+    description: Optional. One line under the title on the start page
+  - key: REPORTS_LANG
+    label: Language
+    type: text
+    default: en
+    description: en or sv
+  - key: FIRST_AGENT
+    label: First agent
+    type: text
+    default: hermes
+    description: The name the first agent key gets; it appears on every report that agent publishes
+  - key: REPORT_STYLE
+    label: Report style
+    type: text
+    default: 'on'
+    description: on gives agents the site's stylesheet for reports; off lets them style reports themselves
+  secrets:
+  - key: REPORTS_PASSWORD
+    generate: password
+    length: 24
+  - key: REPORTS_AGENT_KEY
+    generate: hex
+    bytes: 32
