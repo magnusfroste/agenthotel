@@ -5,9 +5,9 @@ import { Save, RotateCcw, AlertCircle } from 'lucide-react'
 
 // A card of panel settings that lives on the page it belongs to — the panel
 // domain on Domains, the certificate e-mail on Certificates, the Docker
-// network on System — and saves only its own keys. The Settings page used to
-// hold all of them, and is now only your own choices (security,
-// notifications).
+// network on System, the sign-in timeout on Profile — and saves only its own
+// keys. The Settings page used to hold all of them; it now holds the hotel's
+// alerts and API rate limit.
 //
 // fields: [{ name, label, help, type, placeholder, fallback, secret }]
 export default function SettingCard({ title, icon: Icon, description, fields }) {

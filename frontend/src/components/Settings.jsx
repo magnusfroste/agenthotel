@@ -8,14 +8,16 @@ import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send } from 'l
 // whatever had actually changed. Fields nobody reads were removed rather than
 // kept as decoration: a switch connected to nothing is worse than no switch.
 //
-// What is left here is yours to choose — who may get in and for how long, and
-// where alerts go. Settings about the installation moved to the page they
-// belong to: the panel domain to Domains, the certificate e-mail to
-// Certificates, the Docker network and backup/migration to System.
+// What is left here is the hotel's own: the API rate limit and where its
+// alerts go. It sits in the sidebar with the rest
+// of the infrastructure; the account menu is only you, and how long your
+// sign-in lasts is on Profile. Settings that belong to one page live there: the
+// panel domain on Domains, the certificate e-mail on Certificates, the Docker
+// network and backup/migration on System.
 const SECTIONS = [
   {
     id: 'security', title: 'Security', icon: Shield, color: '#f59e0b',
-    keys: ['rate_limit_enabled', 'rate_limit_requests', 'session_timeout'],
+    keys: ['rate_limit_enabled', 'rate_limit_requests'],
   },
   {
     id: 'notifications', title: 'Notifications', icon: Bell, color: '#8b5cf6',
@@ -198,8 +200,6 @@ function Settings() {
         </div>
         {settings.rate_limit_enabled === 'true' && field({ name: 'rate_limit_requests', label: 'Requests per minute', type: 'number', fallback: '600',
           help: 'Generous on purpose: the dashboard polls stats every few seconds per open tab. This catches a runaway script, not a person.' })}
-        {field({ name: 'session_timeout', label: 'Session timeout (minutes)', type: 'number', fallback: '720',
-          help: 'How long a browser session stays signed in without activity — a tab in the background counts as idle. API and MCP clients use the panel token and are not affected.' })}
       </>)}
 
       {card(notifications, <>

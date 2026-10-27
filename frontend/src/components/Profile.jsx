@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Lock } from 'lucide-react'
+import { Lock, Clock } from 'lucide-react'
+import SettingCard from './SettingCard'
 
 function Profile() {
   const [profile, setProfile] = useState({ email: '' })
@@ -217,6 +218,12 @@ function Profile() {
           </button>
         </form>
       </div>
+
+      {/* Your sign-in, so it is here and not with the hotel's settings. */}
+      <SettingCard title="Sign-in" icon={Clock} fields={[
+        { name: 'session_timeout', label: 'Session timeout (minutes)', type: 'number', fallback: '720',
+          help: 'How long a browser session stays signed in without activity — a tab in the background counts as idle. API and MCP clients use the panel token and are not affected.' },
+      ]} />
     </div>
   )
 }

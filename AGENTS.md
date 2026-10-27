@@ -212,16 +212,21 @@ starts where it ends, and
 holds what you work with — Fleet, Templates, Connect (wiring your own AI
 agents to the hotel over MCP), Docs — and, on the right, *New
 agent* (Agent / From a template / Compose), the light/dark/system switch and
-the account menu (Profile, Settings, copy host IP, log out). The **sidebar**
+the account menu. The **sidebar**
 holds what you look after: the agents, then Infrastructure (Providers,
-Domains, Certificates, Console, System), and the version in its
-footer. A new page goes in one of those two places, not both.
+Domains, Certificates, Console, System, Settings), and in its footer the host
+IP (one click copies it, for a DNS A record) above the version. A new page goes
+in one of those two places, not both.
 
-Settings (in the account menu) is only your own choices — security and
-notifications. A setting about the installation lives on its page as a
-`SettingCard` (`frontend/src/components/SettingCard.jsx`, saving only its own
-keys): the panel domain on Domains, the certificate e-mail on Certificates,
-the Docker network and backup/migration (`InstanceBackup.jsx`) on System. The theme is
+The account menu is only **you**: Profile (e-mail, password, and on it how
+long your sign-in lasts) and Log out (2026-10-27; Settings and the host IP
+used to be there too). **Settings**, in the sidebar, is the hotel's own: the
+API rate limit and where its alerts go. A setting about one part of the
+installation lives on that part's page as a `SettingCard`
+(`frontend/src/components/SettingCard.jsx`, saving only its own keys): the
+panel domain on Domains, the certificate e-mail on Certificates, the Docker
+network and backup/migration (`InstanceBackup.jsx`) on System, the sign-in
+timeout on Profile. The theme is
 `frontend/src/lib/theme.js`, applied in `main.jsx` before the first render so
 the login page follows it too; `system` tracks `prefers-color-scheme` live.
 

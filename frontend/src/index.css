@@ -434,6 +434,20 @@ body {
   color: var(--text-primary);
 }
 
+.sidebar-meta-copy {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-meta-copy:hover { color: var(--text-primary); }
+.sidebar-meta-copy-icon { opacity: 0; transition: opacity 0.15s; }
+.sidebar-meta-copy:hover .sidebar-meta-copy-icon,
+.sidebar-meta-copy:focus-visible .sidebar-meta-copy-icon { opacity: 1; }
+
 .sidebar-meta-newer {
   color: var(--accent-blue);
   margin-left: 0.15rem;

@@ -21,7 +21,7 @@ import Chat from './components/Chat'
 import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink, MessagesSquare } from 'lucide-react'
+import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink, MessagesSquare, Server } from 'lucide-react'
 import { getThemeChoice, setThemeChoice } from './lib/theme'
 import './index.css'
 
@@ -87,12 +87,9 @@ function NewAgentMenu() {
 function UserMenu({ onLogout }) {
   const { open, setOpen, ref } = useDropdown()
   const [email, setEmail] = useState('')
-  const [ip, setIp] = useState('')
-  const toast = useToast()
 
   useEffect(() => {
     authFetch('/api/profile').then(r => r.json()).then(d => setEmail(d.email || '')).catch(() => {})
-    authFetch('/api/system/ip').then(r => r.json()).then(d => setIp(d.ip || '')).catch(() => {})
   }, [])
 
   const initial = (email.trim()[0] || 'A').toUpperCase()
@@ -107,22 +104,6 @@ function UserMenu({ onLogout }) {
           <Link to="/profile" role="menuitem" className="dropdown-item" onClick={() => setOpen(false)}>
             <User size={15} color="currentColor" /> Profile
           </Link>
-          <Link to="/settings" role="menuitem" className="dropdown-item" onClick={() => setOpen(false)}>
-            <SettingsIcon size={15} color="currentColor" /> Settings
-          </Link>
-          {ip && (
-            // The host address is what you paste into a DNS A record when the
-            // panel is not behind a tunnel; one click copies it.
-            <button type="button" role="menuitem" className="dropdown-item"
-              onClick={() => {
-                setOpen(false)
-                navigator.clipboard.writeText(ip)
-                  .then(() => toast.success(`${ip} copied`))
-                  .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))
-              }}>
-              <Copy size={15} color="currentColor" /> <span>Copy host IP <small data-secret="">{ip}</small></span>
-            </button>
-          )}
           <div className="dropdown-divider" />
           <button type="button" role="menuitem" className="dropdown-item" onClick={() => { setOpen(false); onLogout() }}>
             <LogOut size={15} color="currentColor" /> Log out
@@ -178,9 +159,11 @@ function Sidebar({ onNavigate, className = '' }) {
   const [updateInfo, setUpdateInfo] = useState(null)
   const [upgrading, setUpgrading] = useState(false)
   const [agents, setAgents] = useState([])
+  const [ip, setIp] = useState('')
   const toast = useToast()
 
   useEffect(() => {
+    authFetch('/api/system/ip').then(r => r.json()).then(d => setIp(d.ip || '')).catch(() => {})
     fetchVersion()
     checkForUpdates()
     fetchAgents()
@@ -316,6 +299,9 @@ function Sidebar({ onNavigate, className = '' }) {
     { to: '/certificates', label: 'Certificates', Icon: Lock },
     { to: '/console', label: 'Console', Icon: Terminal },
     { to: '/system', label: 'System', Icon: Monitor },
+    // The hotel's own settings (alerts, the API rate limit). The account
+    // menu is only you: profile and log out.
+    { to: '/settings', label: 'Settings', Icon: SettingsIcon },
   ]
 
   return (
@@ -330,7 +316,6 @@ function Sidebar({ onNavigate, className = '' }) {
           <Link to="/chat" className={`sidebar-link ${isActive('/chat')}`}><MessagesSquare size={16} color="currentColor" /> Chat</Link>
           <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}><LayoutTemplate size={16} color="currentColor" /> Templates</Link>
           <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}><Link2 size={16} color="currentColor" /> Connect</Link>
-          <Link to="/settings" className={`sidebar-link ${isActive('/settings')}`}><SettingsIcon size={16} color="currentColor" /> Settings</Link>
         </div>
 
         <div className="sidebar-group">
@@ -362,6 +347,20 @@ function Sidebar({ onNavigate, className = '' }) {
       </nav>
 
       <div className="sidebar-footer">
+        {ip && (
+          // The host address is what goes into a DNS A record for a new
+          // domain, so it sits where you look while doing that, one click
+          // to copy (Easypanel puts it in the same place).
+          <button type="button" className="sidebar-meta-item sidebar-meta-copy"
+            title="Copy the host IP, for a DNS A record"
+            onClick={() => navigator.clipboard.writeText(ip)
+              .then(() => toast.success(`${ip} copied`))
+              .catch(() => toast.error('Could not copy — the browser blocked clipboard access'))}>
+            <Server size={13} color="currentColor" />
+            <span className="sidebar-meta-link" data-secret="">{ip}</span>
+            <Copy size={12} color="currentColor" className="sidebar-meta-copy-icon" />
+          </button>
+        )}
         {version && version !== 'unknown' && (() => {
           // The version links to its commit; a newer one, when there is one,
           // to the compare view — the list of exactly what an upgrade would
