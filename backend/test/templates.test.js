@@ -129,7 +129,9 @@ test('the agentreports template generates the password and the first agent key, 
   assert.ok(config.REPORTS_PASSWORD.length >= 20, 'the app refuses passwords under 20 characters');
   assert.match(config.MCP_KEYS, /^hermes:[0-9a-f]{64}$/);
   assert.strictEqual(config.PUBLIC_URL, 'https://reports.example.com');
-  assert.strictEqual(config.TRUSTED_PROXY_HEADER, 'X-Forwarded-For');
+  // Caddy works out the visitor's address and passes it on as X-Real-IP;
+  // X-Forwarded-For's last entry is cloudflared or NetBird's proxy.
+  assert.strictEqual(config.TRUSTED_PROXY_HEADER, 'X-Real-IP');
   assert.strictEqual(config.HEALTHCHECK_PATH, '/health');
   assert.strictEqual(config.SITE_TITLE, 'Reports');
   const named = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'r.example.com', FIRST_AGENT: 'laptop' }).config;
