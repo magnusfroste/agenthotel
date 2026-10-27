@@ -2361,7 +2361,13 @@ async function addCaddyRoute(domain, containerName, port) {
     match: [{ host: [domain] }],
     handle: [{
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${containerName}:${port}` }]
+      upstreams: [{ dial: `${containerName}:${port}` }],
+      // The visitor's own address, worked out by Caddy from the proxies it
+      // trusts (realClientIp below). X-Forwarded-For alone named the nearest
+      // hop: behind the tunnel every visitor was cloudflared, behind NetBird
+      // the mesh proxy — AgentReports logged and throttled all of them as
+      // one address (2026-10-27). Set, not appended: a guest sees one value.
+      headers: { request: { set: { 'X-Real-Ip': ['{http.vars.client_ip}'] } } }
     }]
   };
 
@@ -4213,6 +4219,29 @@ const { setMeshTrusted } = require('./lib/rateLimit');
 // believe its X-Forwarded-* headers (guests then see https), and the throttle
 // must read the visitor's address from them. Applied at start and whenever
 // NetBird is switched on; the range is also in docker/caddy.json.
+// Caddy's {http.vars.client_ip}, which agent routes pass on as X-Real-IP, is
+// the visitor only when Caddy reads X-Forwarded-For from the right: the
+// default takes the left-most entry, and through Cloudflare that one is
+// whatever the visitor sent. Strict mode takes the right-most address that is
+// not a trusted proxy (cloudflared on the Docker network, NetBird's proxy in
+// the mesh range). A visitor reaching Caddy directly is not trusted, so the
+// headers are ignored and the connection's own address counts. In
+// docker/caddy.json too; applied here so an upgrade needs no Caddy restart.
+async function realClientIp() {
+  const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+  const base = `${caddyApiUrl}/config/apps/http/servers/srv0`;
+  try {
+    for (const [key, value] of [['client_ip_headers', ['X-Forwarded-For']], ['trusted_proxies_strict', 1]]) {
+      const res = await caddyFetch(`${base}/${key}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value)
+      });
+      if (!res.ok) console.warn(`[Caddy] Could not set ${key}: ${res.status} ${(await res.text()).slice(0, 120)}`);
+    }
+  } catch (err) {
+    console.warn(`[Caddy] Could not configure the client address: ${err.message}`);
+  }
+}
+
 async function trustMeshProxies() {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   try {
@@ -5303,6 +5332,7 @@ listen(async () => {
   }
   // Before the first health sweep, which would call these "container not found".
   await recoverInterruptedDeploys().catch(err => console.error('[Deploy] Recovery failed:', err.message));
+  await realClientIp();
   await initPanelRoute();
   // After the panel's own route, so a half-configured Caddy never leaves the
   // panel unreachable — that is the one route you need to fix the rest.

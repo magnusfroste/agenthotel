@@ -33,6 +33,8 @@ Backend dynamically adds/removes agent routes via Caddy's admin API, which liste
 - Add: `POST /config/apps/http/servers/srv0/routes` with `@id: "agent-${domain}"`
 - Remove: `DELETE /id/agent-${domain}`
 
+**Every guest gets the visitor's address as `X-Real-IP`.** Agent routes set it from Caddy's `{http.vars.client_ip}`, and `srv0` reads `X-Forwarded-For` strictly (`client_ip_headers`, `trusted_proxies_strict: 1` — in `docker/caddy.json`, and set at start by `realClientIp()` so an upgrade needs no Caddy restart): the right-most address that is not a trusted proxy. Behind the tunnel that is the visitor, not cloudflared; behind NetBird, not the mesh proxy; reached directly, the connection's own address, whatever the visitor sends. A guest that logs or throttles by address should read `X-Real-IP` (AgentReports: `TRUSTED_PROXY_HEADER=X-Real-IP`). A guest on the shared Docker network is itself a trusted hop and can claim any address — the network is shared, so a hostile guest could reach the other guest's port directly anyway.
+
 The panel route carries security headers (`X-Frame-Options`, `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`) and is re-created each minute if Caddy lost it.
 
 ## Runtime Plugins
