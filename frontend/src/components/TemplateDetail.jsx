@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import RuntimeMark from './RuntimeMark'
 import {
-  ArrowLeft, ArrowRight, Package, Server, ExternalLink, Check, Sparkles, Info, AlertCircle
+  ArrowLeft, ArrowRight, Package, Server, ExternalLink, Check, Sparkles, Info, AlertCircle, Bot
 } from 'lucide-react'
 
 function Section({ title, children }) {
@@ -135,6 +135,22 @@ function TemplateDetail() {
           <Server size={15} /> Port {template.defaultPort}
         </span>
       </div>
+
+      {/* The library takes an agent's luggage, not anything with a Dockerfile:
+          every tool in it says how an agent uses it (CONTRIBUTING.md). */}
+      {template.agentUse && (
+        <Section title="How agents use it">
+          <div style={{
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: '0.6rem', padding: '1rem', display: 'flex', gap: '0.75rem'
+          }}>
+            <Bot size={16} color="var(--accent-blue)" style={{ flexShrink: 0, marginTop: '0.15rem' }} />
+            <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+              {template.agentUse}
+            </p>
+          </div>
+        </Section>
+      )}
 
       {template.instructions && (
         <Section title="After deployment">

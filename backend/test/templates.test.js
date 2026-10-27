@@ -137,3 +137,43 @@ test('the agentreports template generates the password and the first agent key, 
   const named = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'r.example.com', FIRST_AGENT: 'laptop' }).config;
   assert.match(named.MCP_KEYS, /^laptop:[0-9a-f]{64}$/);
 });
+
+test('a docker-app template generates its secrets, fills in the domain and keeps its data in a named volume', () => {
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/n8n/meta.yaml'), 'utf8'));
+  const { runtime, image, port, config } = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'n8n.example.com', AGENT_NAME: 'n8n' });
+  assert.strictEqual(runtime, 'docker-app');
+  assert.strictEqual(image, 'docker.n8n.io/n8nio/n8n:latest');
+  assert.strictEqual(port, 5678);
+  assert.strictEqual(config.IMAGE, image, 'the column and the config agree');
+  assert.strictEqual(config.N8N_HOST, 'n8n.example.com');
+  assert.strictEqual(config.WEBHOOK_URL, 'https://n8n.example.com/');
+  assert.match(config.N8N_ENCRYPTION_KEY, /^[0-9a-f]{64}$/);
+  assert.strictEqual(config.GENERIC_TIMEZONE, 'Europe/Stockholm', 'an untouched field means its default');
+  assert.strictEqual(config.VOLUMES, 'n8n:/home/node/.n8n', 'without it every redeploy started n8n empty');
+  assert.strictEqual(config.HEALTHCHECK_PATH, '/healthz');
+  assert.strictEqual(config.DOMAIN, undefined);
+  const other = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'b.example.com' }).config;
+  assert.notStrictEqual(other.N8N_ENCRYPTION_KEY, config.N8N_ENCRYPTION_KEY, 'two deployments never share a key');
+});
+
+test('a template can ask for named volumes, never a path on the host', () => {
+  const deploy = normalizeDeploy({ runtime: 'docker-app', image: 'x', volumes: ['data:/data', '/var/run/docker.sock:/sock', '/etc:/host-etc', 'cache:/cache:ro'] });
+  assert.deepStrictEqual(deploy.volumes, ['data:/data', 'cache:/cache:ro']);
+});
+
+test('every template in the library that is not an agent itself says how an agent uses it', () => {
+  // The hotel takes an agent's luggage — tools an agent can use — not anything
+  // with a Dockerfile (CONTRIBUTING.md, "What belongs in the library").
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const root = path.join(__dirname, '../../templates');
+  const missing = [];
+  for (const id of fs.readdirSync(root)) {
+    const file = path.join(root, id, 'meta.yaml');
+    if (id === 'custom' || !fs.existsSync(file)) continue;
+    const meta = yaml.load(fs.readFileSync(file, 'utf8')) || {};
+    if (!meta.deploy) continue; // a runtime: an agent, or the generic Docker/Git/Compose forms
+    if (!String(meta.agentUse || '').trim()) missing.push(id);
+  }
+  assert.deepStrictEqual(missing, []);
+});

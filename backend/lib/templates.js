@@ -182,7 +182,40 @@ function normalizeDeploy(deploy) {
 
   const image = text(deploy.image);
   if (!image) return null;
-  return { runtime, image, port: parseInt(deploy.port) || 80, env };
+  return {
+    runtime,
+    image,
+    port: parseInt(deploy.port) || 80,
+    healthcheck: text(deploy.healthcheck) || '',
+    // Named volumes only ("data:/home/node/.n8n"). A template is installed by
+    // people who never read it; one that bind-mounts a host path would hand
+    // that path to whatever image it names.
+    volumes: list(deploy.volumes).map(text).filter(v => NAMED_VOLUME_RE.test(v)),
+    envFile: typeof deploy.envFile === 'string' ? deploy.envFile : '',
+    secrets: normalizeSecrets(deploy.secrets),
+    env
+  };
+}
+
+const NAMED_VOLUME_RE = /^[a-z0-9][a-z0-9_.-]{0,40}:\/[^:\s]+(:ro)?$/;
+
+// A single container has no .env: its environment is its config. Every line
+// of the env file becomes a key of its own, so the Environment tab can edit
+// it and the Credentials tab finds the generated ones. Generated secrets and
+// form fields the env file did not mention are still environment — the
+// container has no other way to receive them.
+function envFileIntoConfig(config, envFile, values, context) {
+  for (const line of renderEnvFile(envFile, values).split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const at = t.indexOf('=');
+    if (at > 0) config[t.slice(0, at).trim()] = t.slice(at + 1).trim();
+  }
+  for (const [key, value] of Object.entries(values)) {
+    if (key in context || config[key] !== undefined) continue;
+    config[key] = value;
+  }
+  return config;
 }
 
 // Turn a template's deploy block into the runtime and config that
@@ -204,18 +237,6 @@ function materializeDeploy(deploy, provided = {}) {
     if (supplied[key] !== undefined) { context[key] = supplied[key]; delete supplied[key]; }
   }
 
-  if (deploy.runtime === 'docker-app') {
-    // image and port are columns on the agent, not just config: the container
-    // is created from the column. A template that set only the config field
-    // deployed an agent with an empty image — "no command specified", from
-    // Docker, long after the template looked fine.
-    return {
-      runtime: 'docker-app',
-      image: deploy.image,
-      port: deploy.port || 80,
-      config: { IMAGE: deploy.image, PORT: String(deploy.port || 80), ...supplied }
-    };
-  }
   if (deploy.runtime === 'compose') {
     return { runtime: 'compose', config: { COMPOSE_FILE: deploy.compose, ...supplied } };
   }
@@ -228,26 +249,24 @@ function materializeDeploy(deploy, provided = {}) {
 
   const values = { ...generateSecrets(deploy.secrets || [], supplied), ...context };
 
+  if (deploy.runtime === 'docker-app') {
+    // image and port are columns on the agent, not just config: the container
+    // is created from the column. A template that set only the config field
+    // deployed an agent with an empty image — "no command specified", from
+    // Docker, long after the template looked fine.
+    const config = { IMAGE: deploy.image, PORT: String(deploy.port || 80) };
+    if (deploy.healthcheck) config.HEALTHCHECK_PATH = deploy.healthcheck;
+    if ((deploy.volumes || []).length) config.VOLUMES = deploy.volumes.join('\n');
+    envFileIntoConfig(config, deploy.envFile, values, context);
+    return { runtime: 'docker-app', image: deploy.image, port: deploy.port || 80, config };
+  }
+
   if (deploy.runtime === 'git-app') {
     const config = { GIT_REPO: deploy.repo, GIT_REF: deploy.ref, PORT: String(deploy.port) };
     if (deploy.subdir) config.GIT_SUBDIR = deploy.subdir;
     if (deploy.dockerfile) config.GIT_DOCKERFILE = deploy.dockerfile;
     if (deploy.healthcheck) config.HEALTHCHECK_PATH = deploy.healthcheck;
-    // A single container has no .env: its environment is its config. Every
-    // line of the env file becomes a key of its own, so the Environment tab
-    // can edit it and the Credentials tab finds the generated ones.
-    for (const line of renderEnvFile(deploy.envFile, values).split('\n')) {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
-      const at = t.indexOf('=');
-      if (at > 0) config[t.slice(0, at).trim()] = t.slice(at + 1).trim();
-    }
-    // Generated secrets and form fields the env file did not mention are
-    // still environment — the container has no other way to receive them.
-    for (const [key, value] of Object.entries(values)) {
-      if (key in context || config[key] !== undefined) continue;
-      config[key] = value;
-    }
+    envFileIntoConfig(config, deploy.envFile, values, context);
     return { runtime: 'git-app', port: deploy.port, config };
   }
 
@@ -348,6 +367,7 @@ function getTemplate(id, runtimes) {
     return {
       ...summarizeCustom(id),
       instructions: text(meta.instructions) || '',
+      agentUse: text(meta.agentUse) || '',
       benefits: list(meta.benefits),
       features: list(meta.features),
       links: list(meta.links),
@@ -360,6 +380,7 @@ function getTemplate(id, runtimes) {
   return {
     ...summarize(id, plugin),
     instructions: text(meta.instructions) || '',
+    agentUse: text(meta.agentUse) || '',
     benefits: list(meta.benefits),
     features: list(meta.features),
     links: list(meta.links),
@@ -396,6 +417,7 @@ function saveTemplate(spec, runtimes, source = 'custom') {
     source,
     description: text(spec.description) || '',
     instructions: text(spec.instructions) || '',
+    agentUse: text(spec.agentUse) || '',
     tags: list(spec.tags).filter(t => typeof t === 'string'),
     links: list(spec.links).filter(l => l && text(l.url)).map(l => ({ label: text(l.label) || text(l.url), url: text(l.url) })),
     deploy

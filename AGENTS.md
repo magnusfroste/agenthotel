@@ -82,6 +82,10 @@ The **runtime plugins drive the list** — a runtime without a `meta.yaml` still
 
 **`plugin.configFields` is the single source of truth for configuration.** meta.yaml files used to carry a parallel `schema:` block that had already diverged from the real field names (`hermesModel` vs `HERMES_MODEL`); those blocks are gone. If the schema-driven deploy form on the backlog gets built, generate it from `configFields` — they are already typed (`text`/`password`/`number`/`textarea`, with `required`, `default`, `placeholder`). Never reintroduce a second config definition.
 
+**The library takes agents and the tools agents use, nothing else** (Magnus, 2026-10-27: "a hotel for agents — their luggage of tools is welcome too, but only if an agent can use them"). A template with a `deploy:` block that is not an agent itself carries `agentUse:` — how an agent reaches it (MCP address, where its key comes from) — shown as *How agents use it* on the template page; `templates.test.js` fails on one without it. CONTRIBUTING.md (*What belongs in the library*) and the template-request issue form say the same to contributors.
+
+A docker-app template has the same tools as a git-app one: `envFile` with `${DOMAIN}` and generated `secrets:`, a `healthcheck`, and `volumes:` — named volumes only (`n8n:/home/node/.n8n` becomes `agenthotel-<id>-n8n`); a host path is dropped, since a template is installed by people who never read it.
+
 Parsed meta.yaml is cached per file and invalidated on mtime, so editing a template on the host shows up without restarting the backend. A malformed meta.yaml logs `[Templates] Failed to parse …` and falls back to plugin metadata — one broken file never takes the library down.
 
 ## Chat (ACP)

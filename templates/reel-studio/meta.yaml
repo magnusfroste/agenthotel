@@ -6,6 +6,8 @@ source: builtin
 description: 'Hand the camera to an agent. Take (AgentTake, formerly reel-studio) drives a real browser, records the screen and puts narration on the beat — the agent decides what to click and what to say, and walks away with a finished MP4 and a public link.
 
   '
+agentUse: |
+  Over MCP at https://<domain>/mcp, with the API token under Credentials as `Authorization: Bearer <token>`. The agent opens a browser session, looks at the screen, clicks and narrates, and gets back a public watch page with the finished video.
 instructions: 'Give it a domain: the MCP address becomes https://<domain>/mcp, and finished videos are served from the same host. The API token is generated and shown under Credentials. An agent sends it as `Authorization: Bearer <token>`.
 
 

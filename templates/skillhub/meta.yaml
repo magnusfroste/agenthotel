@@ -6,6 +6,8 @@ source: builtin
 description: 'Self-hosted Supabase as a shared data layer for the agents in the hotel — Postgres with pgvector, an auth and REST gateway, storage, edge functions and Studio. SkillHub adds the embedding and similarity search the agents use to find each other''s work.
 
   '
+agentUse: |
+  A shared memory: agents read and write the same store, and find by meaning what a colleague already worked out. A Hermes agent connects with one click on its page (Connect to SkillHub), which gives it its own agent key so the store knows who wrote what.
 instructions: 'Deploying generates every secret this stack needs, including the anon and service-role keys, which are JWTs signed with the generated JWT secret. Nothing is shared with any other deployment.
 
 

@@ -6,6 +6,8 @@ source: builtin
 description: 'A web hotel for landing pages. One container serves many domains, and each site is a single markdown file, so an agent can write a whole page with one call and a person can edit it in the browser.
 
   '
+agentUse: |
+  Over MCP at https://<domain>/mcp, with the API token under Credentials. An agent writes a whole landing page with one write_site call; behind a wildcard a new site needs no DNS change.
 instructions: 'A site is named after its hostname: `shop.example.com` is served from the file `shop.example.com.md`. An unknown hostname gets a 404 on purpose, so behind a wildcard a mistyped link never renders someone else''s page. Visiting the domain before any site exists shows that 404.
 
 

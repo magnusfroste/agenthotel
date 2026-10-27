@@ -6,6 +6,8 @@ source: builtin
 description: 'A self-hosted LLM gateway for EU organisations. Every prompt is classified by deterministic rules — task, risk, personal or confidential data — and routed under a fail-closed policy: harmless traffic to a cheap cloud model, personal data to a model on your own hardware, and a 403 with an audit entry when no compliant model exists. Speaks the OpenAI and Anthropic wire formats, so every agent in the hotel can go through it.
 
   '
+agentUse: |
+  As a model provider: add it on the Providers page (base URL https://<domain>/v1, the LOCAL_API_KEY from Credentials) and the agents' requests are classified, routed and logged by Sluss before any model sees them.
 instructions: 'Open https://<domain>/router/login and sign in as `admin` with the generated password under Credentials. **Quick start** on the first page takes four steps: a cloud model, a local model, one rule that keeps personal data local, and a dry run. The hotel''s OpenRouter key is injected as `OPENROUTER_API_KEY`, so the built-in cloud models are routable at once; a private model from the Providers page is added on Sluss''s own Providers page, tagged `local`.
 
 

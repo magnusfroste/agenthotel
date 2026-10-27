@@ -11,7 +11,8 @@ contribution.
   the library (name, icon, description, instructions) plus a `deploy:` block
   that says how to run the app — a Docker image, a compose file or a Git
   repository with a Dockerfile — and which secrets to generate. No frontend
-  change is needed. Good examples to copy:
+  change is needed. Read *What belongs in the library* below first. Good examples to copy:
+  [`n8n`](templates/n8n/meta.yaml) (a Docker image),
   [`lobby`](templates/lobby/meta.yaml) (a Git repository),
   [`agentreports`](templates/agentreports/meta.yaml) (generated keys and a
   health check) and [`skillhub`](templates/skillhub/meta.yaml) (a compose stack).
@@ -29,6 +30,35 @@ contribution.
 Larger changes, such as a new runtime in `backend/plugins/` or anything that
 touches routing or authentication, are welcome too. Please open an issue to
 discuss it before you write the code.
+
+## What belongs in the library
+
+AgentHotel is a hotel for agents, and their luggage is welcome: the tools they
+use. A template earns its place in the library when it is one of these:
+
+- **An agent.** Hermes, OpenClaw, Odysseus, a coding agent, any harness that
+  works on its own once it is checked in.
+- **A tool an agent uses.** It speaks MCP, or it has an API an agent can call
+  with a key of its own: a video studio, a report shelf, a search engine, a
+  shared memory, a workflow engine, a model gateway.
+
+Every template that is not an agent itself says how an agent uses it, in an
+`agentUse:` field of its `meta.yaml`. The panel shows it as *How agents use it*
+on the template's page, and a test fails if a template leaves it out. Two
+sentences are enough: the address (`https://<domain>/mcp`), where the key comes
+from (Credentials), and what the agent can then do.
+
+Anything else (a dashboard only people use, a game server) still runs in a
+hotel as a Docker App, Git App or Compose guest. It does not need a template.
+
+A good template also:
+
+- generates its own secrets (`secrets:` in the deploy block). A template never
+  carries a credential, and two deployments never share one;
+- keeps its data in a named volume, so a redeploy does not start it empty;
+- has a health check path if the app has one;
+- says in `instructions:` what to do right after the deploy, especially if the
+  first visitor would otherwise become the app's admin.
 
 ## How the code is laid out
 

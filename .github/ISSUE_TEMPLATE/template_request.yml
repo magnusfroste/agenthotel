@@ -11,6 +11,13 @@ body:
     validations:
       required: true
   - type: textarea
+    id: agent-use
+    attributes:
+      label: How does an agent use it?
+      description: The library takes agents and the tools they use (CONTRIBUTING.md, "What belongs in the library"). Is it an agent itself, does it speak MCP, or does it have an API an agent can call with its own key?
+    validations:
+      required: true
+  - type: textarea
     id: why
     attributes:
       label: Why it belongs in a hotel

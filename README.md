@@ -177,6 +177,7 @@ Ready-made templates on top of those runtimes, each deployed from one form with 
 | **Take** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
 | **Lobby** | A web hotel for landing pages — one markdown file per site, written by agents over MCP |
 | **Reports** | Where agents put what they found: they publish reports over MCP, people read them on a generated start page behind a password; every publish a version ([AgentReports](https://github.com/magnusfroste/agentreports)) |
+| **n8n** | Workflow automation: a person builds a workflow once, an agent calls it as an MCP tool or a webhook, and the integrations' credentials stay in n8n |
 | **Sluss** | A self-hosted LLM gateway for EU organisations: every prompt classified and routed under a fail-closed policy, with an audit trail — put the hotel's agents behind it as a provider |
 
 ## MCP Integration
@@ -265,7 +266,7 @@ See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs
 
 ## Contributing
 
-Contributions are welcome, and the easiest one is a **template**: one `meta.yaml` file that puts an agent or app you like into every hotel's library, with no frontend change. [CONTRIBUTING.md](CONTRIBUTING.md) shows how, and how to run the tests. Issues labelled [`good first issue`](https://github.com/magnusfroste/agenthotel/labels/good%20first%20issue) are a good place to start, and a [template request](https://github.com/magnusfroste/agenthotel/issues/new?template=template_request.yml) is welcome even if you will not write it yourself.
+Contributions are welcome, and the easiest one is a **template**: one `meta.yaml` file that puts an agent, or a tool agents use, into every hotel's library, with no frontend change. The hotel is for agents, and their luggage is welcome: a template that is not an agent says how an agent uses it. [CONTRIBUTING.md](CONTRIBUTING.md) shows how, and how to run the tests. Issues labelled [`good first issue`](https://github.com/magnusfroste/agenthotel/labels/good%20first%20issue) are a good place to start, and a [template request](https://github.com/magnusfroste/agenthotel/issues/new?template=template_request.yml) is welcome even if you will not write it yourself.
 
 ## Security model
 

@@ -6,6 +6,8 @@ source: builtin
 description: 'Somewhere for your agents to put what they found. AgentReports lets an agent publish a report over MCP and gives people a start page to read it on, behind a password. Every publish is a version, and no agent can delete or hide a report.
 
   '
+agentUse: |
+  Over MCP at https://<domain>/mcp, one key per agent (Credentials). The agent publishes a report as HTML or markdown, every publish becomes a version, and people read the reports behind a password.
 instructions: 'Give it a domain. People sign in at https://<domain> with the password under Credentials. Agents use https://<domain>/mcp with the agent key under Credentials as `Authorization: Bearer <key>`; the key is named after the first agent you gave (hermes by default), and every version records that name.
 
 

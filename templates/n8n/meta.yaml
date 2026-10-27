@@ -1,0 +1,51 @@
+name: n8n
+category: Automation
+icon: boxes
+color: '#ea4b71'
+source: builtin
+description: 'Workflow automation with a visual editor. A person builds the workflow once; an agent calls it as a tool, so it can reach the rest of your stack (CRM, mail, spreadsheets, 400+ integrations) without holding any of their credentials.
+
+  '
+agentUse: 'Each workflow can be a tool. Start a workflow with an MCP Server Trigger node and n8n serves its tools at https://<domain>/mcp/<path>; set Bearer auth on the node and add the address and token to the agent''s MCP servers. A workflow that starts with a Webhook node is called at https://<domain>/webhook/<path> instead. The integrations'' credentials stay in n8n, never in the agent.
+
+  '
+instructions: 'Open https://<domain> right after the deploy and create the owner account. Until you do, whoever opens the address first becomes the owner.
+
+
+  Data (workflows, credentials, executions) lives in the agent''s n8n volume and survives redeploys. N8N_ENCRYPTION_KEY is generated per deploy and encrypts the credentials stored in n8n. Do not change it, or n8n can no longer read them.
+
+  '
+tags:
+- automation
+- workflows
+- mcp
+- webhooks
+links:
+- label: Website
+  url: https://n8n.io
+- label: MCP Server Trigger
+  url: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-langchain.mcptrigger/
+deploy:
+  runtime: docker-app
+  image: docker.n8n.io/n8nio/n8n:latest
+  port: 5678
+  healthcheck: /healthz
+  volumes:
+  - n8n:/home/node/.n8n
+  envFile: |
+    N8N_HOST=${DOMAIN}
+    N8N_PROTOCOL=https
+    WEBHOOK_URL=https://${DOMAIN}/
+    N8N_PROXY_HOPS=1
+    N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+    GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+    TZ=${GENERIC_TIMEZONE}
+  secrets:
+  - key: N8N_ENCRYPTION_KEY
+    generate: hex
+    bytes: 32
+  env:
+  - key: GENERIC_TIMEZONE
+    label: Timezone
+    default: Europe/Stockholm
+    description: Used by schedule triggers
