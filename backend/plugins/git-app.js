@@ -1,6 +1,7 @@
 const { execFileSync, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { NO_DETACHED_GC } = require('../lib/gitCheckout');
 
 // Where clones live. Inside the backend's own data volume, so a checkout
 // survives a panel restart and a redeploy is a fetch rather than a fresh
@@ -143,7 +144,8 @@ module.exports = {
     const repo = assertSafeRepo(config.GIT_REPO);
     const ref = assertSafeRef(config.GIT_REF);
     const repoDir = path.join(BUILD_ROOT, id);
-    const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'pipe', timeout: 300000 });
+    // Without a detached gc pruning objects behind the build (lib/gitCheckout.js).
+    const git = (args, cwd) => execFileSync('git', [...NO_DETACHED_GC, ...args], { cwd, stdio: 'pipe', timeout: 300000 });
 
     // One path for a first checkout and a redeploy alike. `clone --branch`
     // takes a branch or a tag but not a commit, so a guest pinned to a sha
@@ -189,7 +191,12 @@ module.exports = {
       // commits. Docker's layer cache makes this cheap when nothing changed.
       rebuild: true,
       commit,
-      buildArgs: { GIT_SHA: commitFull, BUILD_TIME: committedAt }
+      buildArgs: { GIT_SHA: commitFull, BUILD_TIME: committedAt },
+      // The repository's own .git stays out of the context: the image gets the
+      // commit as GIT_SHA instead, and git rewrites .git/objects whenever it
+      // packs them. A .dockerignore cannot do this — the panel packs the
+      // context itself, so the daemon applies it only after every file was read.
+      exclude: [path.join(repoDir, '.git')]
     };
   }
 };

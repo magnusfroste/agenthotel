@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
-const tar = require('tar-fs');
+const { packContext } = require('./lib/buildContext');
 const AdmZip = require('adm-zip');
 const archiver = require('archiver');
 const { PassThrough } = require('stream');
@@ -1883,6 +1883,8 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
   let imageToRun = image;
   // Build args a runtime wants stamped into the image (git-app: the commit).
   let buildArgs = null;
+  // Paths inside the context that are never packed (git-app: its .git).
+  let buildExclude = [];
 
   // A runtime may supply its own build context instead of using the shared
   // template directory — Git App clones a repository and builds that. Such an
@@ -1904,6 +1906,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     // torn down and once after.
     if (prepared.rebuild && !alreadyBuilt) forceRebuild = true;
     if (prepared.buildArgs) buildArgs = prepared.buildArgs;
+    if (prepared.exclude) buildExclude = prepared.exclude;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
     if (prepared.commit) deployLog.setCommit(id, prepared.commit);
     if (prepared.commit && onSource) onSource(prepared.commit);
@@ -1935,7 +1938,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
         // What the tag points at now. Once the build retags it, that image is
         // dangling, and it is removed after the new container proves healthy.
         const previousImageId = await docker.getImage(buildTag).inspect().then(i => i.Id, () => null);
-        const tarStream = tar.pack(buildContext);
+        const tarStream = packContext(buildContext, { exclude: buildExclude });
         // forcerm: remove intermediate containers even when the build fails or is
         // cut off — an upgrade that killed a build mid-RUN left a ~1.5 GB one.
         const stream = await docker.buildImage(tarStream, { t: buildTag, pull: true, dockerfile: buildDockerfile, forcerm: true, ...(buildArgs ? { buildargs: buildArgs } : {}) });
