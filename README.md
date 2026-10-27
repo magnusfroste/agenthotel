@@ -261,7 +261,11 @@ docker compose up -d
 docker compose logs -f backend
 ```
 
-See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations). Ideas and bugs are welcome as GitHub issues.
+See [AGENTS.md](AGENTS.md) for architecture details and build conventions, [docs/MANUAL.md](docs/MANUAL.md) for the user manual (providers, guardrails, operations).
+
+## Contributing
+
+Contributions are welcome, and the easiest one is a **template**: one `meta.yaml` file that puts an agent or app you like into every hotel's library, with no frontend change. [CONTRIBUTING.md](CONTRIBUTING.md) shows how, and how to run the tests. Issues labelled [`good first issue`](https://github.com/magnusfroste/agenthotel/labels/good%20first%20issue) are a good place to start, and a [template request](https://github.com/magnusfroste/agenthotel/issues/new?template=template_request.yml) is welcome even if you will not write it yourself.
 
 ## Security model
 

@@ -1,0 +1,28 @@
+name: Template request
+description: An agent or app you would like to deploy from the template library
+labels: [template]
+body:
+  - type: input
+    id: project
+    attributes:
+      label: Project
+      description: Its repository or website.
+      placeholder: https://github.com/...
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it belongs in a hotel
+      description: What would you use it for next to your agents?
+  - type: textarea
+    id: how
+    attributes:
+      label: How it runs
+      description: A published image, a Dockerfile in the repository, or a compose file? Which port, and which secrets or keys does it need?
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I would like to write the template myself (see CONTRIBUTING.md)
