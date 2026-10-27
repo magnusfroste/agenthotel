@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import UpdateDot from './UpdateDot'
-import { useAgentUpdates } from '../lib/agentUpdates'
+import { useAgentUpdates, refreshAgentUpdates, updateText } from '../lib/agentUpdates'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
 import { MoveIn } from './HotelTransfer'
 
@@ -73,10 +73,18 @@ function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
+  // Agents mid-deploy on the last look. When one settles, its update marker
+  // may be stale; ask again instead of waiting for the five-minute refresh.
+  const deploying = useRef(new Set())
+
   async function fetchAgents() {
     try {
       const res = await authFetch('/api/agents')
-      setAgents(await res.json())
+      const list = await res.json()
+      const now = new Set((Array.isArray(list) ? list : []).filter(a => a.status === 'creating' || a.status === 'redeploying').map(a => a.id))
+      if ([...deploying.current].some(id => !now.has(id))) refreshAgentUpdates()
+      deploying.current = now
+      setAgents(list)
     } catch (err) { console.error('Failed to fetch agents:', err) }
     finally { setLoading(false) }
   }
@@ -118,6 +126,30 @@ function Dashboard() {
       toast.success(`Agent ${action === 'start' ? 'started' : 'stopped'}`)
     }
     catch (err) { toast.error(`Failed to ${action} agent: ` + err.message) }
+  }
+
+  // A redeploy from the card, so updating a guest the Fleet marks takes one
+  // click instead of a visit to its page. It restarts the container (an open
+  // console or chat ends), hence the confirm.
+  async function handleRedeploy(agent) {
+    const status = updates[agent.id]
+    const rebuild = Boolean(status && status.updateAvailable && status.action === 'rebuild')
+    const why = status && status.updateAvailable ? `\n\n${updateText(status)}` : ''
+    if (!confirm(`${rebuild ? 'Rebuild the image of' : 'Redeploy'} ${agent.name}? The agent restarts.${why}`)) return
+    // The request lasts as long as the deploy, so the card shows the build
+    // while it runs and the toast comes when it is done.
+    const done = authFetchOk(`/api/agents/${agent.id}/redeploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rebuild ? { rebuild: true } : {})
+    })
+    setTimeout(fetchAgents, 1500)
+    try {
+      await done
+      toast.success(`${agent.name} ${rebuild ? 'rebuilt' : 'redeployed'}`)
+    } catch (err) { toast.error(`${agent.name}: redeploy failed — ${err.message}`) }
+    fetchAgents()
+    refreshAgentUpdates()
   }
 
   async function handleDelete(id, name) {
@@ -408,6 +440,21 @@ function Dashboard() {
                   >
                     {agent.status === 'running' ? <Square size={14} color="white" /> : <Play size={14} color="white" />}
                   </button>
+                  {(() => {
+                    const update = updates[agent.id]
+                    const busy = agent.status === 'creating' || agent.status === 'redeploying'
+                    const wanted = Boolean(update && update.updateAvailable)
+                    return (
+                      <button
+                        className={wanted ? 'btn btn-primary' : 'btn btn-secondary'}
+                        title={busy ? 'A deploy is running' : wanted ? updateText(update) : 'Redeploy'}
+                        disabled={busy}
+                        onClick={(e) => { e.preventDefault(); handleRedeploy(agent) }}
+                      >
+                        <RefreshCw size={14} color="currentColor" />
+                      </button>
+                    )
+                  })()}
                   <button 
                     className="btn btn-danger" 
                     title="Delete" 

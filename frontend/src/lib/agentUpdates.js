@@ -34,6 +34,13 @@ export function useAgentUpdates() {
   return updates
 }
 
+// Ask again now rather than in five minutes: after a deploy finishes, the
+// server has already dropped its cache, so the marker can go at once.
+export function refreshAgentUpdates() {
+  at = 0
+  return load()
+}
+
 // One line for the marker's tooltip: what runs, what is newer, what to press.
 export function updateText(status) {
   if (!status || !status.updateAvailable) return ''
