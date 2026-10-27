@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import UpdateDot from './components/UpdateDot'
+import { useAgentUpdates } from './lib/agentUpdates'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
 import { ToastProvider, useToast } from './components/Toast'
@@ -170,6 +172,7 @@ function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
 }
 
 function Sidebar({ onNavigate, className = '' }) {
+  const updates = useAgentUpdates()
   const location = useLocation()
   const [version, setVersion] = useState('')
   const [updateInfo, setUpdateInfo] = useState(null)
@@ -341,6 +344,7 @@ function Sidebar({ onNavigate, className = '' }) {
               <span className="sidebar-agent-name">
                 <span className="sidebar-agent-dot" style={{ background: statusColor(agent.status) }} />
                 <span>{agent.name}</span>
+                <UpdateDot status={updates[agent.id]} />
               </span>
               <span className="sidebar-agent-runtime">{agent.runtime}</span>
             </Link>

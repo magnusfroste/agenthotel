@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import UpdateDot from './UpdateDot'
+import { useAgentUpdates } from '../lib/agentUpdates'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
@@ -49,6 +51,7 @@ function BuildProgress({ agentId }) {
 }
 
 function Dashboard() {
+  const updates = useAgentUpdates()
   const [agents, setAgents] = useState([])
   const [loading, setLoading] = useState(true)
   const [systemStats, setSystemStats] = useState(null)
@@ -357,7 +360,7 @@ function Dashboard() {
                 <Link to={`/agent/${agent.id}`} className="agent-card-content" style={{ textDecoration: 'none', color: 'inherit' }}>
                   <div className="agent-card-header">
                     <div style={{ minWidth: 0 }}>
-                      <div className="agent-card-title">{agent.name}</div>
+                      <div className="agent-card-title">{agent.name}<UpdateDot status={updates[agent.id]} /></div>
                       <div className="agent-card-subtitle">{agent.runtime}</div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>

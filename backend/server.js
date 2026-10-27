@@ -1263,6 +1263,20 @@ app.get('/api/agents/:id/build-log', requireAuth, (req, res) => {
   });
 });
 
+// Which agents could be updated, for the markers on the Fleet cards and in the
+// sidebar (lib/agentUpdates.js). Cached a quarter of an hour; ?refresh=1 asks
+// again. Registered before /api/agents/:id so "updates" is not taken for an id.
+app.get('/api/agents/updates', requireAuth, async (req, res) => {
+  try {
+    res.json(await require('./lib/agentUpdates').collect(
+      { db, docker, runtimes, runtimeImage: require('./lib/runtimeImage'), containerNameFor },
+      { refresh: req.query.refresh === '1' }
+    ));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/agents/:id', requireAuth, (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
@@ -1792,7 +1806,9 @@ function enqueueDeploy(work, agentId = null, meta = {}) {
     entry.startedAt = Date.now();
     return logId ? deployLog.run(logId, agentId, work) : work();
   });
-  const leave = () => { if (deployQueue.get(agentId) === entry) deployQueue.delete(agentId); };
+  // The update markers (lib/agentUpdates.js) describe what was deployed; a
+  // finished deploy makes them stale, so the next look recomputes.
+  const leave = () => { if (deployQueue.get(agentId) === entry) deployQueue.delete(agentId); require('./lib/agentUpdates').invalidate(); };
   run.then(leave, leave);
   deployChain = run.catch(() => {});
   return run;
