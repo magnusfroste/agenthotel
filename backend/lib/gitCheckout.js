@@ -53,7 +53,14 @@ function resolveContext(repoDir, subdir) {
   }
   return resolved;
 }
-
+// Put before every git command run in a checkout. After a fetch git may start
+// `gc --auto` (`maintenance run --auto` since 2.46), detached by default, which
+// then packs and prunes loose objects while the deploy goes on. A Git App
+// build packing its context at that moment failed with ENOENT on a
+// .git/objects file that was gone a minute later (agent-take, deployment 54,
+// 2026-10-27). Not detaching runs the cleanup inside the git call, before the
+// next step starts; it still runs, so the checkout cannot grow without bound.
+const NO_DETACHED_GC = ['-c', 'gc.autoDetach=false', '-c', 'maintenance.autoDetach=false'];
 
 // Clone if absent, otherwise fetch the ref and reset to it. Returns where the
 // checkout lives and which commit it now holds.
@@ -61,7 +68,7 @@ function checkout(id, config, { root = CHECKOUT_ROOT } = {}) {
   const repo = assertSafeRepo(config.GIT_REPO);
   const ref = assertSafeRef(config.GIT_REF);
   const repoDir = path.join(root, id);
-  const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'pipe', timeout: 300000 });
+  const git = (args, cwd) => execFileSync('git', [...NO_DETACHED_GC, ...args], { cwd, stdio: 'pipe', timeout: 300000 });
 
   // One path for a first checkout and a redeploy alike. `clone --branch`
   // takes a branch or a tag but not a commit, so a guest pinned to a sha
@@ -89,4 +96,4 @@ function checkout(id, config, { root = CHECKOUT_ROOT } = {}) {
   return { repoDir, dir: resolveContext(repoDir, config.GIT_SUBDIR), ref, repo, commit, subject, committedAt };
 }
 
-module.exports = { checkout, assertSafeRepo, assertSafeRef, resolveContext, CHECKOUT_ROOT, SHARED_ROOT };
+module.exports = { checkout, NO_DETACHED_GC, assertSafeRepo, assertSafeRef, resolveContext, CHECKOUT_ROOT, SHARED_ROOT };
