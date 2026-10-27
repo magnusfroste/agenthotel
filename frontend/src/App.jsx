@@ -160,9 +160,15 @@ function Sidebar({ onNavigate, className = '' }) {
   const [upgrading, setUpgrading] = useState(false)
   const [agents, setAgents] = useState([])
   const [ip, setIp] = useState('')
+  // What each guest is, by name: its template ("Take", "Reports") or, for a
+  // runtime guest, the runtime's own ("Hermes Agent"), from the library.
+  const [kindNames, setKindNames] = useState({})
   const toast = useToast()
 
   useEffect(() => {
+    authFetch('/api/templates').then(r => r.json())
+      .then(list => setKindNames(Object.fromEntries((Array.isArray(list) ? list : []).map(t => [t.id, t.name]))))
+      .catch(() => {})
     authFetch('/api/system/ip').then(r => r.json()).then(d => setIp(d.ip || '')).catch(() => {})
     fetchVersion()
     checkForUpdates()
@@ -319,7 +325,9 @@ function Sidebar({ onNavigate, className = '' }) {
         </div>
 
         <div className="sidebar-group">
-          <div className="sidebar-label">Agents</div>
+          {/* Agents and the tools they use, in one list: everything checked in
+              is a guest, and headings per kind would cost room for nothing. */}
+          <div className="sidebar-label">Guests</div>
           {agents.length === 0 && (
             <Link to="/create" className="sidebar-link sidebar-empty"><Plus size={16} color="currentColor" /> Check in your first agent</Link>
           )}
@@ -331,7 +339,7 @@ function Sidebar({ onNavigate, className = '' }) {
                 <span>{agent.name}</span>
                 <UpdateDot status={updates[agent.id]} />
               </span>
-              <span className="sidebar-agent-runtime">{agent.runtime}</span>
+              <span className="sidebar-agent-runtime">{kindNames[agent.template || agent.runtime] || agent.runtime}</span>
             </Link>
           ))}
         </div>

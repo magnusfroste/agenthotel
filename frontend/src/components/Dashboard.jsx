@@ -393,13 +393,13 @@ function Dashboard() {
                   <div className="agent-card-header">
                     <div style={{ minWidth: 0 }}>
                       <div className="agent-card-title">{agent.name}<UpdateDot status={updates[agent.id]} /></div>
-                      <div className="agent-card-subtitle">{agent.runtime}</div>
+                      <div className="agent-card-subtitle">{runtimeMeta[agent.template || agent.runtime]?.name || agent.runtime}</div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>
                       <span className="status-badge" style={{ background: statusColor(agent.status) }}>
                         {agent.status}
                       </span>
-                      <RuntimeMark meta={runtimeMeta[agent.runtime]} />
+                      <RuntimeMark meta={runtimeMeta[agent.template] || runtimeMeta[agent.runtime]} />
                     </div>
                   </div>
                   <div className="agent-card-meta">

@@ -1169,7 +1169,7 @@ app.get('/api/agents', requireAuth, (req, res) => {
   // List view: deliberately no config — it holds API keys and compose files,
   // and this endpoint is polled every few seconds by the sidebar/dashboard.
   // The detail endpoint below serves config when it's actually needed.
-  const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, health, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
+  const agents = db.prepare('SELECT id, name, runtime, template, domain, image, port, status, health, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
   res.json(agents);
 });
 
@@ -1458,6 +1458,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     // that could not be deployed at all — the button led to "Unknown runtime".
     let runtime = req.body.runtime;
     let config = req.body.config;
+    let templateId = null;
     if (!runtimes[runtime]) {
       const template = getTemplate(runtime, runtimes);
       if (!template || !template.deploy) {
@@ -1468,6 +1469,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
         // guest will answer, and what it is called. A stack that names its
         // containers after the agent can be deployed twice on one host.
         const filled = materializeDeploy(template.deploy, { ...(config || {}), DOMAIN: domain || '', AGENT_NAME: name });
+        templateId = template.id;
         runtime = filled.runtime;
         config = filled.config;
         if (!image && filled.image) image = filled.image;
@@ -1499,9 +1501,9 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     const agentConfig = plugin.buildConfig({ name, domain, image, port, config: finalConfig });
 
     db.prepare(`
-      INSERT INTO agents (id, name, runtime, domain, image, port, config, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'creating')
-    `).run(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, JSON.stringify(agentConfig));
+      INSERT INTO agents (id, name, runtime, domain, image, port, config, status, template)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', ?)
+    `).run(id, name, runtime, domain, image || plugin.defaultImage, port || plugin.defaultPort, JSON.stringify(agentConfig), templateId);
 
     // Handle compose runtime separately
     if (composeManaged(runtime)) {
@@ -5063,6 +5065,19 @@ app.get('/api/system/ip', requireAuth, async (req, res) => {
 try {
   db.exec('ALTER TABLE agents ADD COLUMN health TEXT');
 } catch (_) { /* column already present */ }
+
+// The template a guest was deployed from (lib/agentTemplate.js), so it can be
+// shown as "Take" rather than "git-app". Older guests are matched once here.
+try {
+  db.exec('ALTER TABLE agents ADD COLUMN template TEXT');
+} catch (_) { /* column already present */ }
+try {
+  const recipes = listTemplates(runtimes).filter(t => t.custom).map(t => getTemplate(t.id, runtimes)).filter(Boolean);
+  const filled = require('./lib/agentTemplate').backfill(db, recipes);
+  if (filled) console.log(`[Templates] Recorded the template of ${filled} existing guest(s)`);
+} catch (err) {
+  console.warn('[Templates] Could not match existing guests to templates:', err.message);
+}
 
 const healthState = new Map();
 

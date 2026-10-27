@@ -213,7 +213,7 @@ holds what you work with — Fleet, Templates, Connect (wiring your own AI
 agents to the hotel over MCP), Docs — and, on the right, *New
 agent* (Agent / From a template / Compose), the light/dark/system switch and
 the account menu. The **sidebar**
-holds what you look after: the agents, then Infrastructure (Providers,
+holds what you look after: the guests (agents and the tools they use, one list, each named by its template — *Take*, *Reports*, *Hermes Agent* — from the `template` column, `lib/agentTemplate.js`; guests deployed before it are matched once at start by repository or image), then Infrastructure (Providers,
 Domains, Certificates, Console, System, Settings), and in its footer the host
 IP (one click copies it, for a DNS A record) above the version. A new page goes
 in one of those two places, not both.
