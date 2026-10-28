@@ -98,7 +98,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Deploy log** — every create, redeploy and settings change is kept with its full log (build output, pulls, container start, the error if it failed), followed live on the agent's **Deployments** tab and readable over MCP; secrets are masked
 - **Routes that heal** — Caddy holds its routes in memory, and a compose stack's containers come back on their own networks when recreated. Both are re-checked every minute: a present route over a lost network is a 502 that no route check would catch
 - **Per-agent resource stats** — live CPU, memory and network usage per container, refreshed every 5s on the agent's Overview tab
-- **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events on state transitions
+- **Uptime monitoring** — HTTPS checks every minute for running agents with a domain, 24h/7d percentages and a 50-check history strip, with `agent.up`/`agent.down` events when a guest stays down for three checks in a row (a redeploy's few seconds of 502 is not an outage), and one message, not one per guest, when several go down at once
 - **Alert notifications** — webhook (Slack/Discord) or Telegram alerts when an agent goes down or recovers, or when host disk/memory crosses a configurable threshold
 - **Bounded container logs** — agents are deployed with json-file log rotation (10 MB × 3) so a chatty agent can't fill the disk
 - **Activity log** — agent lifecycle, cleanup and login events, shown on the System page

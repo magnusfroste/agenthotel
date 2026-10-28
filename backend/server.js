@@ -5177,10 +5177,14 @@ async function runHealthChecks() {
   }
 }
 
-// 7 days of history, and log agent.down/agent.up events on state transitions
-// only (uptimeState tracks the last known ok-state per agent).
+// 7 days of history, and agent.down/agent.up events when a guest changes
+// state — after three failed probes in a row, not one, and reported together
+// when several change at once (lib/uptimeAlerts.js).
+const uptimeAlerts = require('./lib/uptimeAlerts');
 const uptimeState = new Map();
 
+// Probes one guest and records the result. Returns the event its state change
+// calls for ({ name, event, statusCode }), or null.
 async function checkAgentUptime(fetch, agent) {
   const started = Date.now();
   let ok = 0;
@@ -5197,32 +5201,26 @@ async function checkAgentUptime(fetch, agent) {
   try {
     db.prepare('INSERT INTO uptime_checks (agent_id, ok, status_code, latency_ms) VALUES (?, ?, ?, ?)')
       .run(agent.id, ok, statusCode, latency);
-
-    const isUp = ok === 1;
-    const prev = uptimeState.get(agent.id);
-    if (prev === undefined) {
-      uptimeState.set(agent.id, isUp);
-      // Seeding the first observation silently is only right when the agent
-      // starts healthy. An agent that is broken from birth never transitions,
-      // so it would never fire agent.down and never notify — it just sits
-      // there looking fine. That is exactly how an openclaw agent OOM-killed
-      // at boot stayed invisible for an hour: 502 on every check from the
-      // first one, no state change, no event, and a dashboard still showing
-      // the status written at deploy time.
-      if (!isUp) {
-        const msg = `Agent ${agent.name} never came up (${statusCode ?? 'unreachable'})`;
-        logEvent('agent.down', agent.id, msg);
-        sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
-      }
-    } else if (prev !== isUp) {
-      uptimeState.set(agent.id, isUp);
-      const msg = isUp ? `Agent ${agent.name} is back up` : `Agent ${agent.name} is down (${statusCode ?? 'unreachable'})`;
-      logEvent(isUp ? 'agent.up' : 'agent.down', agent.id, msg);
-      sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
-    }
   } catch (err) {
     console.error(`[Uptime] Failed to record check for ${agent.name}:`, err.message);
   }
+
+  // A guest waiting for its deploy is about to be replaced; a failure now is
+  // the deploy, not the guest. Its streak starts again after, from the state
+  // it had (so a deploy that never comes up reads "down", not "never up").
+  if (deployQueue.has(agent.id)) {
+    const prev = uptimeState.get(agent.id);
+    if (prev) uptimeState.set(agent.id, { ...prev, fails: 0 });
+    return null;
+  }
+
+  // A guest that is broken from birth still gets reported ('never-up'): an
+  // openclaw agent OOM-killed at boot once answered 502 to every check for an
+  // hour, with no state change, no event, and the dashboard showing the
+  // status written at deploy time.
+  const { state, event } = uptimeAlerts.observe(uptimeState.get(agent.id), ok === 1);
+  uptimeState.set(agent.id, state);
+  return event ? { id: agent.id, name: agent.name, event, statusCode } : null;
 }
 
 async function runUptimeChecks() {
@@ -5234,9 +5232,16 @@ async function runUptimeChecks() {
   // Parallel with a concurrency cap: sequential probing with 10s timeouts
   // can't finish a 60s sweep once the fleet grows.
   const CONCURRENCY = 10;
+  const events = [];
   for (let i = 0; i < agents.length; i += CONCURRENCY) {
-    await Promise.all(agents.slice(i, i + CONCURRENCY).map(agent => checkAgentUptime(fetch, agent)));
+    const results = await Promise.all(agents.slice(i, i + CONCURRENCY).map(agent => checkAgentUptime(fetch, agent)));
+    events.push(...results.filter(Boolean));
   }
+
+  // Every guest's change is in the event log; the operator's phone gets one
+  // message when several changed at once.
+  for (const e of events) logEvent(e.event === 'up' ? 'agent.up' : 'agent.down', e.id, uptimeAlerts.eventMessage(e));
+  for (const msg of uptimeAlerts.notifications(events)) sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
 
   // Prune history older than 7 days.
   db.prepare("DELETE FROM uptime_checks WHERE checked_at < datetime('now', '-7 days')").run();
