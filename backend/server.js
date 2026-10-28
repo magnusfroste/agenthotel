@@ -17,6 +17,7 @@ const { injectProviderEnv } = require('./lib/providerEnv');
 const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
+const volumeTar = require('./lib/volumeTar');
 const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
@@ -1339,24 +1340,11 @@ async function listAgentVolumes(agent) {
     .filter(name => prefixes.some(p => name.startsWith(p)));
 }
 
-// Tar a Docker volume to a local temp file via a throwaway container based
-// on our own image. Returns the temp file path.
+// Tar a Docker volume to a temp file in the panel's data volume, written by a
+// throwaway container based on our own image (lib/volumeTar.js says why it
+// is never read from the container's output). Returns the file path.
 async function tarVolumeToFile(volumeName) {
-  const { image } = await getSelfInfo();
-  const tmpFile = path.join(os.tmpdir(), `vol-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.tar`);
-  const out = new PassThrough();
-  const writeDone = pipeline(out, fs.createWriteStream(tmpFile));
-  // Tty: true gives a clean stdout stream (no multiplex headers).
-  const [result] = await docker.run(image, ['tar', 'cf', '-', '-C', '/vol', '.'], out, {
-    Tty: true,
-    HostConfig: { Binds: [`${volumeName}:/vol:ro`], AutoRemove: true }
-  });
-  await writeDone;
-  if (result.StatusCode !== 0) {
-    fs.unlink(tmpFile, () => {});
-    throw new Error(`tar of volume ${volumeName} failed with exit code ${result.StatusCode}`);
-  }
-  return tmpFile;
+  return volumeTar.tarVolumeToFile(docker, await getSelfInfo(), volumeName);
 }
 
 // Write an agent's export zip — agent.json, a README and, with includeData,
