@@ -20,7 +20,7 @@ const { demuxDockerBuffer } = require('./lib/demux');
 const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
-const { caddyFetch } = require('./lib/caddyAdmin');
+const { caddyFetch, caddySet } = require('./lib/caddyAdmin');
 const { evaluateHealth } = require('./lib/agentHealth');
 const deploys = require('./lib/deploysInFlight');
 const { execFile, execFileSync, spawn } = require('child_process');
@@ -4512,9 +4512,7 @@ async function realClientIp() {
   const base = `${caddyApiUrl}/config/apps/http/servers/srv0`;
   try {
     for (const [key, value] of [['client_ip_headers', ['X-Forwarded-For']], ['trusted_proxies_strict', 1]]) {
-      const res = await caddyFetch(`${base}/${key}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value)
-      });
+      const res = await caddySet(`${base}/${key}`, value);
       if (!res.ok) console.warn(`[Caddy] Could not set ${key}: ${res.status} ${(await res.text()).slice(0, 120)}`);
     }
   } catch (err) {

@@ -129,7 +129,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f "$SCRIPT_DIR/docker-compose.yml" ] && [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
   echo "Using local installation from $SCRIPT_DIR..."
-  cp -r "$SCRIPT_DIR" "$INSTALL_DIR"
+  # Copy the contents, not the directory: once $INSTALL_DIR exists, as it does
+  # on every re-run, `cp -r dir $INSTALL_DIR` nests it at
+  # $INSTALL_DIR/<dir> and the build below quietly uses the old code.
+  mkdir -p "$INSTALL_DIR"
+  cp -r "$SCRIPT_DIR/." "$INSTALL_DIR/"
 elif [ -d "$INSTALL_DIR" ]; then
   echo "Existing installation found. Updating..."
   cd "$INSTALL_DIR"

@@ -39,4 +39,17 @@ function caddyFetch(url, options = {}) {
   return nodeFetch(url, options);
 }
 
-module.exports = { caddyFetch, usingSocket, SOCKET };
+// Sets one config value, whether or not the key exists yet. None of Caddy's
+// methods does that alone: POST to an array APPENDS (so POSTing
+// ["X-Forwarded-For"] to client_ip_headers made it [["X-Forwarded-For"]], and
+// Caddy refused the whole config on every boot), PATCH refuses a missing key
+// with 404, and PUT refuses an existing one with 409. Replace, else create.
+async function caddySet(url, value) {
+  const options = (method) => ({
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value)
+  });
+  const res = await caddyFetch(url, options('PATCH'));
+  return res.status === 404 ? caddyFetch(url, options('PUT')) : res;
+}
+
+module.exports = { caddyFetch, caddySet, usingSocket, SOCKET };
