@@ -191,6 +191,9 @@ module.exports = {
       // commits. Docker's layer cache makes this cheap when nothing changed.
       rebuild: true,
       commit,
+      // The full sha goes into the deploy record: a rollback fetches exactly
+      // that commit, and `git fetch` takes a full sha, not a short one.
+      commitFull,
       buildArgs: { GIT_SHA: commitFull, BUILD_TIME: committedAt },
       // The repository's own .git stays out of the context: the image gets the
       // commit as GIT_SHA instead, and git rewrites .git/objects whenever it

@@ -1926,7 +1926,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
     if (prepared.buildArgs) buildArgs = prepared.buildArgs;
     if (prepared.exclude) buildExclude = prepared.exclude;
     if (prepared.commit) console.log(`Building ${name} from commit ${prepared.commit}`);
-    if (prepared.commit) deployLog.setCommit(id, prepared.commit);
+    if (prepared.commit) deployLog.setCommit(id, prepared.commitFull || prepared.commit);
     if (prepared.commit && onSource) onSource(prepared.commit);
   }
 
@@ -2811,7 +2811,10 @@ function withCurrentLimits(agentId, config) {
 // twice — see lib/redeployGate.js.
 const redeployGate = require('./lib/redeployGate').createRedeployGate();
 
-async function redeployAgent(agentId, { rebuildImage = false, trigger = null } = {}) {
+// `ref` builds one deploy from that commit instead of what GIT_REF names
+// (a rollback, lib/rollback.js). It is not saved: the next redeploy follows
+// GIT_REF again, and the update marker says the guest is behind until then.
+async function redeployAgent(agentId, { rebuildImage = false, trigger = null, ref = null, kind = null } = {}) {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
   if (!agent) { const e = new Error('Agent not found'); e.status = 404; throw e; }
   // Re-inject provider env on redeploy: providers added after the agent was
@@ -2819,12 +2822,13 @@ async function redeployAgent(agentId, { rebuildImage = false, trigger = null } =
   // keys, so manual env edits are never clobbered.
   const plugin = runtimes[agent.runtime];
   const config = await injectProviderEnv(db, JSON.parse(agent.config || '{}'), plugin);
-  const key = JSON.stringify({ rebuildImage, image: agent.image, domain: agent.domain, port: agent.port, config });
+  const deployConfig = ref ? { ...config, GIT_REF: ref } : config;
+  const key = JSON.stringify({ rebuildImage, image: agent.image, domain: agent.domain, port: agent.port, config: deployConfig });
   const remoteRevision = plugin && typeof plugin.remoteRevision === 'function'
-    ? () => plugin.remoteRevision(agentId, config)
+    ? () => plugin.remoteRevision(agentId, deployConfig)
     : null;
   const { promise, joined, revision } = await redeployGate.redeploy(agentId, key,
-    entry => { entry.trigger = trigger; return runRedeploy(agent, plugin, config, rebuildImage, entry); },
+    entry => { entry.trigger = trigger; return runRedeploy(agent, plugin, config, rebuildImage, entry, { deployConfig, kind }); },
     { remoteRevision, sourceless: !config.GIT_REPO });
   if (joined) {
     const what = `the identical redeploy already ${joined}${revision ? ` (commit ${revision})` : ''}`;
@@ -2834,10 +2838,13 @@ async function redeployAgent(agentId, { rebuildImage = false, trigger = null } =
   return promise;
 }
 
-async function runRedeploy(agent, plugin, config, rebuildImage, gateEntry) {
+async function runRedeploy(agent, plugin, savedConfig, rebuildImage, gateEntry, { deployConfig = savedConfig, kind = null } = {}) {
   const agentId = agent.id;
+  // What is saved is the agent's config; what is deployed may name another
+  // commit for this once (a rollback).
+  const config = deployConfig;
   try {
-    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(config), agentId);
+    db.prepare('UPDATE agents SET config = ? WHERE id = ?').run(JSON.stringify(savedConfig), agentId);
 
     db.prepare("UPDATE agents SET status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
 
@@ -2869,7 +2876,7 @@ async function runRedeploy(agent, plugin, config, rebuildImage, gateEntry) {
         // The image is already built; deployAgent must not build it twice.
         await deployAgent(agent.id, agent.name, agent.runtime, agent.domain, agent.image, agent.port, withCurrentLimits(agent.id, config), plugin, { rebuildImage: false, alreadyBuilt: true });
       }
-    }, agentId, { kind: rebuildImage ? 'rebuild' : 'redeploy', trigger: gateEntry.trigger || null, config });
+    }, agentId, { kind: kind || (rebuildImage ? 'rebuild' : 'redeploy'), trigger: gateEntry.trigger || null, config });
 
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
     logEvent('agent.redeploy', agentId, `Redeployed agent ${agent.name}`);
@@ -2897,6 +2904,22 @@ app.post('/api/agents/:id/redeploy', requireAuth, async (req, res) => {
     // because a rebuild is slow and pulls a fresh base image.
     await redeployAgent(req.params.id, { rebuildImage: req.body?.rebuild === true, trigger: 'panel' });
     res.json({ redeployed: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Roll a Git App back to a commit it ran before: the build of that deploy,
+// again, from its full sha (lib/rollback.js says which deploys qualify).
+// Lasts as long as the deploy, like a redeploy.
+app.post('/api/agents/:id/rollback', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT id, runtime FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const deploy = deployLog.get(parseInt(req.body?.deploymentId));
+    const sha = require('./lib/rollback').rollbackTarget(deploy, agent, runtimes[agent.runtime]);
+    await redeployAgent(agent.id, { trigger: 'panel', ref: sha, kind: 'rollback' });
+    res.json({ rolledBack: true, commit: sha.slice(0, 7) });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }

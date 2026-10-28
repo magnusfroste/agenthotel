@@ -355,7 +355,7 @@ function AgentDetail() {
         </div>
       )}
 
-      {tab === 'deployments' && <Deployments agentId={id} />}
+      {tab === 'deployments' && <Deployments agentId={id} rollbackable={agent.runtime === 'git-app'} />}
 
       {/* Logs */}
       {tab === 'logs' && (

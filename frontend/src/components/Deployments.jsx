@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, GitCommit } from 'lucide-react'
-import { authFetch } from '../lib/auth'
+import { CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, GitCommit, Undo2 } from 'lucide-react'
+import { authFetch, authFetchOk } from '../lib/auth'
+import { useToast } from './Toast'
 
 // An agent's deploys, newest first, and the full log of the one selected —
 // one row per deploy. A running deploy's log is followed by polling
@@ -17,7 +18,12 @@ const STATUS = {
   interrupted: { label: 'Interrupted', color: 'var(--accent-yellow)', Icon: AlertTriangle }
 }
 
-const KIND = { create: 'Create', redeploy: 'Redeploy', rebuild: 'Rebuild', update: 'Settings change', deploy: 'Deploy' }
+const KIND = { create: 'Create', redeploy: 'Redeploy', rebuild: 'Rebuild', rollback: 'Rollback', update: 'Settings change', deploy: 'Deploy' }
+
+// A deploy a Git App can go back to: it succeeded and recorded its full commit
+// (backend/lib/rollback.js; older deploys kept only seven characters).
+const FULL_SHA = /^[0-9a-f]{40}$/i
+const canRollBack = d => d && d.status === 'succeeded' && FULL_SHA.test(d.commit_sha || '')
 
 function duration(d) {
   const end = d.finished_at || Date.now()
@@ -44,7 +50,9 @@ function StatusBadge({ status }) {
   )
 }
 
-export default function Deployments({ agentId }) {
+export default function Deployments({ agentId, rollbackable = false }) {
+  const toast = useToast()
+  const [rolling, setRolling] = useState(false)
   const [deploys, setDeploys] = useState(null)
   const [selected, setSelected] = useState(null)
   const [log, setLog] = useState('')
@@ -128,6 +136,24 @@ export default function Deployments({ agentId }) {
   }
 
   const current = deploys.find(d => d.id === selected)
+  // What runs now: the newest deploy that succeeded. Rolling back to it would
+  // change nothing, so it gets no button.
+  const running = deploys.find(d => d.status === 'succeeded')
+  const busy = deploys.some(d => d.status === 'queued' || d.status === 'running')
+
+  // A rollback lasts as long as its deploy; the list shows it from the start.
+  async function rollBack(d) {
+    const short = d.commit_sha.slice(0, 7)
+    if (!confirm(`Roll back to ${short}, deployed ${new Date(d.queued_at).toLocaleString()}?\n\nThe agent is built from that commit again and restarts. Its branch setting is unchanged, so the next redeploy brings it back up to date.`)) return
+    setRolling(true)
+    const done = authFetchOk(`/api/agents/${agentId}/rollback`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deploymentId: d.id })
+    })
+    setTimeout(() => setSelected(null), 1500)
+    try { await done; toast.success(`Rolled back to ${short}`) }
+    catch (err) { toast.error(`Rollback failed: ${err.message}`) }
+    finally { setRolling(false) }
+  }
 
   return (
     <div className="deployments">
@@ -157,6 +183,13 @@ export default function Deployments({ agentId }) {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(current.queued_at).toLocaleString()} · {duration(current)}</span>
             </div>
             {!done && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Following live…</span>}
+            {done && rollbackable && canRollBack(current) && running && current.id !== running.id && current.commit_sha !== running.commit_sha && (
+              <button className="btn btn-secondary" disabled={rolling || busy} onClick={() => rollBack(current)}
+                title="Build this commit again and run it"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem' }}>
+                <Undo2 size={14} color="currentColor" /> Roll back to {current.commit_sha.slice(0, 7)}
+              </button>
+            )}
           </div>
         )}
         {current?.error && (
