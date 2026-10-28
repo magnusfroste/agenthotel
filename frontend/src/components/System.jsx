@@ -7,6 +7,7 @@ import DiskByAgent from './DiskByAgent'
 import { Monitor, BarChart3, Globe, Plug, Trash2, Terminal, RefreshCw, Download, AlertTriangle, Activity, ChevronRight, Server, Cpu, Clock, Container, GitBranch, Power, HardDrive, Layers, Copy, Network } from 'lucide-react'
 import SettingCard from './SettingCard'
 import InstanceBackup from './InstanceBackup'
+import BackupsCard from './BackupsCard'
 
 function System() {
   const [systemInfo, setSystemInfo] = useState(null)
@@ -819,6 +820,7 @@ sysctl -w vm.swappiness=10`}</pre>
           help: 'The Docker network agents and compose guests are joined to so Caddy can reach them by name. Only change this if you renamed the compose project.' },
       ]} />
 
+      <BackupsCard />
       <InstanceBackup />
 
       <section className="settings-section">

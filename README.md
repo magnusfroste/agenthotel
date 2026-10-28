@@ -111,6 +111,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Built-in MCP server** — let external AI agents list, create, redeploy and delete agents, check system status and pull logs
 - **REST API** — everything the UI does is available over a token-authenticated JSON API
 - **Move to another hotel** — no lock-in: an agent's memory is its harness's own files, and they go with it. One hotel issues a one-time link, the other fetches the agent from it, server to server, memory included (Export → *Move to another hotel*, Import Agent → *From another hotel*, or the `create_transfer` / `import_from_hotel` MCP tools). The agent stops in the old hotel the moment it is pulled, so it never runs in two places
+- **Nightly backups** — every guest's volumes and settings, every night, taken while it is paused for seconds rather than stopped; the newest kept on the server and, optionally, copied to any S3 bucket (Hetzner Object Storage, Cloudflare R2, Backblaze, MinIO). One click restores a guest in place, after backing up how it is now
 - **Export / import** — one-click instance backup and VPS-to-VPS migration (agents, providers and settings; admin credentials are never exported), plus per-service export/import as a zip — move a single agent between instances, optionally including its persistent volume data (requires a stopped agent, for a consistent copy)
 
 ## Quick Start

@@ -417,7 +417,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   for (const row of rows) {
     // The tunnel and NetBird credentials have their own endpoints, which show
     // only the last four characters; this list is not where they are read.
-    if (!['admin_password_hash', 'admin_password_salt', 'auth_token', 'cloudflare_tunnel_token', 'netbird_setup_key', 'netbird_api_token'].includes(row.key)) {
+    if (!['admin_password_hash', 'admin_password_salt', 'auth_token', 'cloudflare_tunnel_token', 'netbird_setup_key', 'netbird_api_token', 'backup_s3_secret_key'].includes(row.key)) {
       settings[row.key] = row.value;
     }
   }
@@ -1442,6 +1442,241 @@ app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
   } catch (err) {
     if (!res.headersSent) res.status(err.status || 500).json({ error: err.message });
     else res.end();
+  }
+});
+
+// ---- Backups (lib/backups.js) ---------------------------------------------
+// Every guest's memory, every night: agent.json and a .tar.gz per volume,
+// taken while its containers are paused, kept on the host and, with a bucket
+// configured, in S3. A restore puts a backup back into the guest's own
+// volumes and starts it again.
+const backups = require('./lib/backups');
+const backupState = { running: false, current: null };
+
+function getSetting(key) {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
+}
+function putSetting(key, value) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+}
+const backupSettings = () => backups.readSettings(getSetting);
+
+// Running containers that mount any of these volumes: what has to hold still
+// while they are copied. Found by volume rather than by name, so a compose
+// stack's containers are paused too.
+async function containersUsing(volumes) {
+  const ids = new Set();
+  for (const v of volumes) {
+    for (const c of await docker.listContainers({ filters: { volume: [v], status: ['running'] } })) ids.add(c.Id);
+  }
+  return [...ids];
+}
+
+// One guest's backup into /data/backups/<name>/<stamp>/. The helper container
+// writes the tar straight into the panel's data volume, so nothing passes
+// through this process's memory.
+async function backupAgent(agent, backupStamp) {
+  const { image, dataMountSource } = await getSelfInfo();
+  const volumes = await listAgentVolumes(agent);
+  const rel = path.posix.join('backups', agent.name, backupStamp);
+  const dir = path.join('/data', rel);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const manifest = {
+      app: 'agenthotel-agent', version: 1, kind: 'backup', takenAt: new Date().toISOString(), volumes,
+      agent: {
+        id: agent.id, name: agent.name, runtime: agent.runtime, template: agent.template || null,
+        domain: agent.domain, image: agent.image, port: agent.port, config: JSON.parse(agent.config || '{}')
+      }
+    };
+    // agent.json carries the guest's environment, keys included.
+    fs.writeFileSync(path.join(dir, 'agent.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+    const paused = await containersUsing(volumes);
+    for (const id of paused) await docker.getContainer(id).pause().catch(() => {});
+    try {
+      for (const vol of volumes) {
+        const [result] = await docker.run(image, ['tar', 'czf', `/staging/${rel}/${vol}.tar.gz`, '-C', '/vol', '.'], new PassThrough(), {
+          Tty: true, HostConfig: { Binds: [`${vol}:/vol:ro`, `${dataMountSource}:/staging`], AutoRemove: true }
+        });
+        if (result.StatusCode !== 0) throw new Error(`tar of ${vol} failed (exit ${result.StatusCode})`);
+      }
+    } finally {
+      for (const id of paused) {
+        await docker.getContainer(id).unpause().catch(err => console.error(`[Backup] Could not unpause ${id.slice(0, 12)}: ${err.message}`));
+      }
+    }
+    return { dir, volumes: volumes.length, paused: paused.length };
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+function dirBytes(dir) {
+  return fs.readdirSync(dir).reduce((sum, f) => sum + fs.statSync(path.join(dir, f)).size, 0);
+}
+
+// Backs up every guest, keeps the newest few on the host and, with S3, more
+// in the bucket. One run at a time; a guest mid-deploy is skipped this time.
+async function runBackups(trigger = 'schedule') {
+  if (backupState.running) return null;
+  backupState.running = true;
+  const started = Date.now();
+  const st = backups.stamp(new Date(started));
+  const settings = backupSettings();
+  const results = [];
+  try {
+    for (const agent of db.prepare('SELECT * FROM agents ORDER BY name').all()) {
+      backupState.current = agent.name;
+      const r = { name: agent.name, ok: false };
+      try {
+        if (deployQueue.has(agent.id)) throw new Error('skipped: a deploy is running');
+        const b = await backupAgent(agent, st);
+        Object.assign(r, { ok: true, volumes: b.volumes, bytes: dirBytes(b.dir) });
+        for (const old of backups.beyondKeep(backups.listLocal(agent.name).map(x => x.stamp), settings.keepLocal)) {
+          fs.rmSync(path.join(backups.BACKUP_ROOT, agent.name, old), { recursive: true, force: true });
+        }
+        if (settings.s3Configured) {
+          try {
+            await backups.uploadBackup(settings.s3, agent.name, st, b.dir);
+            await backups.pruneRemote(settings.s3, agent.name, settings.keepRemote);
+            r.s3 = 'uploaded';
+          } catch (err) { r.s3 = `failed: ${err.message}`; }
+        }
+      } catch (err) { r.error = err.message; }
+      console.log(`[Backup] ${agent.name}: ${r.ok ? `${r.volumes} volume(s), ${Math.round((r.bytes || 0) / 1048576)} MB${r.s3 ? `, S3 ${r.s3}` : ''}` : r.error}`);
+      results.push(r);
+    }
+  } finally {
+    backupState.running = false;
+    backupState.current = null;
+  }
+  const summary = { at: new Date(started).toISOString(), trigger, stamp: st, seconds: Math.round((Date.now() - started) / 1000), s3: settings.s3Configured, results };
+  putSetting('backup_last_run', summary.at);
+  putSetting('backup_last_result', JSON.stringify(summary));
+  const bad = results.filter(r => !r.ok || (r.s3 && r.s3 !== 'uploaded'));
+  const okCount = results.filter(r => r.ok).length;
+  logEvent('backup.run', null, `Backed up ${okCount} of ${results.length} guest(s)${settings.s3Configured ? ' (host and S3)' : ' (host only)'}${bad.length ? `; problems: ${bad.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}` : ''}`);
+  if (bad.length) sendNotification(db, `AgentHotel: backup problems: ${bad.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}`).catch(() => {});
+  return summary;
+}
+
+function checkBackupSchedule() {
+  const s = backupSettings();
+  if (!s.enabled || backupState.running) return;
+  if (!backups.isDue(new Date(), getSetting('backup_last_run'), s.hour)) return;
+  runBackups('schedule').catch(err => console.error('[Backup] Run failed:', err.message));
+}
+
+// Settings for the Backups card. The S3 secret never leaves the server; the
+// card sees whether one is stored and its last four characters.
+function backupSettingsView() {
+  const s = backupSettings();
+  const secret = getSetting(backups.SECRET_KEY) || '';
+  return {
+    enabled: s.enabled, hour: s.hour, keepLocal: s.keepLocal, keepRemote: s.keepRemote,
+    s3: { endpoint: s.s3.endpoint, region: getSetting('backup_s3_region') || '', bucket: s.s3.bucket, accessKey: s.s3.accessKey, prefix: s.s3.prefix, secretSet: Boolean(secret), secretLast4: secret ? secret.slice(-4) : '' },
+    s3Configured: s.s3Configured
+  };
+}
+
+app.get('/api/backups', requireAuth, (req, res) => {
+  // Every guest that has backups, including ones since deleted: that is when
+  // a backup is wanted most.
+  const names = new Set(db.prepare('SELECT name FROM agents').all().map(a => a.name));
+  try { for (const n of fs.readdirSync(backups.BACKUP_ROOT)) names.add(n); } catch (_) {}
+  const agentsByName = Object.fromEntries(db.prepare('SELECT id, name FROM agents').all().map(a => [a.name, a.id]));
+  let last = null;
+  try { last = JSON.parse(getSetting('backup_last_result') || 'null'); } catch (_) {}
+  res.json({
+    settings: backupSettingsView(),
+    running: backupState.running, current: backupState.current, last,
+    guests: [...names].sort().map(name => ({ name, agentId: agentsByName[name] || null, backups: backups.listLocal(name) }))
+  });
+});
+
+app.put('/api/backups/settings', requireAuth, (req, res) => {
+  const body = req.body || {};
+  const map = {
+    enabled: v => putSetting('backup_enabled', v ? 'true' : 'false'),
+    hour: v => putSetting('backup_hour', String(parseInt(v, 10))),
+    keepLocal: v => putSetting('backup_keep_local', String(parseInt(v, 10))),
+    keepRemote: v => putSetting('backup_keep_remote', String(parseInt(v, 10))),
+  };
+  for (const [k, fn] of Object.entries(map)) if (body[k] !== undefined) fn(body[k]);
+  const s3 = body.s3 || {};
+  for (const k of ['endpoint', 'region', 'bucket', 'accessKey', 'prefix']) {
+    if (s3[k] !== undefined) putSetting(`backup_s3_${k === 'accessKey' ? 'access_key' : k}`, String(s3[k]).trim());
+  }
+  // An empty secret keeps the stored one; clearSecret removes it.
+  if (s3.secretKey) putSetting(backups.SECRET_KEY, String(s3.secretKey).trim());
+  if (s3.clearSecret) putSetting(backups.SECRET_KEY, '');
+  res.json(backupSettingsView());
+});
+
+// Tries the bucket with what is on the form, the stored secret filling in
+// for an empty one, before anything is saved.
+app.post('/api/backups/test', requireAuth, async (req, res) => {
+  const s = backupSettings().s3;
+  const f = req.body?.s3 || {};
+  const c = {
+    endpoint: (f.endpoint ?? s.endpoint).trim(), region: (f.region ?? s.region).trim() || 'auto', bucket: (f.bucket ?? s.bucket).trim(),
+    accessKey: (f.accessKey ?? s.accessKey).trim(), secretKey: (f.secretKey || s.secretKey || '').trim(), prefix: (f.prefix ?? s.prefix).trim()
+  };
+  if (!c.endpoint || !c.bucket || !c.accessKey || !c.secretKey) return res.status(400).json({ error: 'Endpoint, bucket, access key and secret key are all needed' });
+  try { res.json(await backups.testS3(c)); }
+  catch (err) { res.status(400).json({ error: `${err.name || 'Error'}: ${err.message}` }); }
+});
+
+app.post('/api/backups/run', requireAuth, (req, res) => {
+  if (backupState.running) return res.status(409).json({ error: `A backup is already running (${backupState.current || 'starting'})` });
+  runBackups('panel').catch(err => console.error('[Backup] Run failed:', err.message));
+  res.status(202).json({ started: true });
+});
+
+// Puts a backup back into the guest it was taken from: a backup of how it is
+// now first (so a restore can be undone), then stop, replace each volume's
+// contents, start. Lasts as long as that takes.
+app.post('/api/agents/:id/restore', requireAuth, async (req, res) => {
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const st = String(req.body?.stamp || '');
+  if (!backups.STAMP_RE.test(st)) return res.status(400).json({ error: 'No such backup' });
+  const rel = path.posix.join('backups', agent.name, st);
+  const dir = path.join('/data', rel);
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(path.join(dir, 'agent.json'), 'utf8')); }
+  catch (_) { return res.status(404).json({ error: 'No such backup' }); }
+  if (manifest.agent?.id !== agent.id) {
+    return res.status(409).json({ error: `This backup is of an earlier guest named ${agent.name} (${manifest.agent?.id}). Its volumes belong to that one; import it as a new guest instead.` });
+  }
+  if (deployQueue.has(agent.id) || backupState.running) return res.status(409).json({ error: 'Wait for the running deploy or backup to finish' });
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.tar.gz'));
+  try {
+    const before = await backupAgent(agent, backups.stamp());
+    logEvent('agent.restore', agent.id, `Before restoring ${agent.name}, its current state was backed up as ${path.basename(before.dir)}`);
+    if (composeManaged(agent.runtime)) {
+      await runtimes[agent.runtime].stop(agent.id, JSON.parse(agent.config || '{}'));
+    } else {
+      await docker.getContainer(`agenthotel-${agent.id}`).stop().catch(() => {});
+    }
+    db.prepare("UPDATE agents SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agent.id);
+    const { image, dataMountSource } = await getSelfInfo();
+    for (const f of files) {
+      const vol = f.slice(0, -'.tar.gz'.length);
+      await docker.createVolume({ Name: vol });
+      const [result] = await docker.run(image, ['sh', '-c', `find /vol -mindepth 1 -delete && tar xzf "/staging/${rel}/${f}" -C /vol`], new PassThrough(), {
+        Tty: true, HostConfig: { Binds: [`${vol}:/vol`, `${dataMountSource}:/staging:ro`], AutoRemove: true }
+      });
+      if (result.StatusCode !== 0) throw new Error(`restore of ${vol} failed (exit ${result.StatusCode})`);
+    }
+    await startAgentRuntime(agent);
+    db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agent.id);
+    logEvent('agent.restore', agent.id, `Restored ${agent.name} from the backup of ${st} (${files.length} volume(s))`);
+    res.json({ restored: true, volumes: files.length, before: path.basename(before.dir) });
+  } catch (err) {
+    logEvent('agent.restore', agent.id, `Restore of ${agent.name} from ${st} failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2540,27 +2775,7 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
   try {
     const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
-
-    // Starting a compose guest means bringing the stack up again, and the
-    // containers that come back are new ones: they join the stack's own
-    // networks only, so the route has to be reattached or the hostname answers
-    // 502 over a route that looks perfectly correct.
-    if (composeManaged(agent.runtime)) {
-      const plugin = runtimes[agent.runtime];
-      const config = JSON.parse(agent.config || '{}');
-      await plugin.deploy(agent.id, agent.name, config, plugin);
-      if (agent.domain) {
-        try {
-          await attachComposeRoute(agent, plugin, config, agent.domain);
-        } catch (err) {
-          console.error(`[Start] ${agent.name}: the stack is up but its route is not: ${err.message}`);
-          logEvent('agent.warning', agent.id, `Started, but the route was not attached: ${err.message}`);
-        }
-      }
-    } else {
-      await docker.getContainer(`agenthotel-${req.params.id}`).start();
-    }
-
+    await startAgentRuntime(agent);
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     logEvent('agent.start', req.params.id, `Started agent ${agent.name}`);
     res.json({ started: true });
@@ -2568,6 +2783,30 @@ app.post('/api/agents/:id/start', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Starts a guest's containers: the Start button, and a restore putting a
+// guest back on its feet.
+async function startAgentRuntime(agent) {
+  // Starting a compose guest means bringing the stack up again, and the
+  // containers that come back are new ones: they join the stack's own
+  // networks only, so the route has to be reattached or the hostname answers
+  // 502 over a route that looks perfectly correct.
+  if (composeManaged(agent.runtime)) {
+    const plugin = runtimes[agent.runtime];
+    const config = JSON.parse(agent.config || '{}');
+    await plugin.deploy(agent.id, agent.name, config, plugin);
+    if (agent.domain) {
+      try {
+        await attachComposeRoute(agent, plugin, config, agent.domain);
+      } catch (err) {
+        console.error(`[Start] ${agent.name}: the stack is up but its route is not: ${err.message}`);
+        logEvent('agent.warning', agent.id, `Started, but the route was not attached: ${err.message}`);
+      }
+    }
+  } else {
+    await docker.getContainer(`agenthotel-${agent.id}`).start();
+  }
+}
 
 // Clearing a guest's routes means all of them. Removing only the primary left
 // an alias pointing at a container that no longer exists, which Caddy answers
@@ -5399,6 +5638,8 @@ listen(async () => {
   setInterval(() => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
   }, 60 * 1000);
+  // Nightly backups (lib/backups.js): due once a day at the configured hour.
+  setInterval(checkBackupSchedule, 10 * 60 * 1000);
   setInterval(() => {
     runHealthChecks().catch(err => console.error('[Health] Error:', err.message));
     // Caddy holds its routes only in memory, so anything that restarts it —
