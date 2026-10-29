@@ -403,7 +403,9 @@ app.post('/api/login', (req, res) => {
   // A session of its own, not the panel's static token. The static one stays
   // for API and MCP clients and is shown under System, never handed out here.
   const token = sessions.create(db);
-  logEvent('auth.login', null, `Login: ${email}`);
+  // The address, not just the account: there is one admin, so the email alone
+  // said who could have logged in, never from where.
+  logEvent('auth.login', null, `Login: ${email} from ${ip}`);
   res.json({ token, email, expiresInMinutes: Math.round(sessions.timeoutMs(db) / 60000) });
 });
 
