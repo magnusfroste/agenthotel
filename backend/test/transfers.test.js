@@ -90,3 +90,17 @@ test('a pull that stalls is stopped', async () => {
     server.close();
   }
 });
+
+// A connect that fails on every address of a name reaches node-fetch with an
+// empty message, so the import read "failed, reason: " and nothing more.
+test('a pull that cannot connect says why', async () => {
+  const fetch = async (url) => {
+    const err = new Error(`request to ${url} failed, reason: `);
+    err.type = 'system'; err.code = 'ETIMEDOUT'; err.errno = 'ETIMEDOUT';
+    throw err;
+  };
+  await assert.rejects(
+    fetchToFile('https://hotel.example/api/transfer/x', path.join(os.tmpdir(), `noconn-${process.pid}.zip`), { fetch }),
+    /failed, reason: ETIMEDOUT$/
+  );
+});

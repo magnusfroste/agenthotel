@@ -13,6 +13,14 @@ const AdmZip = require('adm-zip');
 const archiver = require('archiver');
 const { PassThrough } = require('stream');
 const { pipeline } = require('stream/promises');
+// Node tries each address of a name for 250 ms before moving to the next
+// (happy eyeballs). In this container IPv6 fails at once, and on a Contabo host
+// about one IPv4 connect in three to Cloudflare took ~300 ms (2026-10-29): two
+// slow IPv4 attempts and the whole request died in 0.5 s with ETIMEDOUT and an
+// empty message. Pulling an agent from a hotel behind Cloudflare failed three
+// times in a row that way, on a ticket that was fine. A second per address
+// still moves past a dead one quickly.
+require('net').setDefaultAutoSelectFamilyAttemptTimeout(1000);
 const { injectProviderEnv } = require('./lib/providerEnv');
 const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
