@@ -12,27 +12,37 @@
 // The census runs in a helper container (busybox find, stat, tar and awk);
 // what here builds and reads its output is pure and tested.
 
-// Shell that prints "<files> <bytes>" for a directory. A file with several
-// hard links is one file's bytes, as tar stores it once.
+// Shell that prints "<files> <bytes> <symlinks>" for a directory. A file with
+// several hard links is one file's bytes, as tar stores it once. Sockets,
+// fifos and directories are not counted: tar skips sockets, and a live Hermes
+// home has some (19 in one move), so counting entries would fail every export.
+// Symlinks are: Hermes's home and its node_modules and venvs depend on them,
+// and a lost one would otherwise go unnoticed (review from the Contabo hotel,
+// 2026-10-29).
 function directoryScript(dir) {
-  return `cd ${quote(dir)} && find . -type f -exec stat -c '%i %s' {} + | awk '!seen[$1]++ {s+=$2} {n++} END {print n+0, s+0}'`;
+  return `cd ${quote(dir)} && echo "$(find . -type f -exec stat -c '%i %s' {} + | awk '!seen[$1]++ {s+=$2} {n++} END {print n+0, s+0}') $(find . -type l | wc -l)"`;
 }
 
-// Shell that prints "<files> <bytes>" from an archive's listing: regular
-// files carry their size; a hard link ('h') is a file whose bytes are stored
-// with its first name.
+// Shell that prints "<files> <bytes> <symlinks>" from an archive's listing.
+// Regular files carry their size. A hard link is a file whose bytes are stored
+// with its first name: GNU tar lists it as 'h', busybox as '-' with size 0, so
+// both add a file and no bytes. Symlinks are 'l'.
 function archiveScript(archive, { gzip = false } = {}) {
-  return `tar t${gzip ? 'z' : ''}vf ${quote(archive)} | awk '$1 ~ /^-/ {n++; s+=$3} $1 ~ /^h/ {n++} END {print n+0, s+0}'`;
+  return `tar t${gzip ? 'z' : ''}vf ${quote(archive)} | awk '$1 ~ /^-/ {n++; s+=$3} $1 ~ /^h/ {n++} $1 ~ /^l/ {l++} END {print n+0, s+0, l+0}'`;
 }
 
 function quote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-// "<files> <bytes>" (a TTY may add \r) → { files, bytes }, or null.
+// "<files> <bytes> [<symlinks>]" (a TTY may add \r) → { files, bytes, links? },
+// or null. A census from before symlinks were counted has no `links`.
 function parse(line) {
-  const m = String(line || '').trim().match(/^(\d+)\s+(\d+)$/);
-  return m ? { files: Number(m[1]), bytes: Number(m[2]) } : null;
+  const m = String(line || '').trim().match(/^(\d+)\s+(\d+)(?:\s+(\d+))?$/);
+  if (!m) return null;
+  const c = { files: Number(m[1]), bytes: Number(m[2]) };
+  if (m[3] !== undefined) c.links = Number(m[3]);
+  return c;
 }
 
 // The last census line in a helper's output, which may carry other text.
@@ -45,12 +55,14 @@ function lastCensus(output) {
   return null;
 }
 
-const same = (a, b) => Boolean(a && b && a.files === b.files && a.bytes === b.bytes);
+// Symlinks are compared when both sides counted them.
+const same = (a, b) => Boolean(a && b && a.files === b.files && a.bytes === b.bytes &&
+  (a.links === undefined || b.links === undefined || a.links === b.links));
 
 function describe(c) {
   if (!c) return 'nothing readable';
   const mb = c.bytes / 1048576;
-  return `${c.files} file(s), ${mb >= 1 ? `${mb.toFixed(1)} MB` : `${c.bytes} bytes`}`;
+  return `${c.files} file(s), ${mb >= 1 ? `${mb.toFixed(1)} MB` : `${c.bytes} bytes`}${c.links !== undefined ? `, ${c.links} symlink(s)` : ''}`;
 }
 
 // Throws when a copy does not match what it was copied from.
