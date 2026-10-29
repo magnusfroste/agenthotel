@@ -9,7 +9,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const { packContext } = require('./lib/buildContext');
-const AdmZip = require('adm-zip');
 const archiver = require('archiver');
 const { PassThrough } = require('stream');
 const { pipeline } = require('stream/promises');
@@ -25,6 +24,7 @@ const { injectProviderEnv } = require('./lib/providerEnv');
 const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
+const { openExportZip } = require('./lib/exportZip');
 const volumeTar = require('./lib/volumeTar');
 const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
@@ -1947,15 +1947,15 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
   let stagedZip = null;
   let importedId = null;
   let a = null;
+  let zip = null;
   const createdVolumes = [];
   try {
     let manifest;
-    let zip;
     try {
-      zip = new AdmZip(tmpZip);
-      const entry = zip.getEntry('agent.json');
-      if (!entry) throw new Error('agent.json not found in zip');
-      manifest = JSON.parse(entry.getData().toString('utf8'));
+      zip = await openExportZip(tmpZip);
+      const text = await zip.readText('agent.json');
+      if (text === null) throw new Error('agent.json not found in zip');
+      manifest = JSON.parse(text);
     } catch (err) {
       throw importError(400, 'Not a valid AgentHotel service zip: ' + err.message);
     }
@@ -1995,8 +1995,7 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
 
     // Restore volume data, if the export included any. Volume entries carry
     // the OLD agent id in their name — remap to the new id's naming scheme.
-    const volumeEntries = zip.getEntries()
-      .map(e => e.entryName)
+    const volumeEntries = zip.names
       .filter(n => n.startsWith('volumes/') && n.endsWith('.tar'));
     let volumesRestored = 0;
     if (volumeEntries.length > 0) {
@@ -2011,7 +2010,7 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
         // What each volume held when it was exported (exports since
         // 2026-10-29). An older export carries none and is unpacked unchecked.
         let census = null;
-        try { census = JSON.parse(zip.readAsText('volumes/census.json') || 'null'); } catch (_) { census = null; }
+        try { census = JSON.parse((await zip.readText('volumes/census.json')) || 'null'); } catch (_) { census = null; }
         if (!census) console.log(`[Import] ${a.name}: the export carries no census (an older hotel); its volumes are unpacked without a check`);
         const customProject = composeManaged(a.runtime) && a.config && a.config.COMPOSE_PROJECT;
         const oldPrefixes = [`agenthotel-${a.id}-`, `agenthotel-${a.id}_`];
@@ -2060,6 +2059,7 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
     }
     throw err;
   } finally {
+    if (zip) zip.close();
     if (stagedZip) fs.unlink(stagedZip, () => {});
   }
 }
