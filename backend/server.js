@@ -1347,6 +1347,22 @@ async function tarVolumeToFile(volumeName) {
   return volumeTar.tarVolumeToFile(docker, await getSelfInfo(), volumeName);
 }
 
+// Runs a shell script in a throwaway container of our own image and returns
+// the census it prints (lib/volumeCensus.js). Text only, so the TTY that
+// lib/volumeTar.js warns about can do no harm here.
+const volumeCensus = require('./lib/volumeCensus');
+async function runCensus(script, binds) {
+  const { image } = await getSelfInfo();
+  let output = '';
+  const out = new PassThrough();
+  out.on('data', d => { output += d.toString(); });
+  const [result] = await docker.run(image, ['sh', '-c', script], out, { Tty: true, HostConfig: { Binds: binds, AutoRemove: true } });
+  const census = volumeCensus.lastCensus(output);
+  if (result.StatusCode !== 0 || !census) throw new Error(`census failed (exit ${result.StatusCode}): ${output.trim().slice(-200)}`);
+  return census;
+}
+const censusOfVolume = vol => runCensus(volumeCensus.directoryScript('/vol'), [`${vol}:/vol:ro`]);
+
 // Write an agent's export zip — agent.json, a README and, with includeData,
 // a tar of each of its volumes — to out (an HTTP response). Data needs the
 // agent stopped, for a consistent copy.
@@ -1381,10 +1397,28 @@ async function writeAgentExport(agent, includeData, out, { beforeWrite = null } 
       config: JSON.parse(agent.config || '{}')
     }
   };
-  if (beforeWrite) beforeWrite(manifest);
-
+  // Tar each volume to disk first (bounded memory) and check the archive
+  // holds what the volume holds, before a byte is sent: a copy that does not
+  // match is an error the caller sees, not a zip that looks complete.
   const tmpFiles = [];
   const cleanup = () => tmpFiles.splice(0).forEach(f => fs.unlink(f, () => {}));
+  const census = {};
+  try {
+    const { dataMountSource } = await getSelfInfo();
+    for (const vol of volumeNames) {
+      const tmp = await tarVolumeToFile(vol);
+      tmpFiles.push(tmp);
+      const source = await censusOfVolume(vol);
+      const archived = await runCensus(volumeCensus.archiveScript(tmp.replace(/^\/data/, '/staging')), [`${dataMountSource}:/staging:ro`]);
+      volumeCensus.assertSame(vol, source, archived, 'in the export archive');
+      census[vol] = source;
+    }
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+
+  if (beforeWrite) beforeWrite(manifest);
   out.on('finish', cleanup);
   out.on('close', cleanup);
 
@@ -1406,12 +1440,9 @@ NOTE: agent.json contains environment variables and API keys in plain text.
 Store this file safely.
 `, { name: 'README.txt' });
 
-  // Tar each volume to disk first (bounded memory), then add to the zip.
-  for (const vol of volumeNames) {
-    const tmp = await tarVolumeToFile(vol);
-    tmpFiles.push(tmp);
-    archive.file(tmp, { name: `volumes/${vol}.tar` });
-  }
+  volumeNames.forEach((vol, i) => archive.file(tmpFiles[i], { name: `volumes/${vol}.tar` }));
+  // What each volume held, so the importing hotel can check what it unpacked.
+  if (volumeNames.length) archive.append(JSON.stringify(census, null, 2), { name: 'volumes/census.json' });
 
   await archive.finalize();
   return { volumes: volumeNames.length };
@@ -1479,6 +1510,7 @@ async function backupAgent(agent, backupStamp) {
     };
     // agent.json carries the guest's environment, keys included.
     fs.writeFileSync(path.join(dir, 'agent.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+    const census = {};
     const paused = await containersUsing(volumes);
     for (const id of paused) await docker.getContainer(id).pause().catch(() => {});
     try {
@@ -1487,12 +1519,22 @@ async function backupAgent(agent, backupStamp) {
           Tty: true, HostConfig: { Binds: [`${vol}:/vol:ro`, `${dataMountSource}:/staging`], AutoRemove: true }
         });
         if (result.StatusCode !== 0) throw new Error(`tar of ${vol} failed (exit ${result.StatusCode})`);
+        // Still paused, so the volume is as it was when it was copied: the
+        // backup counts only if its archive holds the same files and bytes.
+        const source = await censusOfVolume(vol);
+        const archived = await runCensus(volumeCensus.archiveScript(`/staging/${rel}/${vol}.tar.gz`, { gzip: true }), [`${dataMountSource}:/staging:ro`]);
+        volumeCensus.assertSame(vol, source, archived, 'in the backup');
+        census[vol] = source;
       }
     } finally {
       for (const id of paused) {
         await docker.getContainer(id).unpause().catch(err => console.error(`[Backup] Could not unpause ${id.slice(0, 12)}: ${err.message}`));
       }
     }
+    // Verified: what each volume held, for the card and for a restore to check.
+    manifest.census = census;
+    manifest.verifiedAt = new Date().toISOString();
+    fs.writeFileSync(path.join(dir, 'agent.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
     return { dir, volumes: volumes.length, paused: paused.length };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1657,6 +1699,11 @@ app.post('/api/agents/:id/restore', requireAuth, async (req, res) => {
         Tty: true, HostConfig: { Binds: [`${vol}:/vol`, `${dataMountSource}:/staging:ro`], AutoRemove: true }
       });
       if (result.StatusCode !== 0) throw new Error(`restore of ${vol} failed (exit ${result.StatusCode})`);
+      // The guest is not started on a copy that does not match its backup;
+      // the backup of how it was a moment ago is there to go back to.
+      if (manifest.census && manifest.census[vol]) {
+        volumeCensus.assertSame(vol, manifest.census[vol], await censusOfVolume(vol), `after restoring it (the state before is backed up as ${path.basename(before.dir)})`);
+      }
     }
     await startAgentRuntime(agent);
     db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agent.id);
@@ -1951,6 +1998,11 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
         fs.mkdirSync(path.dirname(stagedZip), { recursive: true });
         fs.copyFileSync(tmpZip, stagedZip);
 
+        // What each volume held when it was exported (exports since
+        // 2026-10-29). An older export carries none and is unpacked unchecked.
+        let census = null;
+        try { census = JSON.parse(zip.readAsText('volumes/census.json') || 'null'); } catch (_) { census = null; }
+        if (!census) console.log(`[Import] ${a.name}: the export carries no census (an older hotel); its volumes are unpacked without a check`);
         const customProject = composeManaged(a.runtime) && a.config && a.config.COMPOSE_PROJECT;
         const oldPrefixes = [`agenthotel-${a.id}-`, `agenthotel-${a.id}_`];
         if (customProject) oldPrefixes.push(`${a.config.COMPOSE_PROJECT}_`);
@@ -1975,6 +2027,11 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
             });
           if (result.StatusCode !== 0) {
             throw new Error(`restore of volume ${newVol} failed with exit code ${result.StatusCode}`);
+          }
+          // A broken archive can unpack with exit 0; the census says whether
+          // everything arrived, and a mismatch rolls the whole import back.
+          if (census && census[oldVol]) {
+            volumeCensus.assertSame(oldVol, census[oldVol], await censusOfVolume(newVol), 'after unpacking it here');
           }
           volumesRestored++;
         }

@@ -149,6 +149,9 @@ export default function BackupsCard() {
           {g.backups.map(b => (
             <div key={b.stamp} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.85rem', padding: '0.25rem 0', borderBottom: '1px solid var(--border)' }}>
               <span>{when(b.stamp)}</span>
+              {b.verified
+                ? <span title="Every volume's archive was checked against the volume: same files, same bytes" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', color: 'var(--accent-green)', fontSize: '0.78rem' }}><CheckCircle2 size={13} /> verified</span>
+                : <span title="Taken before backups were checked, or not checked" style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>not verified</span>}
               <span style={{ color: 'var(--text-secondary)', marginLeft: 'auto' }}>{mb(b.bytes)} · {b.files.filter(f => f.endsWith('.tar.gz')).length} volume(s)</span>
               {g.agentId && (
                 <button type="button" className="btn btn-secondary" disabled={!!busy || data.running} onClick={() => restore(g, b)}

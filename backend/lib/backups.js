@@ -88,7 +88,11 @@ function listLocal(agentName, root = BACKUP_ROOT) {
   return names.filter(n => STAMP_RE.test(n)).sort().reverse().map(n => {
     const files = fs.readdirSync(path.join(dir, n));
     const bytes = files.reduce((sum, f) => sum + fs.statSync(path.join(dir, n, f)).size, 0);
-    return { stamp: n, bytes, files };
+    // Verified: every volume's archive was checked against the volume
+    // (lib/volumeCensus.js) and the counts are in agent.json.
+    let verified = false;
+    try { verified = Boolean(JSON.parse(fs.readFileSync(path.join(dir, n, 'agent.json'), 'utf8')).verifiedAt); } catch (_) {}
+    return { stamp: n, bytes, files, verified };
   });
 }
 
