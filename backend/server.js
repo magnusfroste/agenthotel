@@ -5247,6 +5247,13 @@ async function upgradeHandler(req, res) {
     return res.status(409).json(deploys.upgradeConflict(running));
   }
 
+  // A backup pauses each guest while it copies it, and unpauses it from this
+  // process; recreating the process mid-copy leaves that guest frozen (the
+  // start-up sweep below thaws it, but not before the upgrade is done).
+  if (backupState.running && req.body?.force !== true) {
+    return res.status(409).json({ error: `A backup is running (${backupState.current || 'starting'}); it pauses each guest for the seconds it takes to copy it. Upgrade when it is done, in a few minutes.` });
+  }
+
   // The upgrade builds two images on the host. With too little room the
   // build dies part-way ("no space left on device"), the panel stays on the
   // old version, and what the build wrote fills the disk the rest of the way
@@ -5636,6 +5643,20 @@ const BACKEND_SOCKET = process.env.BACKEND_SOCKET || '';
 const deploysAtStart = db.prepare('SELECT id, name, runtime, status, config FROM agents')
   .all().filter(r => deploys.isInFlight(r.status));
 
+// A guest a backup paused stays paused if this process ended mid-copy (an
+// upgrade, a crash, an OOM kill): nothing else would ever unpause it, and a
+// paused guest answers nothing while its status still says running. At start
+// every paused container that mounts a guest's volume is thawed.
+async function thawPausedGuests() {
+  for (const c of await docker.listContainers({ filters: { status: ['paused'] } })) {
+    if (!(c.Mounts || []).some(m => String(m.Name || '').startsWith('agenthotel-'))) continue;
+    const name = (c.Names?.[0] || c.Id).replace(/^\//, '');
+    await docker.getContainer(c.Id).unpause()
+      .then(() => { console.log(`[Backup] ${name} was left paused by an interrupted backup; unpaused`); logEvent('backup.recover', null, `${name} was left paused by an interrupted backup and has been unpaused`); })
+      .catch(err => console.error(`[Backup] Could not unpause ${name}: ${err.message}`));
+  }
+}
+
 async function recoverInterruptedDeploys() {
   if (!deploysAtStart.length) return;
   const decisions = await deploys.recoverInterrupted(deploysAtStart,
@@ -5683,6 +5704,7 @@ listen(async () => {
   }
   // Before the first health sweep, which would call these "container not found".
   await recoverInterruptedDeploys().catch(err => console.error('[Deploy] Recovery failed:', err.message));
+  await thawPausedGuests().catch(err => console.error('[Backup] Thaw sweep failed:', err.message));
   await realClientIp();
   await initPanelRoute();
   // After the panel's own route, so a half-configured Caddy never leaves the
