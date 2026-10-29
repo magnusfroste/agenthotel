@@ -38,6 +38,9 @@ async function fetchToFile(url, file, { fetch = require('node-fetch'), onProgres
     return bytes;
   } catch (err) {
     if (err.name === 'AbortError') throw new Error(`The transfer stalled for ${Math.round(idleTimeoutMs / 1000)} s and was stopped`);
+    // node-fetch writes "failed, reason: <message>", and a failed connect to
+    // every address of a name has an empty message: the code is all there is.
+    if (err.code && !err.message.includes(err.code)) err.message = `${err.message.replace(/\s+$/, '')} ${err.code}`;
     throw err;
   } finally {
     clearTimeout(idle);
