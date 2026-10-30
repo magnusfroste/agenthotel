@@ -76,6 +76,15 @@ async function evaluateHealth(docker, fetch, agent, plugin, containerName = null
     return { state: 'stopped', healthy: false, reason: `container ${info.State.Status}` };
   }
 
+  // A backup pauses a guest's containers while it copies their volumes. A
+  // frozen process cannot answer a probe, yet nothing is wrong with it, so it
+  // is 'paused', not unhealthy: one nightly backup logged "not healthy" and
+  // "healthy again" for nine guests (2026-10-30), which would have been a
+  // pair of alerts per guest every night once alerts were turned on.
+  if (info.State.Paused) {
+    return { state: 'paused', healthy: false, reason: 'container paused' };
+  }
+
   // A container that keeps dying and being restarted is not healthy no matter
   // what a probe says between restarts — this is precisely the shape of the
   // OOM-at-boot failure, which otherwise reads as "running".
