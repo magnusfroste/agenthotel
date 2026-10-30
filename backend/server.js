@@ -5461,6 +5461,10 @@ async function runHealthChecks() {
       continue;
     }
 
+    // Paused (a backup copying its volumes): judged again once it is thawed,
+    // with its status and last health state left as they were.
+    if (result.state === 'paused') continue;
+
     const status = result.state === 'stopped' ? 'stopped'
       : result.state === 'missing' ? 'failed'
       : result.healthy ? 'running'
