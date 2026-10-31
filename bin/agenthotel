@@ -24,6 +24,45 @@ panel_answers() {
       .on("error",()=>process.exit(1))' >/dev/null 2>&1
 }
 
+# Whether the running panel is in the middle of something an upgrade or a
+# restart would cut off: a deploy, a backup, or an agent being moved. The
+# panel's own upgrade button has refused those for a while, but this command
+# recreated the backend without asking, and killed an import half way through
+# its pull (2026-10-29). Prints the reason and exits 2 when busy, 0 when free,
+# 3 when the panel cannot say (not running, or too old to have the endpoint).
+panel_busy() {
+  docker compose exec -T backend node -e '
+    const db = require("better-sqlite3")("/data/agenthotel.db", { readonly: true });
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("auth_token");
+    if (!row || !row.value) process.exit(3);
+    require("http").get({ host: "localhost", port: 8080, path: "/api/system/upgrade/blockers",
+      headers: { Authorization: "Bearer " + row.value } }, (r) => {
+      let body = "";
+      r.on("data", (c) => { body += c; });
+      r.on("end", () => {
+        if (r.statusCode !== 200) process.exit(3);
+        const answer = JSON.parse(body);
+        if (answer.blocked) { console.log(answer.error); process.exit(2); }
+        process.exit(0);
+      });
+    }).on("error", () => process.exit(3));' 2>/dev/null
+}
+
+# Stops unless the panel is free, or the operator said --now.
+refuse_if_busy() {
+  [ "$now" = 1 ] && return 0
+  rc=0
+  reason=$(panel_busy) || rc=$?
+  case "$rc" in
+    0) ;;
+    2)
+      echo "$SELF: not now. $reason" | sed 's/ or upgrade anyway with force: true\./ or run it anyway with --now./' >&2
+      echo "  $SELF $1 --now   # do it anyway" >&2
+      exit 1 ;;
+    *) echo "warning: could not ask the panel whether it is busy; continuing" >&2 ;;
+  esac
+}
+
 cmd_version() {
   echo "installed at $DIR"
   echo "commit      $(current)  $(git log -1 --format=%s 2>/dev/null | cut -c1-60)"
@@ -44,6 +83,15 @@ cmd_check() {
 }
 
 cmd_upgrade() {
+  force=0; now=0
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      --now) now=1 ;;
+      *) die "unknown option: $arg (upgrade takes --force and --now)" ;;
+    esac
+  done
+
   # Local edits are how a panel gets debugged at three in the morning. Refuse
   # rather than throw them away, and say which files are in the way.
   if [ -n "$(git status --porcelain)" ]; then
@@ -51,7 +99,7 @@ cmd_upgrade() {
     git status --porcelain | sed 's/^/  /' >&2
     echo "" >&2
     echo "Commit or discard them first, or run '$SELF upgrade --force' to discard them." >&2
-    [ "$1" = "--force" ] || exit 1
+    [ "$force" = 1 ] || exit 1
     git reset --hard --quiet
   fi
 
@@ -59,6 +107,7 @@ cmd_upgrade() {
   before=$(current)
   behind=$(git rev-list --count HEAD..origin/main)
   if [ "$behind" -eq 0 ]; then echo "already up to date ($before)"; exit 0; fi
+  refuse_if_busy upgrade
 
   # The panel's own database, before anything changes. Agent volumes are not
   # touched by an upgrade; this one is, by every migration.
@@ -74,6 +123,15 @@ cmd_upgrade() {
   echo "upgrading $before → $(git rev-parse --short origin/main)"
   git log --oneline HEAD..origin/main | sed 's/^/  /'
   git merge --ff-only --quiet origin/main || die "the local branch has diverged from origin/main"
+
+  # This command was copied to /usr/local/bin at install and never again, so a
+  # fix to it reached no panel installed before the fix. Replace it by a
+  # rename: this run keeps reading the old file, the next run is the new one.
+  installed="$(command -v "$SELF" 2>/dev/null || true)"
+  if [ -n "$installed" ] && [ -f "$DIR/bin/agenthotel" ] && ! cmp -s "$DIR/bin/agenthotel" "$installed"; then
+    cp "$DIR/bin/agenthotel" "$installed.new" && chmod 755 "$installed.new" && mv -f "$installed.new" "$installed" \
+      && echo "updated $installed"
+  fi
 
   # Baked in so the panel can report the version it is actually running.
   docker compose build --build-arg GIT_COMMIT="$(current)" backend frontend
@@ -112,7 +170,7 @@ case "${1:-}" in
   version)  cmd_version ;;
   rollback) shift; cmd_rollback "$@" ;;
   logs)     shift; docker compose logs --tail "${1:-50}" -f backend ;;
-  restart)  docker compose restart; echo "restarted" ;;
+  restart)  now=0; [ "${2:-}" = "--now" ] && now=1; refuse_if_busy restart; docker compose restart; echo "restarted" ;;
   setup-code)
     code="$(docker exec agenthotel-backend cat /data/setup-code 2>/dev/null)" \
       || die "no setup code — the admin account already exists, or the panel is not running"
@@ -123,6 +181,7 @@ case "${1:-}" in
     echo ""
     echo "  $SELF check              is there a newer version?"
     echo "  $SELF upgrade            pull, rebuild, restart, verify"
+    echo "                             (waits for deploys, backups and moves; --now skips that)"
     echo "  $SELF rollback <commit>  go back to a known good one"
     echo "  $SELF version            what is installed and running"
     echo "  $SELF logs [n]           follow the backend log"

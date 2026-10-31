@@ -25,6 +25,7 @@ const { execInAgent } = require('./lib/agentExec');
 const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { openExportZip } = require('./lib/exportZip');
+const { domainProblem } = require('./lib/domainName');
 const volumeTar = require('./lib/volumeTar');
 const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
@@ -126,6 +127,19 @@ const transfers = require('./lib/transfers');
 transfers.init(db);
 const { fetchToFile } = require('./lib/fetchToFile');
 const importJobs = new Map(); // import-from jobs, by id
+// Uploaded imports and exports running now, by a random key: with the pulls
+// in importJobs, the moves an upgrade must not cut off (lib/upgradeGuard.js).
+const movesInFlight = new Map();
+function trackMove(move) {
+  const key = crypto.randomBytes(6).toString('hex');
+  movesInFlight.set(key, { ...move, startedAt: Date.now() });
+  return () => movesInFlight.delete(key);
+}
+function movesRunning() {
+  const pulls = [...importJobs.values()].filter(j => !j.finishedAt)
+    .map(j => ({ kind: 'pull', from: j.from, bytes: j.bytes, total: j.total, startedAt: j.startedAt }));
+  return [...pulls, ...movesInFlight.values()];
+}
 { const n = deployLog.interruptStale(); if (n) console.log(`[Deploys] ${n} deploy(s) interrupted by the restart marked as such`); }
 sessions.init(db);
 // Expired sessions cost nothing but rows; sweep hourly.
@@ -456,6 +470,8 @@ app.get('/api/settings', requireAuth, (req, res) => {
 
 app.put('/api/settings', requireAuth, async (req, res) => {
   try {
+    const badPanelDomain = domainProblem(req.body?.panel_domain);
+    if (badPanelDomain) return res.status(400).json({ error: badPanelDomain });
     let domainChanged = false;
     let newDomain = null;
     let oldDomain = null;
@@ -1378,7 +1394,17 @@ const censusOfVolume = vol => runCensus(volumeCensus.directoryScript('/vol'), [`
 // agent stopped, for a consistent copy.
 // beforeWrite runs once nothing can fail early any more, so a caller can set
 // its headers then. Shared by the Export button and a transfer ticket's pull.
-async function writeAgentExport(agent, includeData, out, { beforeWrite = null } = {}) {
+// The export runs as a move for as long as it writes (lib/upgradeGuard.js).
+async function writeAgentExport(agent, includeData, out, options) {
+  const done = trackMove({ kind: 'export', name: agent.name, to: options?.to || null });
+  try {
+    return await writeAgentExportNow(agent, includeData, out, options);
+  } finally {
+    done();
+  }
+}
+
+async function writeAgentExportNow(agent, includeData, out, { beforeWrite = null } = {}) {
   let volumeNames = [];
   if (includeData) {
     const containers = await docker.listContainers({ all: false });
@@ -1729,6 +1755,8 @@ app.post('/api/agents', requireAuth, async (req, res) => {
   let createdId = null;
   try {
     const { name, domain, quickStart } = req.body;
+    const badDomain = domainProblem(domain);
+    if (badDomain) return res.status(400).json({ error: badDomain });
     let image = req.body.image;
     let port = req.body.port;
 
@@ -1874,6 +1902,7 @@ app.get('/api/transfer/:token', async (req, res) => {
       logEvent('agent.transfer', agent.id, `${agent.name} stopped for its move to another hotel`);
     }
     await writeAgentExport(agent, !!ticket.include_data, res, {
+      to: ip,
       beforeWrite: () => {
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="${agent.name}.zip"`);
@@ -1895,11 +1924,11 @@ app.get('/api/transfer/:token', async (req, res) => {
 function startImportFrom(rawUrl) {
   const url = transfers.parseTicketUrl(rawUrl);
   const id = crypto.randomBytes(8).toString('hex');
-  const job = { id, status: 'downloading', bytes: 0, total: null, startedAt: Date.now(), finishedAt: null, agent: null, error: null };
+  const from = new URL(url).host;
+  const job = { id, status: 'downloading', from, bytes: 0, total: null, startedAt: Date.now(), finishedAt: null, agent: null, error: null };
   importJobs.set(id, job);
   for (const [key, old] of importJobs) if (old.finishedAt && Date.now() - old.finishedAt > 60 * 60 * 1000) importJobs.delete(key);
   const tmpZip = path.join(os.tmpdir(), `transfer-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
-  const from = new URL(url).host;
   (async () => {
     try {
       await fetchToFile(url, tmpZip, { onProgress: (bytes, total) => { job.bytes = bytes; job.total = total; } });
@@ -1977,6 +2006,8 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
     if (db.prepare('SELECT id FROM agents WHERE name = ?').get(a.name)) {
       throw importError(409, `Agent "${a.name}" already exists — delete or rename it first`);
     }
+    const badDomain = domainProblem(a.domain);
+    if (badDomain) throw importError(400, `The export's domain cannot be used here: ${badDomain}`);
     if (a.domain && db.prepare('SELECT id FROM agents WHERE domain = ?').get(a.domain)) {
       throw importError(409, `Domain "${a.domain}" is already used by another agent`);
     }
@@ -2068,12 +2099,14 @@ async function importAgentZip(tmpZip, { source = 'zip' } = {}) {
 // as a raw body (streamed to disk — volume data can make these large).
 app.post('/api/agents/import', requireAuth, async (req, res) => {
   const tmpZip = path.join(os.tmpdir(), `import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+  const done = trackMove({ kind: 'upload' });
   try {
     await pipeline(req, fs.createWriteStream(tmpZip));
     res.json(await importAgentZip(tmpZip));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   } finally {
+    done();
     fs.unlink(tmpZip, () => {});
   }
 });
@@ -2945,6 +2978,8 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
     const { config, domain, removeKeys } = req.body;
+    const badDomain = domainProblem(domain);
+    if (badDomain) return res.status(400).json({ error: badDomain });
     // A PUT merges, so a caller that simply stopped sending a key left it in
     // place: pressing Remove in the environment editor and saving appeared to
     // work and changed nothing. Deleting has to be said out loud — and it must
@@ -5219,6 +5254,13 @@ cd ${shQuote(dir)}
 echo "=== upgrade started $(date -u +%Y-%m-%dT%H:%M:%SZ) in $(pwd)"
 git pull --ff-only
 COMMIT=$(git rev-parse --short HEAD)
+# The host command was copied to /usr/local/bin once, at install, and never
+# again: a fix to it reached no panel installed before the fix. A rename, so
+# a copy of it running right now keeps reading the old file.
+if [ -f bin/agenthotel ] && [ -f /usr/local/bin/agenthotel ] && ! cmp -s bin/agenthotel /usr/local/bin/agenthotel; then
+  cp bin/agenthotel /usr/local/bin/.agenthotel.new && chmod 755 /usr/local/bin/.agenthotel.new \
+    && mv -f /usr/local/bin/.agenthotel.new /usr/local/bin/agenthotel && echo "=== updated /usr/local/bin/agenthotel"
+fi
 echo "=== building $COMMIT"
 docker compose build --build-arg GIT_COMMIT="$COMMIT"
 echo "=== restarting"
@@ -5234,24 +5276,10 @@ async function upgradeHandler(req, res) {
     });
   }
 
-  // A second upgrade racing the first would fight over the same checkout.
-  if (upgradeStartedAt && Date.now() - upgradeStartedAt < 15 * 60 * 1000) {
-    return res.status(409).json({ error: 'An upgrade is already running.' });
-  }
-
-  // The upgrade recreates this container, and every deploy runs inside it: a
-  // build cut off at step 7/18 produced no image and left its guest failed
-  // (2026-10-09). Refuse while one runs; force: true is the operator's call.
-  const running = deploysRunning();
-  if (running.length && req.body?.force !== true) {
-    return res.status(409).json(deploys.upgradeConflict(running));
-  }
-
-  // A backup pauses each guest while it copies it, and unpauses it from this
-  // process; recreating the process mid-copy leaves that guest frozen (the
-  // start-up sweep below thaws it, but not before the upgrade is done).
-  if (backupState.running && req.body?.force !== true) {
-    return res.status(409).json({ error: `A backup is running (${backupState.current || 'starting'}); it pauses each guest for the seconds it takes to copy it. Upgrade when it is done, in a few minutes.` });
+  // lib/upgradeGuard.js says what each would cut off, and which can be forced.
+  const blocker = upgradeBlockerNow();
+  if (blocker && (!blocker.forceable || req.body?.force !== true)) {
+    return res.status(blocker.status).json(blocker.body);
   }
 
   // The upgrade builds two images on the host. With too little room the
@@ -5335,6 +5363,26 @@ async function upgradeHandler(req, res) {
 function deploysRunning() {
   return deploys.deploysInFlight(db.prepare('SELECT id, name, status FROM agents').all(), buildProgress);
 }
+
+// What an upgrade would interrupt now, or null. A deploy cut off at step 7/18
+// produced no image and left its guest failed (2026-10-09); a backup cut off
+// leaves a guest frozen until the start-up sweep thaws it; a move cut off
+// spends its ticket.
+function upgradeBlockerNow() {
+  return require('./lib/upgradeGuard').upgradeBlocker({
+    upgradeRunning: Boolean(upgradeStartedAt && Date.now() - upgradeStartedAt < 15 * 60 * 1000),
+    deploys: deploysRunning(),
+    backup: backupState.running ? (backupState.current || 'starting') : null,
+    moves: movesRunning()
+  });
+}
+
+// The same question for `agenthotel upgrade` and `restart` on the host, which
+// recreate the backend without going through the upgrade endpoint.
+app.get('/api/system/upgrade/blockers', requireAuth, (req, res) => {
+  const blocker = upgradeBlockerNow();
+  res.json(blocker ? { blocked: true, ...blocker.body } : { blocked: false });
+});
 
 // What an upgrade would interrupt, so the confirm dialog can name it.
 app.get('/api/system/deploys', requireAuth, (req, res) => {
