@@ -1527,6 +1527,11 @@ async function containersUsing(volumes) {
   return [...ids];
 }
 
+// Guests whose containers a backup has paused right now, by agent id. The
+// uptime monitor leaves them alone: a paused guest cannot answer, and the
+// three it took longest to copy were reported down and back up every night.
+const pausedForBackup = new Set();
+
 // One guest's backup into /data/backups/<name>/<stamp>/. The helper container
 // writes the tar straight into the panel's data volume, so nothing passes
 // through this process's memory.
@@ -1548,6 +1553,7 @@ async function backupAgent(agent, backupStamp) {
     fs.writeFileSync(path.join(dir, 'agent.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
     const census = {};
     const paused = await containersUsing(volumes);
+    if (paused.length) pausedForBackup.add(agent.id);
     for (const id of paused) await docker.getContainer(id).pause().catch(() => {});
     try {
       for (const vol of volumes) {
@@ -1566,6 +1572,7 @@ async function backupAgent(agent, backupStamp) {
       for (const id of paused) {
         await docker.getContainer(id).unpause().catch(err => console.error(`[Backup] Could not unpause ${id.slice(0, 12)}: ${err.message}`));
       }
+      pausedForBackup.delete(agent.id);
     }
     // Verified: what each volume held, for the card and for a restore to check.
     manifest.census = census;
@@ -5560,6 +5567,14 @@ const uptimeState = new Map();
 // Probes one guest and records the result. Returns the event its state change
 // calls for ({ name, event, statusCode }), or null.
 async function checkAgentUptime(fetch, agent) {
+  // Paused by a backup for the minutes its volumes take to copy: not probed,
+  // not recorded, and its streak starts again once it is thawed.
+  if (pausedForBackup.has(agent.id)) {
+    const prev = uptimeState.get(agent.id);
+    if (prev) uptimeState.set(agent.id, { ...prev, fails: 0 });
+    return null;
+  }
+
   const started = Date.now();
   let ok = 0;
   let statusCode = null;
