@@ -311,6 +311,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         const id = `${args.runtime}-${args.name}-${Date.now()}`;
         const plugin = runtimes[args.runtime];
         if (!plugin) return { content: [{ type: 'text', text: JSON.stringify({ error: `Unknown runtime: ${args.runtime}` }) }], isError: true };
+        const badDomain = require('./lib/domainName').domainProblem(args.domain);
+        if (badDomain) return { content: [{ type: 'text', text: JSON.stringify({ error: badDomain }) }], isError: true };
 
         const image = args.image || plugin.defaultImage;
         const port = args.port || plugin.defaultPort;
