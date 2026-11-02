@@ -407,6 +407,11 @@ module.exports = {
   // (2026.9.24) · upstream 749220ef". Asked once per image, not per page load.
   versionCommand: 'hermes --version 2>/dev/null | head -1',
 
+  // Replies that failed at the model (lib/modelErrors.js parses them): the
+  // final error lines of a turn, and the base_url lines that say which gateway
+  // it was talking to. The tail keeps the exec's output small on a busy agent.
+  modelErrorsCommand: "grep -hE 'agent\\.conversation_loop: (\\[subagent-[0-9]+\\] )?(Non-retryable client error|API call failed after)|base_url=' /opt/data/logs/agent.log 2>/dev/null | tail -n 400",
+
   generateMcpBlock(config) {
     const raw = String(config.MCP_SERVERS || '').trim();
     if (!raw) return null;

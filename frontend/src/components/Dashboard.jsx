@@ -7,6 +7,7 @@ import { useToast } from './Toast'
 import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
 import { MoveIn } from './HotelTransfer'
+import { ModelErrorsLine } from './ModelErrors'
 
 // What a card says while its image is being built. The backend records every
 // build step and pulled layer; without this the card read "creating" for
@@ -420,6 +421,7 @@ function Dashboard() {
                         <span title={agent.health}>{healthText(agent.health)}</span>
                       </div>
                     )}
+                    <ModelErrorsLine summary={agent.modelErrors} />
                   </div>
                 </Link>
                 <div className="agent-card-actions">

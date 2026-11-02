@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import Deployments from './Deployments'
 import { MoveOut } from './HotelTransfer'
+import ModelErrors from './ModelErrors'
 
 // Lazy-load xterm only when the Console tab is opened (it's ~200KB).
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -323,6 +324,7 @@ function AgentDetail() {
       {/* Overview */}
       {tab === 'overview' && (
         <div>
+          <ModelErrors agentId={agent.id} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
             {[
               ['Runtime', agent.runtime], ['Domain', agent.domain || '—'],
