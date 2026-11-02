@@ -1197,7 +1197,17 @@ app.get('/api/agents', requireAuth, (req, res) => {
   // and this endpoint is polled every few seconds by the sidebar/dashboard.
   // The detail endpoint below serves config when it's actually needed.
   const agents = db.prepare('SELECT id, name, runtime, template, domain, image, port, status, health, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
-  res.json(agents);
+  res.json(agents.map(a => ({ ...a, modelErrors: modelErrors.summarize(modelErrorState.get(a.id)?.errors || []) })));
+});
+
+// The replies that failed at the model in the last week, newest first, for
+// the agent page. `checked` is false until the first read after a restart.
+app.get('/api/agents/:id/model-errors', requireAuth, (req, res) => {
+  const state = modelErrorState.get(req.params.id);
+  const week = Date.now() - 7 * 24 * 3600 * 1000;
+  const errors = (state?.errors || []).filter(e => e.at > week).reverse().slice(0, 20)
+    .map(e => ({ ...e, advice: modelErrors.ADVICE[e.kind] }));
+  res.json({ checked: Boolean(state), summary: modelErrors.summarize(state?.errors || []), errors });
 });
 
 // Template-declared actions: things an operator does to a running guest that
@@ -5612,6 +5622,50 @@ async function checkAgentUptime(fetch, agent) {
   return event ? { id: agent.id, name: agent.name, event, statusCode } : null;
 }
 
+// Replies that failed at the model, per agent (lib/modelErrors.js): the
+// agent is up and answers its health probe, but cannot think. Read from the
+// agent's own log every five minutes, for runtimes that say where it is.
+const modelErrors = require('./lib/modelErrors');
+const modelErrorState = new Map(); // agent id -> { errors, seenUpTo, alertedAt: { kind: ms } }
+const MODEL_ALERT_EVERY_MS = 60 * 60 * 1000;
+
+async function collectModelErrors() {
+  const agents = db.prepare("SELECT id, name, runtime, status FROM agents WHERE status = 'running'").all();
+  for (const agent of agents) {
+    const plugin = runtimes[agent.runtime];
+    if (!plugin || !plugin.modelErrorsCommand || pausedForBackup.has(agent.id)) continue;
+    let errors;
+    try {
+      const r = await execInAgent(docker, agent.id, plugin.modelErrorsCommand, {
+        timeoutMs: 15000, container: containerNameFor(runtimes, agent)
+      });
+      errors = modelErrors.parseHermesLog(r.output);
+    } catch (_) {
+      continue; // not running after all, or mid-restart: next round
+    }
+    const newest = errors.length ? errors[errors.length - 1].at : 0;
+    const prev = modelErrorState.get(agent.id);
+    // The first look after the panel starts learns the past without alerting
+    // on it; from then on only failures after what was seen are news.
+    if (!prev) {
+      modelErrorState.set(agent.id, { errors, seenUpTo: newest, alertedAt: {} });
+      continue;
+    }
+    const fresh = errors.filter(e => e.at > prev.seenUpTo);
+    const state = { errors, seenUpTo: Math.max(prev.seenUpTo, newest), alertedAt: prev.alertedAt };
+    modelErrorState.set(agent.id, state);
+    if (!fresh.length) continue;
+    // A key that stays broken fails every reply; once an hour per kind is
+    // enough to know, and the card shows the count in between.
+    const kind = fresh[fresh.length - 1].kind;
+    if (Date.now() - (state.alertedAt[kind] || 0) < MODEL_ALERT_EVERY_MS) continue;
+    state.alertedAt[kind] = Date.now();
+    const msg = modelErrors.notification(agent.name, fresh);
+    logEvent('agent.model_error', agent.id, msg);
+    sendNotification(db, `AgentHotel: ${msg}`).catch(() => {});
+  }
+}
+
 async function runUptimeChecks() {
   const fetch = require('node-fetch');
   const agents = db.prepare(
@@ -5780,6 +5834,10 @@ listen(async () => {
   setInterval(() => {
     runUptimeChecks().catch(err => console.error('[Uptime] Error:', err.message));
   }, 60 * 1000);
+  // A minute after start, then every five (lib/modelErrors.js).
+  const modelErrorsRound = () => collectModelErrors().catch(err => console.error('[Models] Error:', err.message));
+  setTimeout(modelErrorsRound, 60 * 1000);
+  setInterval(modelErrorsRound, 5 * 60 * 1000);
   // Nightly backups (lib/backups.js): due once a day at the configured hour.
   setInterval(checkBackupSchedule, 10 * 60 * 1000);
   setInterval(() => {
