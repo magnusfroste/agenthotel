@@ -138,6 +138,27 @@ test('the agentreports template generates the password and the first agent key, 
   assert.match(named.MCP_KEYS, /^laptop:[0-9a-f]{64}$/);
 });
 
+test('the fortnox template sends the sign-in back to its own domain and generates the agent key and start token', () => {
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/fortnox/meta.yaml'), 'utf8'));
+  const { runtime, port, config } = materializeDeploy(normalizeDeploy(meta.deploy),
+    { DOMAIN: 'fortnox.example.se', AGENT_NAME: 'fortnox', FORTNOX_CLIENT_ID: 'id', FORTNOX_CLIENT_SECRET: 'secret' });
+  assert.strictEqual(runtime, 'git-app');
+  assert.strictEqual(port, 8000);
+  assert.strictEqual(config.HEALTHCHECK_PATH, '/health');
+  // Fortnox matches the redirect exactly; it must be the one the instructions tell people to register.
+  assert.strictEqual(config.FORTNOX_REDIRECT_URI, 'https://fortnox.example.se/oauth/callback');
+  assert.strictEqual(config.PUBLIC_URL, 'https://fortnox.example.se');
+  assert.match(config.MCP_KEYS, /^hermes:[0-9a-f]{64}$/);
+  // The service turns sign-in off for a start token under 32 characters.
+  assert.match(config.OAUTH_START_TOKEN, /^[0-9a-f]{64}$/);
+  assert.match(config.LINK_SECRET, /^[0-9a-f]{64}$/);
+  assert.strictEqual(config.FORTNOX_CLIENT_ID, 'id');
+  assert.strictEqual(config.FORTNOX_READ_ONLY, 'false');
+  assert.strictEqual(config.FORTNOX_SYNC_FROM, undefined, 'left empty, the service picks its own default');
+  assert.match(meta.instructions, /oauth\/callback/);
+});
+
 test('a docker-app template generates its secrets, fills in the domain and keeps its data in a named volume', () => {
   const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
   const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/n8n/meta.yaml'), 'utf8'));

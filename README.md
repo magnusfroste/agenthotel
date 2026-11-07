@@ -179,6 +179,7 @@ Ready-made templates on top of those runtimes, each deployed from one form with 
 | **Take** | Hand the camera to an agent: it drives a browser and produces a narrated video, over MCP |
 | **Lobby** | A web hotel for landing pages — one markdown file per site, written by agents over MCP |
 | **Reports** | Where agents put what they found: they publish reports over MCP, people read them on a generated start page behind a password; every publish a version ([AgentReports](https://github.com/magnusfroste/agentreports)) |
+| **Fortnox** | Your company's Fortnox for your agents: they read the books and write vouchers, invoices and payments over MCP, every write logged with the agent's name ([agentmcp-fortnox](https://github.com/magnusfroste/agentmcp-fortnox)) |
 | **n8n** | Workflow automation: a person builds a workflow once, an agent calls it as an MCP tool or a webhook, and the integrations' credentials stay in n8n |
 | **Sluss** | A self-hosted LLM gateway for EU organisations: every prompt classified and routed under a fail-closed policy, with an audit trail — put the hotel's agents behind it as a provider |
 
