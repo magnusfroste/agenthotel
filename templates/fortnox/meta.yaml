@@ -1,0 +1,96 @@
+name: Fortnox
+category: MCP Tool
+icon: receipt
+color: '#0f766e'
+source: builtin
+description: 'Your company''s Fortnox for your agents. agentmcp-fortnox signs in to your own integration in Fortnox once, keeps the books synced, and lets an agent read them and write: vouchers, supplier and customer invoices, payments, customers, files. Every write is logged with the agent that made it.
+
+  '
+agentUse: |
+  Over MCP at https://<domain>/mcp, one key per agent (Credentials). The agent reads vouchers, accounts, income statement, balance sheet and invoices, and writes vouchers, invoices, payments, registers and files to Fortnox; the tool skrivlogg shows every write with the agent's key name.
+instructions: 'Give it a domain first: Fortnox sends the sign-in back to https://<domain>/oauth/callback.
+
+
+  In Fortnox'' Developer Portal, create an integration for your own company: redirect URI `https://<domain>/oauth/callback` exactly (no trailing slash), the scopes you want the agents to reach, and "allow authorization as service account" ticked. Enter its client id and secret here. The company needs the Fortnox modules the scopes cover and, as Fortnox prices it, an integration licence.
+
+
+  After the deploy, a system administrator of the company opens `https://<domain>/oauth/start/<OAUTH_START_TOKEN>` (the token is under Credentials) and approves once. The first sync starts at once and then runs every 6 hours and after writes. The guest stays tied to that company.
+
+
+  Agents use `https://<domain>/mcp` with the agent key under Credentials as `Authorization: Bearer <key>`. One key per agent: append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy. FORTNOX_READ_ONLY=true lets only reads reach Fortnox.
+
+
+  The data volume holds a copy of the books, the PDFs and the refresh token: it is as sensitive as a Fortnox login, and the hotel''s backups include it.
+
+  '
+tags:
+- mcp
+- fortnox
+- bookkeeping
+- invoices
+- hermes
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/agentmcp-fortnox
+benefits:
+- title: Signs in once
+  description: A system administrator approves your own integration; the guest refreshes the tokens itself, as a service account that outlives any employee
+- title: Reads and writes
+  description: Books and documents synced for fast answers, and vouchers, invoices, payments and files written straight to Fortnox
+- title: Who did what
+  description: Every write in the log with the name of the agent key that made it
+features:
+- title: Financial statements
+  description: Income statement by BAS group and balance sheet with a check that comes out at 0, computed in the service
+- title: Twenty-one MCP tools
+  description: verifikationer, resultatrakning, balansrakning, skapa_verifikation, skapa_kundfaktura, registrera_betalning, ladda_upp_fil, fortnox_api and more
+- title: Files without base64
+  description: An agent posts a PDF to /upload with curl and attaches it to a voucher or supplier invoice
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/agentmcp-fortnox
+  ref: main
+  port: 8000
+  healthcheck: /health
+  envFile: |
+    MCP_KEYS=${FIRST_AGENT}:${FORTNOX_AGENT_KEY}
+    OAUTH_START_TOKEN=${OAUTH_START_TOKEN}
+    LINK_SECRET=${LINK_SECRET}
+    PUBLIC_URL=https://${DOMAIN}
+    FORTNOX_REDIRECT_URI=https://${DOMAIN}/oauth/callback
+    CPU_LIMIT=0.5
+    MEMORY_LIMIT_MB=512
+  env:
+  - key: FORTNOX_CLIENT_ID
+    label: Fortnox client id
+    type: text
+    required: true
+    description: From your integration in Fortnox' Developer Portal
+  - key: FORTNOX_CLIENT_SECRET
+    label: Fortnox client secret
+    type: password
+    required: true
+  - key: FIRST_AGENT
+    label: First agent
+    type: text
+    default: hermes
+    description: The name the first agent key gets; it is on every write that agent makes
+  - key: FORTNOX_SYNC_FROM
+    label: Sync from
+    type: text
+    description: Optional. First date to sync (ÅÅÅÅ-MM-DD); default January 1st last year
+  - key: FORTNOX_READ_ONLY
+    label: Read only
+    type: text
+    default: 'false'
+    description: true lets only reads reach Fortnox and hides the write tools
+  secrets:
+  - key: FORTNOX_AGENT_KEY
+    generate: hex
+    bytes: 32
+  - key: OAUTH_START_TOKEN
+    generate: hex
+    bytes: 32
+  - key: LINK_SECRET
+    generate: hex
+    bytes: 32
