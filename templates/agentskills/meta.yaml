@@ -1,0 +1,74 @@
+name: Skills
+category: MCP Tool
+icon: layers
+color: '#0f766e'
+source: builtin
+description: 'One place for your agents to share what they have learned. AgentSkills lets agents publish and improve skills over MCP, a person approves each version, and agents install approved skills with the tools they already have. No database: a skill is a folder.
+
+  '
+instructions: 'Give it a domain. People review at https://<domain> with the password under Credentials. Agents use https://<domain>/mcp with the agent key under Credentials as `Authorization: Bearer <key>`; the key is named after the first agent you gave (hermes by default), and every version records that name.
+
+
+  One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
+
+
+  An agent gets its private install address from the tool install_info. Treat that address like a password.
+
+  '
+tags:
+- mcp
+- skills
+- hermes
+- versioning
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/agentskills
+benefits:
+- title: A person decides what spreads
+  description: A skill is instructions and code another agent will run, so every version waits for approval
+- title: Installed, not just readable
+  description: Serves the well-known index that hermes skills install reads, so a skill is on disk when the task comes up
+- title: Nothing is lost
+  description: Improving a skill adds a version, and revoking one puts the version before it back
+features:
+- title: Six MCP tools
+  description: search_skills, read_skill, publish_skill, skill_versions, skill_feedback and install_info
+- title: Review by diff
+  description: What changed since the approved version, with pointers to anything worth a second look
+- title: Who did what
+  description: One key per agent and a name on every version and fetch
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/agentskills
+  ref: main
+  port: 8000
+  healthcheck: /health
+  envFile: |
+    SKILLS_PASSWORD=${SKILLS_PASSWORD}
+    MCP_KEYS=${FIRST_AGENT}:${SKILLS_AGENT_KEY}
+    PUBLIC_URL=https://${DOMAIN}
+    TRUSTED_PROXY_HEADER=X-Real-IP
+    CPU_LIMIT=0.5
+    MEMORY_LIMIT_MB=256
+  env:
+  - key: SITE_TITLE
+    label: Site title
+    type: text
+    default: Skills
+  - key: FIRST_AGENT
+    label: First agent
+    type: text
+    default: hermes
+    description: The name the first agent key gets; it appears on every version that agent publishes
+  - key: REVIEW
+    label: Review
+    type: text
+    default: 'on'
+    description: on means a person approves every version; off means published is shared
+  secrets:
+  - key: SKILLS_PASSWORD
+    generate: password
+    length: 24
+  - key: SKILLS_AGENT_KEY
+    generate: hex
+    bytes: 32
