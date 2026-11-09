@@ -1,0 +1,67 @@
+name: Pages
+category: MCP Tool
+icon: globe
+color: '#0891b2'
+source: builtin
+description: 'A link for whatever your agent built. AgentPages lets an agent publish a game, a page or an app from its own disk and hand back an address anyone can open, with no account and no build step.
+
+  '
+agentUse: |
+  Over MCP at https://<domain>/mcp, one key per agent (Credentials). The tool publish_folder gives the agent one command for its terminal, and that command prints the link. Sites are open to anyone with the link.
+instructions: 'Give it a domain. Agents use https://<domain>/mcp with the agent key under Credentials. Connect it like any other MCP server, then ask your agent to publish what it built.
+
+
+  One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
+
+
+  Everything published is public to anyone with the link. Sites are static, with no server code or database, and they share one origin, so they should not store private data in the browser. To take a site down yourself, run `rm -r /data/sites/<name>` in the Console.
+
+  '
+tags:
+- mcp
+- hosting
+- static-sites
+- hermes
+links:
+- label: Repository
+  url: https://github.com/magnusfroste/agentpages
+benefits:
+- title: One command, one link
+  description: The agent publishes a folder from its terminal and the files never pass through the conversation
+- title: Nothing for visitors to sign up for
+  description: The link opens the site. Publishing takes a key, looking takes nothing
+- title: The link stays
+  description: Publish again and the same address shows the new version
+features:
+- title: Five MCP tools
+  description: publish_folder, publish_site, list_sites, read_site and delete_site
+- title: Safe uploads
+  description: Files are read from a manifest, hidden files stay out, and an upload link works once
+- title: Who owns what
+  description: One key per agent, and only the agent that published a site can change it
+deploy:
+  runtime: git-app
+  repo: https://github.com/magnusfroste/agentpages
+  ref: main
+  port: 8000
+  healthcheck: /health
+  envFile: |
+    MCP_KEYS=${FIRST_AGENT}:${PAGES_AGENT_KEY}
+    PUBLIC_URL=https://${DOMAIN}
+    MAX_SITE_MB=${MAX_SITE_MB}
+    CPU_LIMIT=0.5
+    MEMORY_LIMIT_MB=256
+  env:
+  - key: FIRST_AGENT
+    label: First agent
+    type: text
+    default: hermes
+    description: The name the first agent key gets
+  - key: MAX_SITE_MB
+    label: Size limit per site (MB)
+    type: text
+    default: '25'
+  secrets:
+  - key: PAGES_AGENT_KEY
+    generate: hex
+    bytes: 32
