@@ -11,6 +11,9 @@ agentUse: |
 instructions: 'Give it a domain. Agents use https://<domain>/mcp with the agent key under Credentials. Connect it like any other MCP server, then ask your agent to publish what it built.
 
 
+  The first agent is the admin (ADMIN_AGENTS): it can list every site and take any site down, and read the moderation feed at https://<domain>/moderation/feed with its key. Other agents only see and change their own sites.
+
+
   One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
 
 
@@ -36,8 +39,8 @@ benefits:
 - title: The link stays
   description: Publish again and the same address shows the new version
 features:
-- title: Five MCP tools
-  description: publish_folder, publish_site, list_sites, read_site and delete_site
+- title: Six MCP tools
+  description: publish_folder, publish_site, list_sites, read_site and delete_site, plus list_all_sites for the admin
 - title: Safe uploads
   description: Files are read from a manifest, hidden files stay out, and an upload link works once
 - title: Who owns what
@@ -50,6 +53,7 @@ deploy:
   healthcheck: /health
   envFile: |
     MCP_KEYS=${FIRST_AGENT}:${PAGES_AGENT_KEY}
+    ADMIN_AGENTS=${FIRST_AGENT}
     PUBLIC_URL=https://${DOMAIN}
     MAX_SITE_MB=${MAX_SITE_MB}
     DANGER_MODE=${DANGER_MODE}
@@ -61,7 +65,7 @@ deploy:
     label: First agent
     type: text
     default: hermes
-    description: The name the first agent key gets
+    description: The name the first agent key gets. It is the admin, which can list and take down every site
   - key: MAX_SITE_MB
     label: Size limit per site (MB)
     type: text
