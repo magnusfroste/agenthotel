@@ -8,20 +8,45 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const yaml = require('js-yaml');
-const { buildPatchScript } = require('../lib/hermesConfigPatch');
+const { buildPatchScript, gatewayRestartCommand } = require('../lib/hermesConfigPatch');
 
 let python = null;
 for (const p of ['python3', 'python']) {
   try { execFileSync(p, ['--version'], { stdio: 'ignore' }); python = p; break; } catch (e) { /* next */ }
 }
 
-function patch(text, modelBlock, mcpBlock = null, cwd = '') {
+function patch(text, modelBlock, mcpBlock = null, cwd = '', webapp = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-'));
   const file = path.join(dir, 'config.yaml');
   fs.writeFileSync(file, text);
-  execFileSync(python, ['-c', buildPatchScript(modelBlock, mcpBlock, cwd), file]);
+  execFileSync(python, ['-c', buildPatchScript(modelBlock, mcpBlock, cwd, webapp), file]);
   return fs.readFileSync(file, 'utf8');
 }
+
+const WEBAPP_ON = 'webapp:\n  enabled: true\n  host: 0.0.0.0\n  port: 9120\n  public_url: https://a.example.com\n';
+
+test('the webapp block replaces the one hermes wrote and leaves the rest', { skip: !python && 'no python3' }, () => {
+  const out = patch('memory:\n  enabled: true\nwebapp:\n  enabled: false\n  host: 127.0.0.1\nterminal:\n  timeout: 180\n', null, null, '', WEBAPP_ON);
+  const parsed = yaml.load(out);
+  assert.deepStrictEqual(parsed.webapp, { enabled: true, host: '0.0.0.0', port: 9120, public_url: 'https://a.example.com' });
+  assert.deepStrictEqual(parsed.terminal, { timeout: 180 });
+  assert.deepStrictEqual(parsed.memory, { enabled: true });
+});
+
+test('with no webapp block a guest keeps what it set itself', { skip: !python && 'no python3' }, () => {
+  const out = patch('webapp:\n  enabled: true\n  port: 9555\n', null);
+  assert.deepStrictEqual(yaml.load(out).webapp, { enabled: true, port: 9555 });
+});
+
+test('the gateway restart cannot match its own shell', () => {
+  const cmd = gatewayRestartCommand();
+  assert.match(cmd, /s6-svc -r \/run\/hermes-service\/gateway-default/);
+  // pgrep -f matches the sh -c running this very string. The bracket form does
+  // not contain the text it searches for.
+  const pattern = /pgrep -f "([^"]+)"/.exec(cmd)[1];
+  assert.ok(!new RegExp(pattern).test(cmd), 'the fallback would signal its own shell');
+  assert.ok(new RegExp(pattern).test('/usr/bin/python hermes gateway run'));
+});
 
 // What hermes left after a redeploy: it appended api_mode and models to the
 // panel's custom_providers entry below the file's header comments.

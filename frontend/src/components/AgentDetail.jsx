@@ -343,7 +343,12 @@ function AgentDetail() {
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Public URL</div>
                 <a href={appUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>{appUrl}</a>
               </div>
-              <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {agent.runtime === 'hermes' && agent.config?.HERMES_WEBAPP === 'true' && (
+                  <a href={`${appUrl}/admin/`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Dashboard</a>
+                )}
+                <a href={appUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ExternalLink size={15} color="currentColor" /> Open app</a>
+              </div>
             </div>
           )}
           {agent.hasRuntimeImage && <AgentRuntimeVersion agentId={id} onRebuild={handleRebuild} onRedeploy={() => handleAction('redeploy', 'POST')} />}

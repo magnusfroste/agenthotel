@@ -15,15 +15,17 @@
 // Now comments and blank lines inside a block go with it; comments in front of
 // the next top-level key stay, because they belong to that key.
 
-function buildPatchScript(modelBlock, mcpBlock, terminalCwd) {
+function buildPatchScript(modelBlock, mcpBlock, terminalCwd, webappBlock) {
   const b64 = Buffer.from(modelBlock || '').toString('base64');
   const mcpB64 = Buffer.from(mcpBlock || '').toString('base64');
   const cwdB64 = Buffer.from(terminalCwd || '').toString('base64');
+  const webappB64 = Buffer.from(webappBlock || '').toString('base64');
   return `
 import base64, sys
 path = sys.argv[1] if len(sys.argv) > 1 else '/opt/data/config.yaml'
 mb = base64.b64decode('${b64}').decode()
 mcp = base64.b64decode('${mcpB64}').decode()
+webapp = base64.b64decode('${webappB64}').decode()
 with open(path) as f: lines = f.readlines()
 
 def inside(line):
@@ -35,7 +37,7 @@ def filler(line):
 # mcp_servers is replaced only when the panel has one to put there. Stripping it
 # unconditionally would delete servers the operator added inside hermes, which
 # the panel knows nothing about and could not put back.
-drop = ['model:', 'custom_providers:'] + (['mcp_servers:'] if mcp else [])
+drop = ['model:', 'custom_providers:'] + (['mcp_servers:'] if mcp else []) + (['webapp:'] if webapp else [])
 out, i = [], 0
 while i < len(lines):
     if any(lines[i].startswith(d) for d in drop):
@@ -55,6 +57,7 @@ while i < len(lines):
     out.append(lines[i]); i += 1
 out = mb.splitlines(True) + out if mb else out
 out = mcp.splitlines(True) + out if mcp else out
+out = webapp.splitlines(True) + out if webapp else out
 
 # terminal.cwd is edited in place: replace the cwd line inside the existing
 # terminal: block, or add one if the block has none. Rewriting the whole block
@@ -84,4 +87,19 @@ open(path, 'w').write(''.join(out))
 `;
 }
 
-module.exports = { buildPatchScript };
+// Restart the gateway so it reads the patched file. Hermes v0.23 supervises it
+// as a service of its own. The old command, `kill -HUP $(pgrep -f "hermes
+// gateway run")`, stopped working without a sound: the gateway's command line is
+// `python … main()) gateway run --replace`, so the pattern matched only the sh
+// running it, which then signalled itself (found in testing, 2026-11-09). The
+// bracket keeps the fallback for older images from matching its own shell.
+// gateway-default reads /opt/data even when a profile is active: Hermes ignores
+// active_profile for a gateway under s6. Until the service exists the gateway
+// has not started, and it reads the patched file when it does.
+function gatewayRestartCommand() {
+  return 'if [ -d /run/hermes-service/gateway-default ]; then '
+    + '/package/admin/s6/command/s6-svc -r /run/hermes-service/gateway-default; '
+    + 'else kill -HUP $(pgrep -f "[h]ermes gateway run" | head -1) 2>/dev/null; fi; sleep 1';
+}
+
+module.exports = { buildPatchScript, gatewayRestartCommand };
