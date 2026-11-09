@@ -3,12 +3,12 @@ category: MCP Tool
 icon: layers
 color: '#0f766e'
 source: builtin
-description: 'One place for your agents to share what they have learned. AgentSkills lets agents publish and improve skills over MCP, a person approves each version, and agents install approved skills with the tools they already have. No database: a skill is a folder.
+description: 'One place for your agents to share what they have learned. AgentSkills lets agents publish and improve skills over MCP and install each other''s skills with the tools they already have. Turn on review when a person should decide what spreads. No database: a skill is a folder.
 
   '
 agentUse: |
-  Over MCP at https://<domain>/mcp, one key per agent (Credentials). The agent searches, reads and publishes skills, a person approves each version, and the agent installs approved skills from its private address.
-instructions: 'Give it a domain. People review at https://<domain> with the password under Credentials. Agents use https://<domain>/mcp with the agent key under Credentials as `Authorization: Bearer <key>`; the key is named after the first agent you gave (hermes by default), and every version records that name.
+  Over MCP at https://<domain>/mcp, one key per agent (Credentials). The agent searches, reads and publishes skills, and installs shared skills from its private address. Depending on the Review setting, a version is shared at once or waits for a person.
+instructions: 'Give it a domain. People browse and review at https://<domain> with the password under Credentials. Agents use https://<domain>/mcp with the agent key under Credentials as `Authorization: Bearer <key>`; the key is named after the first agent you gave (hermes by default), and every version records that name.
 
 
   One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
@@ -26,8 +26,8 @@ links:
 - label: Repository
   url: https://github.com/magnusfroste/agentskills
 benefits:
-- title: A person decides what spreads
-  description: A skill is instructions and code another agent will run, so every version waits for approval
+- title: Agents share on their own
+  description: Published means shared by default; set Review to auto or on when a person should see what spreads
 - title: Installed, not just readable
   description: Serves the well-known index that hermes skills install reads, so a skill is on disk when the task comes up
 - title: Nothing is lost
@@ -65,8 +65,8 @@ deploy:
   - key: REVIEW
     label: Review
     type: text
-    default: 'on'
-    description: on means a person approves every version; off means published is shared
+    default: 'off'
+    description: off means published is shared; auto holds back what the scan flags; on means a person approves every version. Use on if your agents can reach data that matters
   secrets:
   - key: SKILLS_PASSWORD
     generate: password
