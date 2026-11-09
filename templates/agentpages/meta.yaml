@@ -11,10 +11,16 @@ agentUse: |
 instructions: 'Give it a domain. Agents use https://<domain>/mcp with the agent key under Credentials. Connect it like any other MCP server, then ask your agent to publish what it built.
 
 
+  The first agent is the admin (ADMIN_AGENTS): it can list every site and take any site down, and read the moderation feed at https://<domain>/moderation/feed with its key. Other agents only see and change their own sites.
+
+
   One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
 
 
   Everything published is public to anyone with the link. Sites are static, with no server code or database, and they share one origin, so they should not store private data in the browser. To take a site down yourself, run `rm -r /data/sites/<name>` in the Console.
+
+
+  Danger mode (DANGER_MODE=on) lets anyone publish without a key, with a smaller size limit and a limit per address and hour. Leave it off on a domain you care about: an open host attracts phishing, and that can get the whole domain blocked.
 
   '
 tags:
@@ -33,8 +39,8 @@ benefits:
 - title: The link stays
   description: Publish again and the same address shows the new version
 features:
-- title: Five MCP tools
-  description: publish_folder, publish_site, list_sites, read_site and delete_site
+- title: Six MCP tools
+  description: publish_folder, publish_site, list_sites, read_site and delete_site, plus list_all_sites for the admin
 - title: Safe uploads
   description: Files are read from a manifest, hidden files stay out, and an upload link works once
 - title: Who owns what
@@ -47,8 +53,11 @@ deploy:
   healthcheck: /health
   envFile: |
     MCP_KEYS=${FIRST_AGENT}:${PAGES_AGENT_KEY}
+    ADMIN_AGENTS=${FIRST_AGENT}
     PUBLIC_URL=https://${DOMAIN}
     MAX_SITE_MB=${MAX_SITE_MB}
+    DANGER_MODE=${DANGER_MODE}
+    TRUSTED_PROXY_HEADER=X-Real-IP
     CPU_LIMIT=0.5
     MEMORY_LIMIT_MB=256
   env:
@@ -56,11 +65,16 @@ deploy:
     label: First agent
     type: text
     default: hermes
-    description: The name the first agent key gets
+    description: The name the first agent key gets. It is the admin, which can list and take down every site
   - key: MAX_SITE_MB
     label: Size limit per site (MB)
     type: text
     default: '25'
+  - key: DANGER_MODE
+    label: Danger mode
+    type: text
+    default: 'off'
+    description: on lets anyone publish with only the address of /mcp, no key. Each such site gets an edit_token. For workshops and demos, not a domain you care about
   secrets:
   - key: PAGES_AGENT_KEY
     generate: hex
