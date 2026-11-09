@@ -16,6 +16,9 @@ instructions: 'Give it a domain. Agents use https://<domain>/mcp with the agent 
 
   Everything published is public to anyone with the link. Sites are static, with no server code or database, and they share one origin, so they should not store private data in the browser. To take a site down yourself, run `rm -r /data/sites/<name>` in the Console.
 
+
+  Danger mode (DANGER_MODE=on) lets anyone publish without a key, with a smaller size limit and a limit per address and hour. Leave it off on a domain you care about: an open host attracts phishing, and that can get the whole domain blocked.
+
   '
 tags:
 - mcp
@@ -49,6 +52,8 @@ deploy:
     MCP_KEYS=${FIRST_AGENT}:${PAGES_AGENT_KEY}
     PUBLIC_URL=https://${DOMAIN}
     MAX_SITE_MB=${MAX_SITE_MB}
+    DANGER_MODE=${DANGER_MODE}
+    TRUSTED_PROXY_HEADER=X-Real-IP
     CPU_LIMIT=0.5
     MEMORY_LIMIT_MB=256
   env:
@@ -61,6 +66,11 @@ deploy:
     label: Size limit per site (MB)
     type: text
     default: '25'
+  - key: DANGER_MODE
+    label: Danger mode
+    type: text
+    default: 'off'
+    description: on lets anyone publish with only the address of /mcp, no key. Each such site gets an edit_token. For workshops and demos, not a domain you care about
   secrets:
   - key: PAGES_AGENT_KEY
     generate: hex
