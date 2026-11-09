@@ -11,11 +11,15 @@ description: |
   AI assistant with 26+ tools and 65+ skills.
 
 instructions: |
-  After deployment, access the Hermes dashboard at the assigned domain.
-  Login with username "admin" and the configured password. Set your
-  OpenAI API key to enable LLM functionality.
+  After deployment, the Hermes web app opens at the assigned domain and the
+  admin dashboard at /admin on the same domain. Both use username "admin" and
+  the configured password, and each asks for it once. Set your OpenAI API key
+  to enable LLM functionality. A guest with HERMES_WEBAPP=false has the
+  dashboard at the domain instead.
 
 changeLog:
+  - date: 2026-11-09
+    description: The web app at the main address, the dashboard at /admin
   - date: 2025-01-25
     description: Initial template with dashboard mode
 

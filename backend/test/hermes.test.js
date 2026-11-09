@@ -35,6 +35,42 @@ test('malformed MCP_SERVERS costs the tools, not the deploy', () => {
   assert.strictEqual(hermes.generateMcpBlock({ MCP_SERVERS: '{"s":{"headers":{}}}' }), null, 'a url is required');
 });
 
+test('a new agent gets the web app, one that says no keeps its answer', () => {
+  assert.strictEqual(hermes.buildConfig({ name: 'a', config: {} }).HERMES_WEBAPP, 'true');
+  assert.strictEqual(hermes.buildConfig({ name: 'a', config: { HERMES_WEBAPP: 'false' } }).HERMES_WEBAPP, 'false');
+});
+
+test('with the web app on, its port takes the root and the dashboard moves to /admin', () => {
+  const layout = hermes.routeLayout({ HERMES_WEBAPP: 'true' }, 'a.example.com', 9119);
+  assert.deepStrictEqual(layout, { rootPort: 9120, mounts: [{ prefix: '/admin', port: 9119, assetsFromReferer: true }] });
+  const block = hermes.generateWebappBlock({ HERMES_WEBAPP: 'true' }, 'a.example.com');
+  assert.match(block, /enabled: true/);
+  assert.match(block, /host: 0\.0\.0\.0/);
+  assert.match(block, /port: 9120/);
+  assert.match(block, /public_url: https:\/\/a\.example\.com/);
+});
+
+test('an agent from before the web app is left exactly as it was', () => {
+  assert.strictEqual(hermes.routeLayout({}, 'a.example.com', 9119), null);
+  assert.strictEqual(hermes.generateWebappBlock({}, 'a.example.com'), null);
+});
+
+test('turning the web app off writes it off and gives the root back', () => {
+  assert.strictEqual(hermes.routeLayout({ HERMES_WEBAPP: 'false' }, 'a.example.com', 9119), null);
+  assert.match(hermes.generateWebappBlock({ HERMES_WEBAPP: 'false' }, 'a.example.com'), /enabled: false/);
+});
+
+test('with no usable domain the route and the listener agree: neither', () => {
+  for (const domain of ['', null, 'localhost', '*.example.com']) {
+    assert.strictEqual(hermes.routeLayout({ HERMES_WEBAPP: 'true' }, domain, 9119), null);
+    assert.strictEqual(hermes.generateWebappBlock({ HERMES_WEBAPP: 'true' }, domain), null);
+  }
+});
+
+test('the web app switch stays out of the container environment', () => {
+  assert.strictEqual(envOf({ HERMES_WEBAPP: 'true' }).HERMES_WEBAPP, undefined);
+});
+
 test('a new agent gets its own dashboard password and signing key', () => {
   const a = hermes.buildConfig({ name: 'a', config: {} });
   const b = hermes.buildConfig({ name: 'b', config: {} });

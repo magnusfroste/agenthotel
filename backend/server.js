@@ -31,6 +31,7 @@ const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
 const { caddyFetch, caddySet } = require('./lib/caddyAdmin');
+const { buildGuestRoute } = require('./lib/guestRoute');
 const { evaluateHealth } = require('./lib/agentHealth');
 const deploys = require('./lib/deploysInFlight');
 const { execFile, execFileSync, spawn } = require('child_process');
@@ -2517,11 +2518,12 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
     const network = docker.getNetwork(networkName);
     await network.connect({ Container: containerName });
 
+    const layout = routeLayoutOf(plugin, config, domain, port);
     if (domain) {
-      await addCaddyRoute(domain, containerName, port);
+      await addCaddyRoute(domain, containerName, port, layout);
     }
     for (const alias of agentAliases(config, domain)) {
-      await addCaddyRoute(alias, containerName, port);
+      await addCaddyRoute(alias, containerName, port, layout);
     }
   } catch (err) {
     // Roll back a partially deployed container so a retry doesn't collide
@@ -2563,13 +2565,19 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // "you are the caretaker of this hotel" belongs — the tools an agent was given
   // say what it may do, not what it is for.
   const hermesSoul = runtime === 'hermes' ? String(config.HERMES_SOUL || '').trim() : '';
+  // The browser workspace on 9120, when this guest has it. routeLayout above
+  // and this block come from one decision, so the route never points at a
+  // listener that was not turned on.
+  const hermesWebapp = runtime === 'hermes' && plugin.generateWebappBlock
+    ? plugin.generateWebappBlock(config, domain)
+    : null;
   // Awaited, and each throws on a non-zero exit. Fire-and-forget with a
   // .catch that only logged meant a deploy reported "running" while the
   // agent had no model block, no MCP servers or no identity — visible only to
   // whoever read the backend log (found in review, 2026-09-19).
   if (hermesSoul) await patchHermesSoul(container, hermesSoul);
-  if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock) {
-    await patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock);
+  if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock || hermesWebapp) {
+    await patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock, hermesWebapp);
   }
 }
 
@@ -2615,16 +2623,15 @@ open(path, 'w').write(text)
   console.log('[Hermes] SOUL.md updated');
 }
 
-async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock) {
+async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock, webappBlock) {
   // Wait for the s6 init scripts to finish writing the baked config.
   await new Promise(r => setTimeout(r, 5000));
-  const patchScript = require('./lib/hermesConfigPatch').buildPatchScript(modelBlock, mcpBlock, terminalCwd);
-  await execAndWait(container, ['python3', '-c', patchScript], 'config.yaml patch');
-  // SIGHUP the supervised gateway process; s6 auto-respawns it with new config.
-  const killExec = await container.exec({ Cmd: ['sh', '-c', 'kill -HUP $(pgrep -f "hermes gateway run" | head -1) 2>/dev/null; sleep 1'], AttachStdout: true, AttachStderr: true });
+  const { buildPatchScript, gatewayRestartCommand } = require('./lib/hermesConfigPatch');
+  await execAndWait(container, ['python3', '-c', buildPatchScript(modelBlock, mcpBlock, terminalCwd, webappBlock)], 'config.yaml patch');
+  const killExec = await container.exec({ Cmd: ['sh', '-c', gatewayRestartCommand()], AttachStdout: true, AttachStderr: true });
   const rs = await killExec.start({ Detach: true });
   rs.destroy();
-  console.log('[Hermes] config.yaml patched, gateway reloading');
+  console.log('[Hermes] config.yaml patched, gateway restarting');
 }
 
 // A guest may answer to more than one hostname. A web hotel is the clearest
@@ -2710,24 +2717,17 @@ async function attachComposeRoute(agent, plugin, config, domain) {
   }
 }
 
-async function addCaddyRoute(domain, containerName, port) {
+// How a guest's interfaces share its domain, when it has more than one. Passed
+// the primary domain even for an alias: the layout belongs to the guest.
+function routeLayoutOf(plugin, config, domain, port) {
+  return typeof plugin?.routeLayout === 'function' ? plugin.routeLayout(config, domain, port) : null;
+}
+
+async function addCaddyRoute(domain, containerName, port, layout = null) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
 
-  const route = {
-    '@id': `agent-${domain}`,
-    match: [{ host: [domain] }],
-    handle: [{
-      handler: 'reverse_proxy',
-      upstreams: [{ dial: `${containerName}:${port}` }],
-      // The visitor's own address, worked out by Caddy from the proxies it
-      // trusts (realClientIp below). X-Forwarded-For alone named the nearest
-      // hop: behind the tunnel every visitor was cloudflared, behind NetBird
-      // the mesh proxy — AgentReports logged and throttled all of them as
-      // one address (2026-10-27). Set, not appended: a guest sees one value.
-      headers: { request: { set: { 'X-Real-Ip': ['{http.vars.client_ip}'] } } }
-    }]
-  };
+  const route = buildGuestRoute(domain, containerName, port, layout);
 
   // The @id is derived from the domain, so re-adding a route Caddy already has
   // makes it reject the WHOLE config ("duplicate ID ... found at routes/2 and
@@ -5946,7 +5946,7 @@ async function reconcileAgentRoutes({ onlyMissing = false } = {}) {
     for (const host of hosts) {
       if (present && present.has(host)) continue;
       try {
-        await addCaddyRoute(host, container, targetPort);
+        await addCaddyRoute(host, container, targetPort, routeLayoutOf(plugin, config, agent.domain, targetPort));
         restored++;
       } catch (err) {
         console.error(`[Caddy] Could not restore route for ${host}: ${err.message}`);

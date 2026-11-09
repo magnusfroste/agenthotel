@@ -169,6 +169,18 @@ function configProvider(config) {
   return config[`${slug}_BASE_URL`] ? providerIn : null;
 }
 
+// The Webapp (the Hermes Desktop workspace in a browser) is served by the gateway
+// on its own port. It needs a domain of its own to be reached at, and a wildcard
+// domain cannot be its public address. An agent created before this has no
+// HERMES_WEBAPP at all and is left as it is: turning it on moves what its address
+// shows, which should be its operator's choice.
+const WEBAPP_PORT = 9120;
+const ADMIN_PREFIX = '/admin';
+
+function webappOn(config, domain) {
+  return String(config.HERMES_WEBAPP) === 'true' && !!domain && domain.includes('.') && !domain.startsWith('*.');
+}
+
 module.exports = {
   // For tests: how a model id and the agent's env become hermes's config.
   _internals: { splitModel, ownEndpoints, customProvidersBlock, configProvider },
@@ -242,6 +254,8 @@ module.exports = {
     // the hotel's caretaker introduces itself as "an AI assistant" and does not
     // know what it is responsible for — the tools it was given say what it may
     // do, not who it is.
+    { key: 'HERMES_WEBAPP', label: 'Web app at the main address', type: 'select', options: ['true', 'false'], default: 'true',
+      description: 'true: the workspace at the domain and the dashboard at /admin, one login for both. false: the dashboard at the domain. Takes effect on redeploy' },
     { key: 'HERMES_SOUL', label: 'Who this agent is', type: 'textarea', required: false,
       placeholder: 'You are the caretaker of this hotel. You look after the shared data store…',
       description: "Appended to the agent's SOUL.md, which hermes injects into every session. The stock instructions are kept" },
@@ -269,6 +283,9 @@ module.exports = {
       }
     }
     if (!autoConfig.HERMES_MODEL) autoConfig.HERMES_MODEL = 'openai/gpt-5.6-luna';
+    // buildConfig runs only when an agent is created, so this is the default for
+    // new guests and never changes one that already exists.
+    if (!autoConfig.HERMES_WEBAPP) autoConfig.HERMES_WEBAPP = 'true';
 
     // A generated password per agent, written into the config so it shows up
     // under Credentials like every other secret the panel owns. buildEnv still
@@ -368,10 +385,26 @@ module.exports = {
     // fallback. Without naming them here the pass-through appends a second copy
     // of each — harmless while the values agree, but it also defeats the guard
     // that keeps an empty secret out of the environment.
-    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL', 'HERMES_TUI_PROVIDER',
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL', 'HERMES_TUI_PROVIDER', 'HERMES_WEBAPP',
       'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
       'HERMES_DASHBOARD_BASIC_AUTH_SECRET', 'HERMES_DASHBOARD_PASSWORD']);
     return env;
+  },
+
+  // Null means one interface on one port: the dashboard, as before.
+  routeLayout(config, domain, port) {
+    if (!webappOn(config, domain)) return null;
+    return { rootPort: WEBAPP_PORT, mounts: [{ prefix: ADMIN_PREFIX, port, assetsFromReferer: true }] };
+  },
+
+  // The webapp: block for /opt/data/config.yaml. Upstream has no environment
+  // variable for it. Bound to 0.0.0.0 so Caddy can reach it, which also puts it
+  // behind the same sign-in as the dashboard. Null leaves the file alone.
+  generateWebappBlock(config, domain) {
+    if (webappOn(config, domain)) {
+      return `webapp:\n  enabled: true\n  host: 0.0.0.0\n  port: ${WEBAPP_PORT}\n  public_url: https://${domain}\n`;
+    }
+    return String(config.HERMES_WEBAPP) === 'false' ? 'webapp:\n  enabled: false\n' : null;
   },
 
   // Generate a model: block for /opt/data/config.yaml.
