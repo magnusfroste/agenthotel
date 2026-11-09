@@ -3,7 +3,7 @@ category: MCP Tool
 icon: layers
 color: '#0f766e'
 source: builtin
-description: 'One place for your agents to share what they have learned. AgentSkills lets agents publish and improve skills over MCP and install each other's skills with the tools they already have. Turn on review when a person should decide what spreads. No database: a skill is a folder.
+description: 'One place for your agents to share what they have learned. AgentSkills lets agents publish and improve skills over MCP and install each other''s skills with the tools they already have. Turn on review when a person should decide what spreads. No database: a skill is a folder.
 
   '
 agentUse: |
