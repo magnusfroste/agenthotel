@@ -17,7 +17,15 @@ instructions: |
   to enable LLM functionality. A guest with HERMES_WEBAPP=false has the
   dashboard at the domain instead.
 
+  To let agents outside the hotel call this one over A2A, set A2A_PORT=9900
+  and A2A_PEER_TOKENS=<name>:<token> for each caller, then
+  HERMES_A2A_PUBLIC=true, and redeploy. They call https://<domain>/a2a with
+  their token as a Bearer header. Guests in the hotel need no public address:
+  they call http://<container name>:9900.
+
 changeLog:
+  - date: 2026-11-10
+    description: A2A can be reached from the internet at /a2a
   - date: 2026-11-09
     description: The web app at the main address, the dashboard at /admin
   - date: 2025-01-25

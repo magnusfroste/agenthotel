@@ -233,3 +233,55 @@ test("hermes's own chat is told the provider config.yaml names, not left to gues
   // No model block written (an unknown provider with no endpoint): nothing to name.
   assert.strictEqual(envOf({ HERMES_MODEL: 'nowhere/m' }).HERMES_TUI_PROVIDER, undefined);
 });
+
+const A2A = { HERMES_A2A_PUBLIC: 'true', A2A_PORT: '9900', A2A_PEER_TOKENS: 'other:' + 'x'.repeat(64) };
+
+test('public A2A puts calls under /a2a and the card at the domain, beside the web app', () => {
+  const layout = hermes.routeLayout({ ...A2A, HERMES_WEBAPP: 'true' }, 'a.example.com', 9119);
+  assert.strictEqual(layout.rootPort, 9120);
+  assert.deepStrictEqual(layout.paths, [{ paths: ['/.well-known/agent-card.json', '/.well-known/agent.json'], port: 9900 }]);
+  assert.deepStrictEqual(layout.mounts, [
+    { prefix: '/a2a', port: 9900 },
+    { prefix: '/admin', port: 9119, assetsFromReferer: true }
+  ]);
+});
+
+test('public A2A without the web app keeps the dashboard at the root', () => {
+  const layout = hermes.routeLayout(A2A, 'a.example.com', 9119);
+  assert.strictEqual(layout.rootPort, 9119);
+  assert.deepStrictEqual(layout.mounts, [{ prefix: '/a2a', port: 9900 }]);
+});
+
+test('no route to A2A unless Hermes would check a token there', () => {
+  // Without a token Hermes binds loopback only: a route would only give 502.
+  const { A2A_PEER_TOKENS, ...noTokens } = A2A;
+  assert.strictEqual(hermes.routeLayout(noTokens, 'a.example.com', 9119), null);
+  assert.ok(hermes.routeLayout({ ...noTokens, A2A_BEARER_TOKEN: 'y'.repeat(64) }, 'a.example.com', 9119));
+  const { A2A_PORT, ...noPort } = A2A;
+  assert.strictEqual(hermes.routeLayout(noPort, 'a.example.com', 9119), null);
+  assert.strictEqual(hermes.routeLayout({ ...A2A, HERMES_A2A_PUBLIC: 'false' }, 'a.example.com', 9119), null);
+  assert.strictEqual(hermes.routeLayout(A2A, '*.example.com', 9119), null);
+});
+
+test('public A2A names its public address, listens beyond loopback and is rate limited', () => {
+  const env = envOf({ ...A2A, AGENTHOTEL_DOMAINS: 'a.example.com,b.example.com' });
+  assert.strictEqual(env.A2A_PUBLIC_URL, 'https://a.example.com/a2a');
+  assert.strictEqual(env.A2A_HOST, '0.0.0.0');
+  assert.strictEqual(env.A2A_RATE_LIMIT, '20');
+  assert.strictEqual(env.HERMES_A2A_PUBLIC, undefined, 'the switch stays out of the container');
+});
+
+test("the operator's own A2A values win over the defaults", () => {
+  const env = envOf({ ...A2A, AGENTHOTEL_DOMAINS: 'a.example.com', A2A_PUBLIC_URL: 'https://x.example.org/agent',
+    A2A_HOST: '::', A2A_RATE_LIMIT: '5' });
+  assert.strictEqual(env.A2A_PUBLIC_URL, 'https://x.example.org/agent');
+  assert.strictEqual(env.A2A_HOST, '::');
+  assert.strictEqual(env.A2A_RATE_LIMIT, '5');
+});
+
+test('A2A inside the hotel only adds nothing to the environment', () => {
+  const { HERMES_A2A_PUBLIC, ...inside } = A2A;
+  const env = envOf({ ...inside, AGENTHOTEL_DOMAINS: 'a.example.com' });
+  assert.strictEqual(env.A2A_PUBLIC_URL, undefined);
+  assert.strictEqual(env.A2A_RATE_LIMIT, undefined);
+});

@@ -51,3 +51,15 @@ test('everything else goes to the root port, last, and every proxy names the vis
     assert.deepStrictEqual(p.headers.request.set['X-Real-Ip'], ['{http.vars.client_ip}']);
   }
 });
+
+test('exact paths go to their interface as they are, before the mounts', () => {
+  const layout = { rootPort: 9119, paths: [{ paths: ['/.well-known/agent-card.json'], port: 9900 }],
+    mounts: [{ prefix: '/a2a', port: 9900 }] };
+  const [card, a2a, root] = buildGuestRoute('a.example.com', 'c', 9119, layout).handle[0].routes;
+  assert.deepStrictEqual(card.match, [{ path: ['/.well-known/agent-card.json'] }]);
+  assert.strictEqual(card.terminal, true);
+  assert.strictEqual(card.handle.length, 1, 'no rewrite: the path reaches the interface unchanged');
+  assert.deepStrictEqual(card.handle[0].upstreams, [{ dial: 'c:9900' }]);
+  assert.deepStrictEqual(a2a.handle[0], { handler: 'rewrite', strip_path_prefix: '/a2a' });
+  assert.deepStrictEqual(root.handle[0].upstreams, [{ dial: 'c:9119' }]);
+});

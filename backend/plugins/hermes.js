@@ -177,8 +177,38 @@ function configProvider(config) {
 const WEBAPP_PORT = 9120;
 const ADMIN_PREFIX = '/admin';
 
+function realDomain(domain) {
+  return !!domain && domain.includes('.') && !domain.startsWith('*.');
+}
+
 function webappOn(config, domain) {
-  return String(config.HERMES_WEBAPP) === 'true' && !!domain && domain.includes('.') && !domain.startsWith('*.');
+  return String(config.HERMES_WEBAPP) === 'true' && realDomain(domain);
+}
+
+// A2A from outside the hotel. Inside it, guests reach each other's A2A port by
+// container name and need no route. Opening it to the internet is a switch of
+// its own, and only takes effect when Hermes would answer with a token check:
+// without A2A_PEER_TOKENS (or A2A_BEARER_TOKEN) Hermes listens on loopback only,
+// and a route to it would only ever give 502. Calls arrive at /a2a, prefix
+// stripped, since Hermes answers JSON-RPC at its own root; the Agent Card is
+// also served where clients look for it first, at the domain's /.well-known.
+const A2A_PREFIX = '/a2a';
+const A2A_CARD_PATHS = ['/.well-known/agent-card.json', '/.well-known/agent.json'];
+
+function a2aPort(config) {
+  const port = Number(config.A2A_PORT);
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+}
+
+function a2aPublicOn(config, domain) {
+  return String(config.HERMES_A2A_PUBLIC) === 'true' && realDomain(domain) && !!a2aPort(config)
+    && !!(config.A2A_PEER_TOKENS || config.A2A_BEARER_TOKEN);
+}
+
+// buildEnv sees the hostnames only through AGENTHOTEL_DOMAINS; the first is the
+// agent's own domain.
+function primaryDomain(config) {
+  return String(config.AGENTHOTEL_DOMAINS || '').split(',')[0].trim();
 }
 
 module.exports = {
@@ -256,6 +286,8 @@ module.exports = {
     // do, not who it is.
     { key: 'HERMES_WEBAPP', label: 'Web app at the main address', type: 'select', options: ['true', 'false'], default: 'true',
       description: 'true: the workspace at the domain and the dashboard at /admin, one login for both. false: the dashboard at the domain. Takes effect on redeploy' },
+    { key: 'HERMES_A2A_PUBLIC', label: 'A2A reachable from the internet', type: 'select', options: ['false', 'true'], default: 'false',
+      description: 'true: agents outside the hotel call this one at https://<domain>/a2a. Needs A2A_PORT and A2A_PEER_TOKENS (name:token per caller); only those tokens get in, 20 calls a minute each. Guests in the hotel reach it without this. Takes effect on redeploy' },
     { key: 'HERMES_SOUL', label: 'Who this agent is', type: 'textarea', required: false,
       placeholder: 'You are the caretaker of this hotel. You look after the shared data store…',
       description: "Appended to the agent's SOUL.md, which hermes injects into every session. The stock instructions are kept" },
@@ -385,7 +417,18 @@ module.exports = {
     // fallback. Without naming them here the pass-through appends a second copy
     // of each — harmless while the values agree, but it also defeats the guard
     // that keeps an empty secret out of the environment.
-    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL', 'HERMES_TUI_PROVIDER', 'HERMES_WEBAPP',
+    // A2A open to the internet: the Agent Card has to name the public address,
+    // or a caller outside is sent to the container name; the listener has to
+    // bind beyond loopback for Caddy to reach it; and a peer outside should not
+    // be able to spend this agent's model budget at Hermes's default 60 calls a
+    // minute. Each one only when the operator has not set it.
+    const domain = primaryDomain(config);
+    if (a2aPublicOn(config, domain)) {
+      if (!config.A2A_PUBLIC_URL) env.push(`A2A_PUBLIC_URL=https://${domain}${A2A_PREFIX}`);
+      if (!config.A2A_HOST) env.push('A2A_HOST=0.0.0.0');
+      if (!config.A2A_RATE_LIMIT) env.push('A2A_RATE_LIMIT=20');
+    }
+    require('../lib/envPassthrough').appendUnknownEnv(env, config, [...keys, 'HERMES_MODEL', 'HERMES_TUI_PROVIDER', 'HERMES_WEBAPP', 'HERMES_A2A_PUBLIC',
       'HERMES_DASHBOARD_BASIC_AUTH_USERNAME', 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
       'HERMES_DASHBOARD_BASIC_AUTH_SECRET', 'HERMES_DASHBOARD_PASSWORD']);
     return env;
@@ -393,8 +436,16 @@ module.exports = {
 
   // Null means one interface on one port: the dashboard, as before.
   routeLayout(config, domain, port) {
-    if (!webappOn(config, domain)) return null;
-    return { rootPort: WEBAPP_PORT, mounts: [{ prefix: ADMIN_PREFIX, port, assetsFromReferer: true }] };
+    const webapp = webappOn(config, domain);
+    const a2a = a2aPublicOn(config, domain);
+    if (!webapp && !a2a) return null;
+    const layout = { rootPort: webapp ? WEBAPP_PORT : port, mounts: [] };
+    if (a2a) {
+      layout.paths = [{ paths: A2A_CARD_PATHS, port: a2aPort(config) }];
+      layout.mounts.push({ prefix: A2A_PREFIX, port: a2aPort(config) });
+    }
+    if (webapp) layout.mounts.push({ prefix: ADMIN_PREFIX, port, assetsFromReferer: true });
+    return layout;
   },
 
   // The webapp: block for /opt/data/config.yaml. Upstream has no environment
