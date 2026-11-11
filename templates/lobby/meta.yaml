@@ -28,7 +28,7 @@ tags:
 - web hosting
 links:
 - label: Repository
-  url: https://github.com/magnusfroste/lobby
+  url: https://github.com/magnusfroste/agentlobby
 benefits:
 - title: The file is the site
   description: Plain markdown on a volume. Edit it with any tool, keep it in git, back it up with cp
@@ -45,7 +45,7 @@ features:
   description: '::directive{attr} blocks for hero, features, FAQ and more'
 deploy:
   runtime: git-app
-  repo: https://github.com/magnusfroste/lobby
+  repo: https://github.com/magnusfroste/agentlobby
   ref: main
   port: 8080
   healthcheck: /healthz
