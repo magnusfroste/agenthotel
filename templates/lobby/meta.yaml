@@ -7,19 +7,20 @@ description: 'A web hotel for landing pages. One container serves many domains, 
 
   '
 agentUse: |
-  Over MCP at https://<domain>/mcp, with the API token under Credentials. An agent writes a whole landing page with one write_site call; behind a wildcard a new site needs no DNS change.
-instructions: 'A site is named after its hostname: `shop.example.com` is served from the file `shop.example.com.md`. An unknown hostname gets a 404 on purpose, so behind a wildcard a mistyped link never renders someone else''s page. Visiting the domain before any site exists shows that 404.
+  Over MCP at https://<domain>/mcp, with the API token under Credentials. An agent writes a whole landing page with one write_site call; behind a wildcard (*.example.com under Extra domains) a new site needs no DNS change and gets its certificate on its first visit.
+instructions: |
+  A site is named after its hostname: `shop.example.com` is served from the file `shop.example.com.md`. An unknown hostname gets a 404 on purpose, so behind a wildcard a mistyped link never renders someone else's page.
 
+  Domains, two ways:
 
-  To create the first site, open https://<domain>/admin, log in with the admin user and the generated password under Credentials, and create a site named after the domain.
+  1. One name per site. Point each name's DNS at this server (an A record), and list the names under Extra domains, comma separated: `shop.example.com, cafe.example.com`. Each gets its own certificate. A new site needs a DNS record and an edit here.
+  2. Every subdomain at once. Point `*.example.com` at this server once (one wildcard A record), and put `*.example.com` under Extra domains. From then on a new site is one write_site call: no DNS change, no redeploy. The certificate is fetched on the site's first visit, and only for a name that Lobby actually has a site for, so nobody can make the hotel request certificates for names that do not exist. A wildcard covers one level: `shop.example.com`, not `a.shop.example.com`.
 
+  Behind Cloudflare with the orange cloud, its free certificate also covers only one level below the zone, and its Browser Integrity Check blocks some agents' HTTP clients. With DNS only (grey cloud) this server answers directly.
+
+  The Domain field is the Lobby's own name, where /admin and /mcp live. Create the first site there: open https://<domain>/admin, log in with the admin user and the generated password under Credentials, and create a site named after the domain.
 
   Agents use https://<domain>/mcp with the generated API token as `Authorization: Bearer <token>`. The tools are list_sites, read_site, write_site, delete_site and list_themes.
-
-
-  More sites on the same Lobby: add each hostname under Extra domains. With a wildcard route, a new site is one write_site call and needs no DNS change.
-
-  '
 tags:
 - landing pages
 - markdown
@@ -50,6 +51,11 @@ deploy:
   port: 8080
   healthcheck: /healthz
   env:
+  - key: DOMAIN_ALIASES
+    label: Extra domains
+    type: text
+    placeholder: '*.example.com  or  shop.example.com, cafe.example.com'
+    description: The sites' hostnames, comma separated, or one wildcard like *.example.com for every subdomain. Point their DNS at this server first; the instructions explain both ways
   - key: LOBBY_ADMIN_USER
     label: Admin username
     type: text

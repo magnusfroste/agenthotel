@@ -32,6 +32,7 @@ const { sendNotification, anyChannelConfigured } = require('./lib/notify');
 const { listTemplates, getTemplate, saveTemplate, deleteTemplate, materializeDeploy } = require('./lib/templates');
 const { caddyFetch, caddySet } = require('./lib/caddyAdmin');
 const { buildGuestRoute } = require('./lib/guestRoute');
+const onDemandTls = require('./lib/onDemandTls');
 const { evaluateHealth } = require('./lib/agentHealth');
 const deploys = require('./lib/deploysInFlight');
 const { execFile, execFileSync, spawn } = require('child_process');
@@ -64,6 +65,40 @@ function rateLimitSetting(key, fallback) {
     return fallback; // settings table not ready yet (first boot)
   }
 }
+
+// Caddy asks here before it gets a certificate for a name under a guest's
+// wildcard (lib/onDemandTls.js). Outside /api on purpose: the panel's public
+// route forwards only /api/* and /mcp to this process, so the one way in is
+// Caddy's own loopback server. 200 means yes, anything else means no.
+app.get(onDemandTls.ASK_PATH, async (req, res) => {
+  const host = String(req.query.domain || '');
+  try {
+    const guests = [];
+    for (const agent of db.prepare("SELECT id, domain, port, runtime, config FROM agents WHERE domain IS NOT NULL AND domain != ''").all()) {
+      let config = {};
+      try { config = JSON.parse(agent.config || '{}'); } catch (e) { continue; }
+      const wildcards = parseDomainAliases(config, agent.domain).filter(h => h.startsWith('*.'));
+      if (wildcards.length) guests.push({ ...agent, config, wildcards });
+    }
+    const guest = onDemandTls.guestForHost(host, guests);
+    if (!guest) return res.status(403).end();
+    const plugin = runtimes[guest.runtime];
+    let container = `agenthotel-${guest.id}`;
+    let port = guest.port || plugin?.defaultPort;
+    if (composeManaged(guest.runtime) && typeof plugin?.routeTarget === 'function') {
+      const target = plugin.routeTarget(guest.id, guest.config);
+      if (!target) return res.status(403).end();
+      container = target.container;
+      port = target.port;
+    }
+    const serves = await onDemandTls.guestServes(host, container, port);
+    if (serves) console.log(`[TLS] On-demand certificate allowed for ${host} (${guest.id})`);
+    res.status(serves ? 200 : 403).end();
+  } catch (err) {
+    console.error(`[TLS] Ask for ${host} failed: ${err.message}`);
+    res.status(403).end();
+  }
+});
 
 // The general ceiling. Counted per address across the API, skipping the login
 // route, which has its own and stricter rule below.
@@ -2744,6 +2779,7 @@ async function addCaddyRoute(domain, containerName, port, layout = null) {
   // deployed in. Hosts are unique, so the order among specific routes is
   // irrelevant.
   const isWildcard = domain.startsWith('*.');
+  if (isWildcard) await ensureWildcardTls(domain);
   const endpoint = isWildcard
     ? `${caddyApiUrl}/config/apps/http/servers/srv0/routes`
     : `${caddyApiUrl}/config/apps/http/servers/srv0/routes/0`;
@@ -2926,6 +2962,38 @@ async function removeAgentRoutes(agent) {
   }
 }
 
+// The on-demand side of a wildcard route (lib/onDemandTls.js): the loopback
+// server Caddy asks through, where it asks, and this wildcard's TLS policy at
+// the front of the list. All three live in Caddy's memory like the routes, so
+// they are set whenever a wildcard route is, which is also how they come back
+// after a Caddy restart (reconcileAgentRoutes re-adds the route).
+async function ensureWildcardTls(wildcard) {
+  const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
+  const steps = [
+    ['ask server', () => caddySet(`${caddyApiUrl}/config/apps/http/servers/tlsask`, onDemandTls.askServer(BACKEND_DIAL))],
+    ['on-demand check', () => caddySet(`${caddyApiUrl}/config/apps/tls/automation/on_demand`, onDemandTls.onDemandConfig())],
+    // Replaced in place when it exists, never removed and re-added: in the gap
+    // a wildcard route with no on-demand policy makes Caddy try to get a
+    // certificate for the wildcard itself, which HTTP-01 cannot (seen in a
+    // scratch Caddy, 2026-11-11).
+    ['policy', async () => {
+      const email = db.prepare('SELECT value FROM settings WHERE key = ?').get('caddy_email')?.value || '';
+      const body = JSON.stringify(onDemandTls.policyFor(wildcard, email));
+      const byId = `${caddyApiUrl}/id/${encodeURIComponent(onDemandTls.policyId(wildcard))}`;
+      const existing = await caddyFetch(byId);
+      return existing.ok
+        ? caddyFetch(byId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body })
+        : caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies/0`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+    }]
+  ];
+  for (const [what, step] of steps) {
+    const res = await step();
+    if (!res.ok) {
+      throw new Error(`Could not set up certificates for ${wildcard} (${what}): ${res.status} ${(await res.text()).slice(0, 160)}`);
+    }
+  }
+}
+
 async function removeCaddyRoute(domain) {
   const caddyApiUrl = process.env.CADDY_API_URL || 'http://caddy:2019';
   const fetch = require('node-fetch');
@@ -2935,6 +3003,11 @@ async function removeCaddyRoute(domain) {
   // route outlived its agent.
   if (!res.ok && res.status !== 404) {
     throw new Error(`Caddy refused to remove the route for ${domain}: ${res.status} ${(await res.text()).slice(0, 160)}`);
+  }
+  // After the route, never before: a wildcard route without its on-demand
+  // policy makes Caddy try a certificate for the wildcard itself.
+  if (domain.startsWith('*.')) {
+    await caddyFetch(`${caddyApiUrl}/id/${encodeURIComponent(onDemandTls.policyId(domain))}`, { method: 'DELETE' }).catch(() => {});
   }
 }
 
@@ -2964,6 +3037,22 @@ async function removeUnownedRoutes() {
       removed++;
       console.log(`[Caddy] Removed route ${id} — no agent owns ${hosts.join(', ')}`);
       logEvent('route.orphan', null, `Removed a route no agent owns: ${hosts.join(', ')}`);
+    }
+  }
+
+  // A wildcard's on-demand TLS policy goes with its route. One left behind
+  // would keep asking the panel about names no guest serves; the ask says no,
+  // but the policy has no reason to stay.
+  const polRes = await caddyFetch(`${caddyApiUrl}/config/apps/tls/automation/policies`).catch(() => null);
+  if (polRes && polRes.ok) {
+    const policies = (await polRes.json()) || [];
+    for (const p of policies) {
+      const id = p && p['@id'];
+      if (!id || !id.startsWith(onDemandTls.POLICY_ID_PREFIX)) continue;
+      const wildcard = id.slice(onDemandTls.POLICY_ID_PREFIX.length);
+      if (owned.includes(wildcard)) continue;
+      const del = await caddyFetch(`${caddyApiUrl}/id/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (del.ok) console.log(`[Caddy] Removed the on-demand TLS policy for ${wildcard} — no agent owns it`);
     }
   }
   return removed;
