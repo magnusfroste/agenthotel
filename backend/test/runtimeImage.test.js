@@ -38,6 +38,21 @@ test('the registry is asked once per six hours per image', async () => {
   assert.strictEqual(calls, 2, 'after six hours: asked again');
 });
 
+test('a rebuild that pulled the new base clears the marker at once, not six hours later', async () => {
+  upstreamCache.clear();
+  let calls = 0;
+  let pulled = 'sha256:old';
+  const docker = { getImage: () => ({
+    inspect: async () => ({ RepoDigests: [`z@${pulled}`] }),
+    distribution: async () => { calls++; return { Descriptor: { digest: 'sha256:new' } }; }
+  }) };
+  const t0 = Date.parse('2026-11-11T00:00:00Z');
+  assert.strictEqual((await upstreamStatus(docker, 'z:latest', t0)).newer, true);
+  pulled = 'sha256:new'; // the rebuild's pull
+  assert.strictEqual((await upstreamStatus(docker, 'z:latest', t0 + 60 * 1000)).newer, false);
+  assert.strictEqual(calls, 1, 'the registry is still asked only once');
+});
+
 test('a failed registry lookup is retried within minutes, not hours', async () => {
   upstreamCache.clear();
   let calls = 0;

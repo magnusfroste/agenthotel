@@ -52,22 +52,17 @@ function upstreamIsNewer(localDigests, remoteDigest) {
 }
 
 // Registry answers are cached: Docker Hub rate-limits anonymous manifest
-// requests, and a newer Hermes is not news by the minute.
+// requests, and a newer Hermes is not news by the minute. Only the registry's
+// answer is cached, never the verdict: the local side is read every time. A
+// rebuild pulls the new base, and the agents it rebuilt kept "a newer version
+// is published upstream" for up to six hours after, while the deploy log said
+// the base was up to date (david, 2026-11-11).
 const UPSTREAM_TTL_MS = 6 * 60 * 60 * 1000;
-const upstreamCache = new Map(); // base image → { at, value }
+const upstreamCache = new Map(); // base image → { at, remote, error, checkedAt }
 
-async function upstreamStatus(docker, baseImage, now = Date.now()) {
+async function remoteDigest(docker, baseImage, now) {
   const hit = upstreamCache.get(baseImage);
-  if (hit && now - hit.at < UPSTREAM_TTL_MS) return hit.value;
-
-  let local = [];
-  let pulledAt = null;
-  try {
-    const info = await docker.getImage(baseImage).inspect();
-    local = digestsOf(info.RepoDigests);
-    pulledAt = info.Created || null;
-  } catch (e) { /* never pulled here */ }
-
+  if (hit && now - hit.at < UPSTREAM_TTL_MS) return hit;
   let remote = null;
   let error = null;
   try {
@@ -76,10 +71,23 @@ async function upstreamStatus(docker, baseImage, now = Date.now()) {
   } catch (e) {
     error = e.message;
   }
-  const value = { baseImage, newer: upstreamIsNewer(local, remote), baseCreated: pulledAt, checkedAt: new Date(now).toISOString(), error };
   // A failed lookup is cached briefly, so a registry outage is retried soon.
-  upstreamCache.set(baseImage, { at: error ? now - UPSTREAM_TTL_MS + 10 * 60 * 1000 : now, value });
-  return value;
+  const entry = { at: error ? now - UPSTREAM_TTL_MS + 10 * 60 * 1000 : now, remote, error, checkedAt: new Date(now).toISOString() };
+  upstreamCache.set(baseImage, entry);
+  return entry;
+}
+
+async function upstreamStatus(docker, baseImage, now = Date.now()) {
+  let local = [];
+  let pulledAt = null;
+  try {
+    const info = await docker.getImage(baseImage).inspect();
+    local = digestsOf(info.RepoDigests);
+    pulledAt = info.Created || null;
+  } catch (e) { /* never pulled here */ }
+
+  const { remote, error, checkedAt } = await remoteDigest(docker, baseImage, now);
+  return { baseImage, newer: upstreamIsNewer(local, remote), baseCreated: pulledAt, checkedAt, error };
 }
 
 // The version a runtime reports, per image: an image does not change its
