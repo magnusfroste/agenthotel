@@ -109,6 +109,42 @@ function summarize(id, plugin) {
   };
 }
 
+// A template whose guests are a place in the hotel: a service other guests use
+// through the reception (lib/reception.js). `mcp` is the path of its MCP
+// endpoint on its own port, and `tokenEnv` names the variable holding the token
+// that endpoint accepts. The name, never the value: the reception reads it from
+// the deployed guest, so two Lobbies have two tokens and the template has none.
+//
+//   place:
+//     mcp: /mcp
+//     auth: bearer          # bearer (default) | header | none
+//     tokenEnv: LOBBY_API_TOKEN
+//     header: X-API-Key     # only with auth: header
+//
+// A path, never a URL: the reception calls a place where the panel routes that
+// guest and nowhere else.
+const PLACE_HEADER_RESERVED = ['accept', 'content-type', 'content-length', 'host', 'connection', 'mcp-session-id', 'mcp-protocol-version', 'x-hotel-guest'];
+
+function normalizePlace(place) {
+  if (!place || typeof place !== 'object' || Array.isArray(place)) return null;
+  const mcp = text(place.mcp) || '/mcp';
+  if (!/^\/[A-Za-z0-9._~\/-]{0,199}$/.test(mcp) || mcp.includes('//') || mcp.includes('..')) return null;
+  const auth = text(place.auth) || 'bearer';
+  if (!['bearer', 'header', 'none'].includes(auth)) return null;
+  const out = { mcp, auth };
+  if (auth !== 'none') {
+    const tokenEnv = text(place.tokenEnv);
+    if (!tokenEnv || !/^[A-Z_][A-Z0-9_]*$/.test(tokenEnv)) return null;
+    out.tokenEnv = tokenEnv;
+  }
+  if (auth === 'header') {
+    const header = text(place.header);
+    if (!header || !/^[A-Za-z0-9-]{1,64}$/.test(header) || PLACE_HEADER_RESERVED.includes(header.toLowerCase())) return null;
+    out.header = header;
+  }
+  return out;
+}
+
 // A custom template carries its own deploy recipe instead of being backed by a
 // plugin. `deploy.runtime` names the EXISTING runtime that performs the work —
 // docker-app for a single image, compose for a stack, git-app and git-compose
@@ -373,7 +409,8 @@ function getTemplate(id, runtimes) {
       links: list(meta.links),
       changeLog: list(meta.changeLog),
       configFields: deploy ? deploy.env : [],
-      deploy
+      deploy,
+      place: normalizePlace(meta.place)
     };
   }
   const meta = loadMeta(id) || {};
@@ -409,6 +446,13 @@ function saveTemplate(spec, runtimes, source = 'custom') {
     throw new Error('deploy must set runtime to "docker-app" (with image), "compose" (with compose), or "git-app" / "git-compose" (with repo)');
   }
 
+  // Said and wrong is refused; a place that silently was not one would only
+  // show as a guest that never appears in the guide.
+  const place = spec.place === undefined || spec.place === null ? null : normalizePlace(spec.place);
+  if (spec.place && !place) {
+    throw new Error('place must set mcp to a path like "/mcp", auth to "bearer", "header" or "none", and tokenEnv to the variable holding the token (plus header with auth "header")');
+  }
+
   const doc = {
     name,
     category: text(spec.category) || 'Custom',
@@ -422,6 +466,7 @@ function saveTemplate(spec, runtimes, source = 'custom') {
     links: list(spec.links).filter(l => l && text(l.url)).map(l => ({ label: text(l.label) || text(l.url), url: text(l.url) })),
     deploy
   };
+  if (place) doc.place = place;
 
   const dir = path.join(CUSTOM_DIR, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -443,5 +488,5 @@ function deleteTemplate(id) {
 
 module.exports = {
   listTemplates, getTemplate, saveTemplate, deleteTemplate,
-  normalizeDeploy, materializeDeploy, ID_RE, CUSTOM_DIR, metaPath
+  normalizeDeploy, normalizePlace, materializeDeploy, ID_RE, CUSTOM_DIR, metaPath
 };
