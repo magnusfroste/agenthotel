@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send } from 'lucide-react'
+import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send, ConciergeBell } from 'lucide-react'
 
 // Each card saves only its own keys. One form for everything meant that a
 // changed Telegram chat id re-sent the panel domain too — and the backend, seeing
@@ -8,8 +8,8 @@ import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send } from 'l
 // whatever had actually changed. Fields nobody reads were removed rather than
 // kept as decoration: a switch connected to nothing is worse than no switch.
 //
-// What is left here is the hotel's own: the API rate limit and where its
-// alerts go. It sits in the sidebar with the rest
+// What is left here is the hotel's own: the API rate limit, whether guests are
+// given the reception, and where its alerts go. It sits in the sidebar with the rest
 // of the infrastructure; the account menu is only you, and how long your
 // sign-in lasts is on Profile. Settings that belong to one page live there: the
 // panel domain on Domains, the certificate e-mail on Certificates, the Docker
@@ -18,6 +18,10 @@ const SECTIONS = [
   {
     id: 'security', title: 'Security', icon: Shield, color: '#f59e0b',
     keys: ['rate_limit_enabled', 'rate_limit_requests'],
+  },
+  {
+    id: 'reception', title: 'Reception', icon: ConciergeBell, color: '#0ea5e9',
+    keys: ['reception_enabled'],
   },
   {
     id: 'notifications', title: 'Notifications', icon: Bell, color: '#8b5cf6',
@@ -172,7 +176,7 @@ function Settings() {
     )
   }
 
-  const [security, notifications] = SECTIONS
+  const [security, reception, notifications] = SECTIONS
 
   return (
     <div>
@@ -200,6 +204,18 @@ function Settings() {
         </div>
         {settings.rate_limit_enabled === 'true' && field({ name: 'rate_limit_requests', label: 'Requests per minute', type: 'number', fallback: '600',
           help: 'Generous on purpose: the dashboard polls stats every few seconds per open tab. This catches a runaway script, not a person.' })}
+      </>)}
+
+      {card(reception, <>
+        <div style={formGroupStyle}>
+          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <input type="checkbox" name="reception_enabled" checked={settings.reception_enabled !== 'false'} onChange={handleChange} style={{ width: 'auto', cursor: 'pointer' }} />
+            Give guests the reception
+          </label>
+          <div style={helpTextStyle}>
+            Every Hermes guest gets one MCP server, <code>hotel</code>, at its next deploy. Through it the guest sees the places this hotel runs (a template that declares itself a place, such as Lobby) and uses them without holding their tokens: the reception keeps those and makes the call. Each use is noted in Recent Activity: who, where and which tool, never what was sent. Off closes it for everyone at once, and a guest loses the entry at its next redeploy.
+          </div>
+        </div>
       </>)}
 
       {card(notifications, <>
