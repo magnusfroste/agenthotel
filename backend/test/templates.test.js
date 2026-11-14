@@ -3,7 +3,7 @@
 // "Unknown runtime".
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { normalizeDeploy, materializeDeploy } = require('../lib/templates');
+const { normalizeDeploy, normalizePlace, materializeDeploy } = require('../lib/templates');
 
 test('a git-compose template keeps the repository, not just the compose file', () => {
   // A compose file that mounts its own repo's files cannot be carried as text.
@@ -197,4 +197,35 @@ test('every template in the library that is not an agent itself says how an agen
     if (!String(meta.agentUse || '').trim()) missing.push(id);
   }
   assert.deepStrictEqual(missing, []);
+});
+
+test('a place is a path and the name of a variable, never an address or a token', () => {
+  assert.deepStrictEqual(normalizePlace({ tokenEnv: 'LOBBY_API_TOKEN' }), { mcp: '/mcp', auth: 'bearer', tokenEnv: 'LOBBY_API_TOKEN' });
+  assert.deepStrictEqual(normalizePlace({ mcp: '/api/mcp', auth: 'header', header: 'X-API-Key', tokenEnv: 'PAGES_KEY' }),
+    { mcp: '/api/mcp', auth: 'header', tokenEnv: 'PAGES_KEY', header: 'X-API-Key' });
+  assert.deepStrictEqual(normalizePlace({ auth: 'none' }), { mcp: '/mcp', auth: 'none' });
+  for (const bad of [
+    null, 'lobby', [],
+    { mcp: 'http://169.254.169.254/latest', tokenEnv: 'T' },   // a URL would let a template aim the hotel's token anywhere
+    { mcp: '//evil.example/mcp', tokenEnv: 'T' },
+    { mcp: '/a/../../admin', tokenEnv: 'T' },
+    { mcp: '/mcp?x=1', tokenEnv: 'T' },
+    { mcp: '/mcp' },                                            // bearer with nothing to send
+    { tokenEnv: 'sk-live-not-a-name' },                         // a value where a name belongs
+    { auth: 'basic', tokenEnv: 'T' },
+    { auth: 'header', tokenEnv: 'T' },                          // which header?
+    { auth: 'header', tokenEnv: 'T', header: 'X-Hotel-Guest' }, // the reception's own
+    { auth: 'header', tokenEnv: 'T', header: 'Host' },
+    { auth: 'header', tokenEnv: 'T', header: 'X Bad\r\nInjected: 1' }
+  ]) assert.strictEqual(normalizePlace(bad), null, JSON.stringify(bad));
+});
+
+test('the lobby template is a place: its MCP path and the variable its token is in', () => {
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/lobby/meta.yaml'), 'utf8'));
+  assert.deepStrictEqual(normalizePlace(meta.place), { mcp: '/mcp', auth: 'bearer', tokenEnv: 'LOBBY_API_TOKEN' });
+  // The variable it names is one the template itself generates.
+  const { config } = materializeDeploy(normalizeDeploy(meta.deploy), { DOMAIN: 'lobby.example.eu', AGENT_NAME: 'lobby' });
+  assert.ok(config.LOBBY_API_TOKEN && config.LOBBY_API_TOKEN.length >= 32);
+  assert.match(meta.agentUse, /reception/);
 });

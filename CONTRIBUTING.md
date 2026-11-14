@@ -48,6 +48,12 @@ on the template's page, and a test fails if a template leaves it out. Two
 sentences are enough: the address (`https://<domain>/mcp`), where the key comes
 from (Credentials), and what the agent can then do.
 
+A tool that speaks MCP and takes one token can also declare itself a place,
+with a `place:` block in `meta.yaml` (the MCP path and the name of the config
+key that holds its token). Guests of the same hotel then find it through the
+reception, with no address or key of their own. See *The reception* in
+`docs/MANUAL.md`.
+
 Anything else (a dashboard only people use, a game server) still runs in a
 hotel as a Docker App, Git App or Compose guest. It does not need a template.
 

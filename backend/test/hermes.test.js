@@ -29,6 +29,26 @@ test('an explicit header wins over the default', () => {
   assert.match(block, /Accept: "text\/plain"/);
 });
 
+test('one MCP entry is the same text whether it stands alone or in the block', () => {
+  // The reception's entry (lib/reception.js) is written on its own, into the
+  // block a guest already has.
+  const spec = { url: 'http://agenthotel-backend:8090/reception', headers: { Authorization: 'Bearer k' } };
+  const entry = hermes.generateMcpEntry('hotel', spec);
+  assert.strictEqual(entry, [
+    '  hotel:',
+    '    url: "http://agenthotel-backend:8090/reception"',
+    '    headers:',
+    '      Accept: "application/json, text/event-stream"',
+    '      Authorization: "Bearer k"',
+    '    enabled: true',
+    '    timeout: 120',
+    ''
+  ].join('\n'));
+  assert.strictEqual(hermes.generateMcpBlock({ MCP_SERVERS: JSON.stringify({ hotel: spec }) }), 'mcp_servers:\n' + entry);
+  assert.strictEqual(hermes.generateMcpEntry('hotel', {}), null);
+  assert.strictEqual(hermes.generateMcpEntry('hotel', null), null);
+});
+
 test('malformed MCP_SERVERS costs the tools, not the deploy', () => {
   assert.strictEqual(hermes.generateMcpBlock({ MCP_SERVERS: '{not json' }), null);
   assert.strictEqual(hermes.generateMcpBlock({}), null);

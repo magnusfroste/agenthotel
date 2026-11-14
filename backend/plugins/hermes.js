@@ -496,6 +496,28 @@ module.exports = {
   // it was talking to. The tail keeps the exec's output small on a busy agent.
   modelErrorsCommand: "grep -hE 'agent\\.conversation_loop: (\\[subagent-[0-9]+\\] )?(Non-retryable client error|API call failed after)|base_url=' /opt/data/logs/agent.log 2>/dev/null | tail -n 400",
 
+  // One server's entry in that block, indented to sit under mcp_servers:. Also
+  // used on its own for the reception (lib/reception.js), which is written into
+  // the block a guest already has instead of replacing it.
+  generateMcpEntry(name, spec) {
+    if (!spec || typeof spec !== 'object' || !spec.url) return null;
+    const quote = (v) => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    const lines = [`  ${name}:`, `    url: ${quote(spec.url)}`];
+    // Streamable HTTP servers answer 406 unless the request accepts both media
+    // types — Supabase's own MCP server does, and hermes sends only
+    // application/json, then falls back to SSE that may not exist. The failure
+    // is one warning among hundreds and the server simply never connects.
+    // Right for every MCP server, wrong for none, so it is the default rather
+    // than something each operator has to discover.
+    const headers = { Accept: 'application/json, text/event-stream', ...(spec.headers || {}) };
+    lines.push('    headers:');
+    for (const [h, v] of Object.entries(headers)) lines.push(`      ${h}: ${quote(v)}`);
+    if (spec.transport) lines.push(`    transport: ${quote(spec.transport)}`);
+    lines.push(`    enabled: ${spec.enabled === false ? 'false' : 'true'}`);
+    lines.push(`    timeout: ${parseInt(spec.timeout) || 120}`);
+    return lines.join('\n') + '\n';
+  },
+
   generateMcpBlock(config) {
     const raw = String(config.MCP_SERVERS || '').trim();
     if (!raw) return null;
@@ -508,26 +530,10 @@ module.exports = {
     }
     if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return null;
 
-    const quote = (v) => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
     const lines = ['mcp_servers:'];
     for (const [name, spec] of Object.entries(servers)) {
-      if (!spec || typeof spec !== 'object' || !spec.url) continue;
-      lines.push(`  ${name}:`);
-      lines.push(`    url: ${quote(spec.url)}`);
-      // Streamable HTTP servers answer 406 unless the request accepts both media
-      // types — Supabase's own MCP server does, and hermes sends only
-      // application/json, then falls back to SSE that may not exist. The failure
-      // is one warning among hundreds and the server simply never connects.
-      // Right for every MCP server, wrong for none, so it is the default rather
-      // than something each operator has to discover.
-      const headers = { Accept: 'application/json, text/event-stream', ...(spec.headers || {}) };
-      if (Object.keys(headers).length) {
-        lines.push('    headers:');
-        for (const [h, v] of Object.entries(headers)) lines.push(`      ${h}: ${quote(v)}`);
-      }
-      if (spec.transport) lines.push(`    transport: ${quote(spec.transport)}`);
-      lines.push(`    enabled: ${spec.enabled === false ? 'false' : 'true'}`);
-      lines.push(`    timeout: ${parseInt(spec.timeout) || 120}`);
+      const entry = this.generateMcpEntry(name, spec);
+      if (entry) lines.push(entry.replace(/\n$/, ''));
     }
     return lines.length > 1 ? lines.join('\n') + '\n' : null;
   },

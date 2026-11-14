@@ -200,6 +200,46 @@ worth stating plainly, though it does not lower the existing bar — the panel
 already holds the Docker socket and is root-equivalent, so panel access is the
 security boundary either way.
 
+### The reception: what every guest knows from check-in
+
+Some guests are places other guests use: Lobby hosts their landing pages. A
+guest does not need an address or a token for them. Every Hermes guest is given
+one MCP server at deploy, `hotel`, and asks there:
+
+- `hotel_guide` lists the places in this hotel and what each is for.
+- `place_tools` gives one place's own instructions and tools.
+- `use_place` calls a tool. The reception adds the place's token; the guest
+  never sees it.
+
+So "make a landing page for the launch" is enough of a task: the agent finds
+Lobby in the guide. Deploying a place later needs nothing on the agents' side,
+since the guide is read when it is asked for.
+
+What to know as the operator:
+
+- **A guest gets `hotel` at its next deploy.** Guests that were running before
+  the reception keep running without it until you redeploy them.
+- **`hotel` is the reception's name.** An MCP server you added under that name
+  in a guest's own config is replaced. Servers under other names are left alone.
+- **Every guest can use every place**, with whatever the place's token allows:
+  a guest can overwrite a page another guest wrote in Lobby. Turn the reception
+  off under Settings → Reception if your guests should not share places, and
+  redeploy them to take the entry out.
+- **Activity** shows who used which place: one line per guest and place per
+  minute, with the tools called and how many failed. What was sent is not logged.
+- The reception answers only inside the hotel's Docker network, on port 8090 of
+  the panel's backend. It is not reachable from the internet and is separate
+  from the panel's API.
+
+A template becomes a place by saying so in its `meta.yaml`:
+
+```yaml
+place:
+  mcp: /mcp                  # path on the guest, never a URL
+  auth: bearer               # bearer | header | none
+  tokenEnv: LOBBY_API_TOKEN  # the config key that holds the token
+```
+
 ### Handing an agent an external MCP tool
 
 Agents given a remote MCP endpoint will often write their own client for it from

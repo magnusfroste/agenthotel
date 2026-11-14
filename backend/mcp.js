@@ -276,6 +276,16 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
               }
             },
             required: ['runtime']
+          },
+          place: {
+            type: 'object',
+            description: 'Only for a service other guests should use through the reception: where its MCP endpoint is and which variable holds its token. Every guest then finds it in hotel_guide',
+            properties: {
+              mcp: { type: 'string', description: 'Path of the MCP endpoint on the guest\'s own port, e.g. "/mcp"' },
+              auth: { type: 'string', description: '"bearer" (default), "header" or "none"' },
+              tokenEnv: { type: 'string', description: 'Name of the env variable holding the token, e.g. "LOBBY_API_TOKEN"' },
+              header: { type: 'string', description: 'Header that carries the token, with auth "header"' }
+            }
           }
         },
         required: ['id', 'name', 'deploy']

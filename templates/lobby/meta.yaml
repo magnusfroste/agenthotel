@@ -7,7 +7,7 @@ description: 'A web hotel for landing pages. One container serves many domains, 
 
   '
 agentUse: |
-  Over MCP at https://<domain>/mcp, with the API token under Credentials. An agent writes a whole landing page with one write_site call; behind a wildcard (*.example.com under Extra domains) a new site needs no DNS change and gets its certificate on its first visit.
+  A guest of the same hotel reaches it through the reception, the `hotel` MCP server it was given at check-in: no address and no token of its own. An agent anywhere else uses MCP at https://<domain>/mcp, with the API token under Credentials. Either way an agent writes a whole landing page with one write_site call; behind a wildcard (*.example.com under Extra domains) a new site needs no DNS change and gets its certificate on its first visit.
 instructions: |
   A site is named after its hostname: `shop.example.com` is served from the file `shop.example.com.md`. An unknown hostname gets a 404 on purpose, so behind a wildcard a mistyped link never renders someone else's page.
 
@@ -20,7 +20,7 @@ instructions: |
 
   The Domain field is the Lobby's own name, where /admin and /mcp live. Create the first site there: open https://<domain>/admin, log in with the admin user and the generated password under Credentials, and create a site named after the domain.
 
-  Agents use https://<domain>/mcp with the generated API token as `Authorization: Bearer <token>`. The tools are list_sites, read_site, write_site, delete_site and list_themes.
+  Agents use https://<domain>/mcp with the generated API token as `Authorization: Bearer <token>`. The server describes itself: describe_format gives the page format, check_site says what is wrong with a page before it is published, and list_sites, read_site, write_site, delete_site and list_themes do the rest.
 tags:
 - landing pages
 - markdown
@@ -44,6 +44,10 @@ features:
   description: Atomic writes with a content version, so a stale save is refused instead of silently winning
 - title: Themes and blocks
   description: '::directive{attr} blocks for hero, features, FAQ and more'
+place:
+  mcp: /mcp
+  auth: bearer
+  tokenEnv: LOBBY_API_TOKEN
 deploy:
   runtime: git-app
   repo: https://github.com/magnusfroste/agentlobby

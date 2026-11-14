@@ -15,11 +15,11 @@ for (const p of ['python3', 'python']) {
   try { execFileSync(p, ['--version'], { stdio: 'ignore' }); python = p; break; } catch (e) { /* next */ }
 }
 
-function patch(text, modelBlock, mcpBlock = null, cwd = '', webapp = null) {
+function patch(text, modelBlock, mcpBlock = null, cwd = '', webapp = null, hotel = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-'));
   const file = path.join(dir, 'config.yaml');
   fs.writeFileSync(file, text);
-  execFileSync(python, ['-c', buildPatchScript(modelBlock, mcpBlock, cwd, webapp), file]);
+  execFileSync(python, ['-c', buildPatchScript(modelBlock, mcpBlock, cwd, webapp, hotel), file]);
   return fs.readFileSync(file, 'utf8');
 }
 
@@ -112,4 +112,86 @@ test('patching twice is patching once', { skip: !python && 'no python3' }, () =>
 test('terminal.cwd is set in place, its siblings untouched', { skip: !python && 'no python3' }, () => {
   const parsed = yaml.load(patch(WRITTEN_BY_HERMES, NEW_BLOCK, null, '/opt/data/workspace'));
   assert.deepStrictEqual(parsed.terminal, { backend: 'local', timeout: 180, cwd: '/opt/data/workspace' });
+});
+
+// The reception: one entry the panel writes into whatever mcp_servers: block the
+// guest has, so the servers an operator added inside hermes are not lost.
+const RECEPTION = 'http://agenthotel-backend:8090/reception';
+const hotelEntry = (key) => `  hotel:\n    url: "${RECEPTION}"\n    headers:\n      Authorization: "Bearer ${key}"\n    enabled: true\n    timeout: 120\n`;
+const HOTEL = { name: 'hotel', mark: RECEPTION, entry: hotelEntry('key-1') };
+const HOTEL_OFF = { name: 'hotel', mark: RECEPTION, entry: '' };
+
+test('the reception is added beside the servers a guest already has', { skip: !python && 'no python3' }, () => {
+  const out = patch(WRITTEN_BY_HERMES, null, null, '', null, HOTEL);
+  const parsed = yaml.load(out);
+  assert.deepStrictEqual(Object.keys(parsed.mcp_servers), ['hotel', 'reel-studio']);
+  assert.deepStrictEqual(parsed.mcp_servers['reel-studio'], { url: 'https://reel.example/mcp', enabled: true });
+  assert.strictEqual(parsed.mcp_servers.hotel.url, RECEPTION);
+  assert.strictEqual(parsed.model.provider, 'garageai', 'nothing else moved');
+  assert.strictEqual(patch(out, null, null, '', null, HOTEL), out, 'and a second patch changes nothing');
+});
+
+test('a new room key replaces the old entry instead of adding a second', { skip: !python && 'no python3' }, () => {
+  const once = patch(WRITTEN_BY_HERMES, null, null, '', null, HOTEL);
+  const out = patch(once, null, null, '', null, { ...HOTEL, entry: hotelEntry('key-2') });
+  assert.strictEqual(out.match(/^  hotel:/gm).length, 1);
+  assert.strictEqual(yaml.load(out).mcp_servers.hotel.headers.Authorization, 'Bearer key-2');
+  assert.ok(!out.includes('key-1'));
+});
+
+test('a guest with no MCP servers gets the block, one with an empty one gets it filled', { skip: !python && 'no python3' }, () => {
+  const bare = yaml.load(patch('model:\n  provider: openai\nterminal:\n  timeout: 180\n', null, null, '', null, HOTEL));
+  assert.deepStrictEqual(Object.keys(bare.mcp_servers), ['hotel']);
+  assert.deepStrictEqual(bare.terminal, { timeout: 180 });
+  for (const empty of ['mcp_servers: {}', 'mcp_servers:', 'mcp_servers: null', 'mcp_servers: {}  # none yet']) {
+    const parsed = yaml.load(patch(`memory:\n  enabled: true\n${empty}\nterminal:\n  timeout: 180\n`, null, null, '', null, HOTEL));
+    assert.deepStrictEqual(Object.keys(parsed.mcp_servers), ['hotel'], empty);
+    assert.deepStrictEqual(parsed.terminal, { timeout: 180 }, empty);
+  }
+});
+
+test('a block indented deeper than the panel writes gets the entry at its own depth', { skip: !python && 'no python3' }, () => {
+  const deep = 'mcp_servers:\n    lobby:\n        url: "http://lobby/mcp"\n        headers:\n            Authorization: "Bearer x"\nterminal:\n  timeout: 180\n';
+  const parsed = yaml.load(patch(deep, null, null, '', null, HOTEL));
+  assert.deepStrictEqual(Object.keys(parsed.mcp_servers), ['hotel', 'lobby']);
+  assert.strictEqual(parsed.mcp_servers.hotel.headers.Authorization, 'Bearer key-1');
+  assert.strictEqual(parsed.mcp_servers.lobby.headers.Authorization, 'Bearer x');
+});
+
+test('the reception goes into the block the panel writes too', { skip: !python && 'no python3' }, () => {
+  const panel = 'mcp_servers:\n  supabase:\n    url: "https://example.com/mcp"\n    enabled: true\n';
+  const parsed = yaml.load(patch(WRITTEN_BY_HERMES, NEW_BLOCK, panel, '', null, HOTEL));
+  assert.deepStrictEqual(Object.keys(parsed.mcp_servers), ['hotel', 'supabase'], 'the panel\'s block replaced the old one, the reception joined it');
+  assert.strictEqual(parsed.model.provider, 'openai-api');
+});
+
+test('a closed reception is taken out, and only the reception', { skip: !python && 'no python3' }, () => {
+  const withHotel = patch(WRITTEN_BY_HERMES, null, null, '', null, HOTEL);
+  assert.strictEqual(patch(withHotel, null, null, '', null, HOTEL_OFF), WRITTEN_BY_HERMES, 'the file is as it was before the reception');
+
+  // The last server gone, the block goes too rather than standing empty.
+  const only = patch('terminal:\n  timeout: 180\n', null, null, '', null, HOTEL);
+  assert.strictEqual(patch(only, null, null, '', null, HOTEL_OFF), 'terminal:\n  timeout: 180\n');
+
+  // A server someone else named hotel is theirs: it does not point at the reception.
+  const theirs = 'mcp_servers:\n  hotel:\n    url: "https://booking.example/mcp"\n';
+  assert.strictEqual(patch(theirs, null, null, '', null, HOTEL_OFF), theirs);
+  assert.strictEqual(patch(WRITTEN_BY_HERMES, null, null, '', null, HOTEL_OFF), WRITTEN_BY_HERMES, 'nothing to take out is no change');
+});
+
+test('with the reception on, the name hotel is the reception\'s', { skip: !python && 'no python3' }, () => {
+  const theirs = 'mcp_servers:\n  hotel:\n    url: "https://booking.example/mcp"\n  other:\n    url: "https://o.example/mcp"\n';
+  const parsed = yaml.load(patch(theirs, null, null, '', null, HOTEL));
+  assert.strictEqual(parsed.mcp_servers.hotel.url, RECEPTION);
+  assert.strictEqual(parsed.mcp_servers.other.url, 'https://o.example/mcp');
+});
+
+test('a servers block written on one line is left alone rather than guessed at', { skip: !python && 'no python3' }, () => {
+  const inline = 'mcp_servers: {lobby: {url: "http://lobby/mcp"}}\nterminal:\n  timeout: 180\n';
+  assert.strictEqual(patch(inline, null, null, '', null, HOTEL), inline);
+});
+
+test('a name that is not a plain word is never written into the script', () => {
+  const script = buildPatchScript(null, null, '', null, { name: 'x"; import os #', mark: RECEPTION, entry: 'x' });
+  assert.ok(!script.includes('import os #'));
 });

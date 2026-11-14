@@ -490,6 +490,8 @@ app.get('/api/settings', requireAuth, (req, res) => {
   // the moment it has a domain; a protection that must be discovered and enabled
   // protects the installations that needed it least.
   if (!settings.rate_limit_enabled) settings.rate_limit_enabled = 'true';
+  // Open unless the operator closes it (lib/reception.js).
+  if (!settings.reception_enabled) settings.reception_enabled = 'true';
   // Generous, because the dashboard polls: stats every 5s per open agent tab,
   // uptime and the fleet list on top. This is a runaway-script ceiling, not the
   // brute-force defence — that one is on the login route and is much stricter.
@@ -1560,6 +1562,82 @@ function getSetting(key) {
 function putSetting(key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
+
+// ---- The reception (lib/reception.js) ----
+// The one MCP endpoint guests are given: what the hotel has, and a way to use
+// it without holding any place's token.
+//
+// It has a listener of its own, on the network guests share. The panel's API
+// is deliberately not on that network (see BACKEND_SOCKET below), and that
+// stays so: this server answers POST /reception and nothing else, and never
+// reaches the Express app. A guest that finds the port finds three tools that
+// want a room key.
+const receptionLib = require('./lib/reception');
+const RECEPTION_PORT = parseInt(process.env.RECEPTION_PORT) || 8090;
+// By container name, not the compose service name `backend`: a guest's own
+// stack on the same network may have a service called that.
+const RECEPTION_URL = process.env.RECEPTION_URL || `http://agenthotel-backend:${RECEPTION_PORT}/reception`;
+
+// A room key per guest, in a table of its own. Not in the guest's config: that
+// is exported, copied to a clone and shown in the panel, and a key in it would
+// follow. Kept in the clear, because it is written into the guest's MCP
+// settings again at every redeploy.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS reception_keys (
+    agent_id TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+// Keys of guests that have checked out, or whose check-in never finished.
+db.prepare('DELETE FROM reception_keys WHERE agent_id NOT IN (SELECT id FROM agents)').run();
+
+function hasRoomKey(agentId) {
+  return !!db.prepare('SELECT 1 FROM reception_keys WHERE agent_id = ?').get(agentId);
+}
+function roomKey(agentId) {
+  const row = db.prepare('SELECT key FROM reception_keys WHERE agent_id = ?').get(agentId);
+  if (row) return row.key;
+  const key = receptionLib.newRoomKey();
+  db.prepare('INSERT INTO reception_keys (agent_id, key) VALUES (?, ?)').run(agentId, key);
+  return key;
+}
+function receptionOn() {
+  return getSetting('reception_enabled') !== 'false';
+}
+
+// Where a guest listens, as the panel itself routes to it.
+function receptionTarget(agent) {
+  const plugin = runtimes[agent.runtime];
+  if (composeManaged(agent.runtime) && typeof plugin?.routeTarget === 'function') {
+    try { return plugin.routeTarget(agent.id, JSON.parse(agent.config || '{}')) || null; } catch (e) { return null; }
+  }
+  return { container: `agenthotel-${agent.id}`, port: agent.port || plugin?.defaultPort };
+}
+
+const receptionUses = receptionLib.createUseLog((guest, message) => logEvent('reception.use', guest.id, message));
+const reception = receptionLib.createReception({
+  enabled: receptionOn,
+  keys: () => db.prepare('SELECT agent_id, key FROM reception_keys').all(),
+  agents: () => db.prepare('SELECT * FROM agents').all(),
+  templateOf: id => { try { return getTemplate(id, runtimes); } catch (e) { return null; } },
+  targetOf: receptionTarget,
+  logUse: receptionUses.add,
+  hotelName: () => getSetting('panel_domain') || 'AgentHotel'
+});
+
+// What a guest's runtime writes into its MCP settings: the reception, with this
+// guest's key. With the reception closed, an instruction to take the entry back
+// from a guest that was given one. null when there is nothing to do.
+function receptionEntryFor(agentId, plugin) {
+  if (typeof plugin?.generateMcpEntry !== 'function') return null;
+  const name = receptionLib.SERVER_NAME;
+  if (!receptionOn()) return hasRoomKey(agentId) ? { name, mark: RECEPTION_URL, entry: '' } : null;
+  return {
+    name, mark: RECEPTION_URL,
+    entry: plugin.generateMcpEntry(name, { url: RECEPTION_URL, headers: { Authorization: `Bearer ${roomKey(agentId)}` } })
+  };
+}
 const backupSettings = () => backups.readSettings(getSetting);
 
 // Running containers that mount any of these volumes: what has to hold still
@@ -2606,13 +2684,16 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   const hermesWebapp = runtime === 'hermes' && plugin.generateWebappBlock
     ? plugin.generateWebappBlock(config, domain)
     : null;
+  // The reception: the hotel's own MCP server, with this guest's room key.
+  // Written into the mcp_servers block the guest has, beside whatever is there.
+  const hermesHotel = runtime === 'hermes' ? receptionEntryFor(id, plugin) : null;
   // Awaited, and each throws on a non-zero exit. Fire-and-forget with a
   // .catch that only logged meant a deploy reported "running" while the
   // agent had no model block, no MCP servers or no identity — visible only to
   // whoever read the backend log (found in review, 2026-09-19).
   if (hermesSoul) await patchHermesSoul(container, hermesSoul);
-  if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock || hermesWebapp) {
-    await patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock, hermesWebapp);
+  if (hermesModelBlock || hermesTerminalCwd || hermesMcpBlock || hermesWebapp || hermesHotel) {
+    await patchHermesConfig(container, hermesModelBlock, hermesTerminalCwd, hermesMcpBlock, hermesWebapp, hermesHotel);
   }
 }
 
@@ -2658,11 +2739,11 @@ open(path, 'w').write(text)
   console.log('[Hermes] SOUL.md updated');
 }
 
-async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock, webappBlock) {
+async function patchHermesConfig(container, modelBlock, terminalCwd, mcpBlock, webappBlock, hotel) {
   // Wait for the s6 init scripts to finish writing the baked config.
   await new Promise(r => setTimeout(r, 5000));
   const { buildPatchScript, gatewayRestartCommand } = require('./lib/hermesConfigPatch');
-  await execAndWait(container, ['python3', '-c', buildPatchScript(modelBlock, mcpBlock, terminalCwd, webappBlock)], 'config.yaml patch');
+  await execAndWait(container, ['python3', '-c', buildPatchScript(modelBlock, mcpBlock, terminalCwd, webappBlock, hotel)], 'config.yaml patch');
   const killExec = await container.exec({ Cmd: ['sh', '-c', gatewayRestartCommand()], AttachStdout: true, AttachStderr: true });
   const rs = await killExec.start({ Detach: true });
   rs.destroy();
@@ -2880,6 +2961,7 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
     await removeAgentRoutes(agent);
 
     db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
+    db.prepare('DELETE FROM reception_keys WHERE agent_id = ?').run(req.params.id);
     logEvent('agent.delete', req.params.id, `Deleted agent ${agent.name}`);
     res.json({ deleted: true });
   } catch (err) {
@@ -5903,10 +5985,20 @@ function listen(onReady) {
   });
 }
 
+// The reception's own door (see the reception section above): the only thing
+// this process answers on the network guests share.
+function listenReception() {
+  const server = require('http').createServer(reception.handle);
+  // A port that is taken costs the guests their guide, not the panel its API.
+  server.on('error', err => console.error(`[Reception] Not listening on ${RECEPTION_PORT}: ${err.message}`));
+  server.listen(RECEPTION_PORT, '0.0.0.0', () => console.log(`[Reception] Guests reach the reception at ${RECEPTION_URL}`));
+}
+
 listen(async () => {
   console.log(BACKEND_SOCKET
     ? `AgentHotel backend listening on ${BACKEND_SOCKET} (and 127.0.0.1:${PORT} inside its container)`
     : `AgentHotel backend running on port ${PORT}`);
+  listenReception();
   hostExecAvailable(); // probe + log host exec availability at startup
   if (!isSetup()) {
     const code = setupCode.ensure(db, SETUP_CODE_FILE);
