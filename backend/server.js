@@ -982,6 +982,55 @@ app.get('/api/system/stats', requireAuth, async (req, res) => {
   }
 });
 
+// Who is using the CPU and the memory right now, per guest, with a few
+// minutes of history (lib/activity.js). The sampler runs only while the
+// Fleet's Activity view is open.
+let panelProjectName;
+async function panelProject() {
+  if (panelProjectName !== undefined) return panelProjectName;
+  try {
+    const info = await docker.getContainer(os.hostname()).inspect();
+    panelProjectName = (info.Config?.Labels || {})['com.docker.compose.project'] || null;
+  } catch (_) {
+    panelProjectName = null;
+  }
+  return panelProjectName;
+}
+
+const activity = require('./lib/activity').createActivity({
+  docker,
+  context: async () => {
+    const rows = db.prepare('SELECT id, name, runtime, template, config, status FROM agents').all();
+    const agents = new Map(rows.map(a => [a.id, a]));
+    const projects = new Map();
+    for (const a of rows) {
+      if (!composeManaged(a.runtime)) continue;
+      let config = {};
+      try { config = JSON.parse(a.config || '{}'); } catch (_) {}
+      // Docker stores compose project names lower-cased.
+      projects.set(String(config.COMPOSE_PROJECT || `agenthotel-${a.id}`).toLowerCase(), a);
+    }
+    const meta = Object.fromEntries(listTemplates(runtimes).map(t => [t.id, { category: t.category }]));
+    const building = rows.filter(a => deploys.isInFlight(a.status)).map(a => ({ id: a.id, name: a.name }));
+    return { agents, projects, meta, building, panelProject: await panelProject() };
+  }
+});
+
+app.get('/api/system/activity', requireAuth, async (req, res) => {
+  try {
+    const snap = await activity.snapshot();
+    // Only what the view draws: never a guest's config.
+    res.json({
+      ...snap,
+      items: snap.items.map(({ key, name, kind, agentId, cores, mem, limit, containers, history }) =>
+        ({ key, name, kind, agentId, cores, mem, limit, containers, history }))
+    });
+  } catch (err) {
+    console.error('Activity error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;

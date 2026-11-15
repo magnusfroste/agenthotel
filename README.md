@@ -93,6 +93,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 
 ### Observability & System
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
+- **Activity** — who is using the server right now, like Activity Monitor: CPU and memory over the last few minutes as a stacked area by kind (agents, tools, apps, builds, the panel, the system), and the heaviest guests with a curve each. Build containers are shown as the build of the guest that is deploying. Sampled every 3 s with `docker stats` one-shots, only while someone has the Fleet open (`GET /api/system/activity`)
 - **Resource guardrails** — the panel can never be frozen out by its own fleet: every agent gets a CPU cap (default 1 core, `CPU_LIMIT`) and RAM cap (default 1024 MB, `MEMORY_LIMIT_MB`), low cpu-shares (256) and a high OOM-kill priority, while the panel containers run at 2048 shares with `oom_score_adj: -500`. Shares only matter under saturation, so agents still use all idle capacity — but the panel always stays responsive, no reboot needed. Host-wide defaults via `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB`
 - **Serialized deploys** — one build/deploy at a time, so concurrent deploys can't saturate the host
 - **Roll back** — a Git App deploy that went wrong is one click from the commit it ran before: the Deployments tab builds that commit again, and the next redeploy follows the branch

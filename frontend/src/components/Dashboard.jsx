@@ -8,6 +8,7 @@ import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot
 import RuntimeMark from './RuntimeMark'
 import { MoveIn } from './HotelTransfer'
 import { ModelErrorsLine } from './ModelErrors'
+import ActivityView from './Activity'
 
 // What a card says while its image is being built. The backend records every
 // build step and pulled layer; without this the card read "creating" for
@@ -318,6 +319,8 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      {agents.length > 0 && <ActivityView />}
 
       {agents.length === 0 ? (
         <div className="empty-state">
