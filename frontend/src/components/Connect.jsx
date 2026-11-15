@@ -197,8 +197,11 @@ function Connect() {
         setTools([])
         return
       }
-      // tools is an object keyed by name, not an array.
-      setTools(Object.entries(listed).map(([name, t]) => ({ name, description: t.description || '' })))
+      // An array of named tools, as MCP has it. A panel from before that was
+      // fixed sent an object keyed by name, and this page may be an open tab
+      // from then talking to a backend from now, or the other way round.
+      const named = Array.isArray(listed) ? listed : Object.entries(listed).map(([name, t]) => ({ name, ...t }))
+      setTools(named.map(t => ({ name: t.name, description: t.description || '' })))
     } catch (err) {
       console.error('Failed to read MCP tools:', err)
       setToolsError(err.message)

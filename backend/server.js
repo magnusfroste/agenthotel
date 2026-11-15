@@ -1226,7 +1226,7 @@ const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
 const { createMcpServer } = require('./mcp');
 // enqueueDeploy and redeployAgent are function declarations further down, so
 // they are hoisted: MCP deploys share the REST queue and the REST redeploy.
-const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent, deployLog, issueTransfer, startImportFrom, importJobs });
+const mcpServer = createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, { pruneDocker, removeAgentVolumes, ensureAgentImage, enqueueDeploy, redeployAgent, deployLog, issueTransfer, startImportFrom, importJobs, attachComposeRoute, serverAddress });
 
 app.post('/mcp', mcpServer.requireMcpAuth, mcpServer.handleMcpRequest);
 
@@ -5597,12 +5597,23 @@ app.get('/api/system/upgrade-log', requireAuth, (req, res) => {
   });
 });
 
+// The address the server is reached on from outside: what a DNS record for a
+// guest points at. The panel shows it, and check_domain over MCP compares a
+// name against it. Remembered for an hour: an agent checking names asks often.
+let publicAddress = { ip: null, at: 0 };
+async function serverAddress() {
+  if (publicAddress.ip && Date.now() - publicAddress.at < 3600 * 1000) return publicAddress.ip;
+  const fetch = require('node-fetch');
+  const response = await fetch('https://api.ipify.org?format=json', { timeout: 5000 });
+  const data = await response.json();
+  if (!data || !data.ip) throw new Error('No address in the answer');
+  publicAddress = { ip: data.ip, at: Date.now() };
+  return data.ip;
+}
+
 app.get('/api/system/ip', requireAuth, async (req, res) => {
   try {
-    const fetch = require('node-fetch');
-    const response = await fetch('https://api.ipify.org?format=json');
-    const data = await response.json();
-    res.json({ ip: data.ip });
+    res.json({ ip: await serverAddress() });
   } catch (err) {
     try {
       const ip = execSync("hostname -I | awk '{print $1}'").toString().trim();
