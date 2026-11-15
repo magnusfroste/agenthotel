@@ -17,7 +17,10 @@ instructions: 'Give it a domain. Agents use https://<domain>/mcp with the agent 
   One key per agent: to add one, append `,name:key` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy.
 
 
-  Everything published is public to anyone with the link. Sites are static, with no server code or database, and they share one origin, so they should not store private data in the browser. To take a site down yourself, run `rm -r /data/sites/<name>` in the Console.
+  Everything published is public to anyone with the link. Sites are static, with no server code or database, and by default they share one origin, so they should not store private data in the browser. To take a site down yourself, run `rm -r /data/sites/<name>` in the Console.
+
+
+  A host per site (optional): each agent''s site at `https://<site>.<domain>/`, an origin of its own, so games keep their own saved data and a Vite build works without `base: ''./''`. Point `*.<domain>` at this server as a DNS-only record (a free Cloudflare certificate covers only one level), then add `SITE_DOMAIN=<domain>` under Environment and `*.<domain>` under Extra domains, and redeploy. The hotel fetches a certificate on a site''s first visit, only for a name that has a site. Old `/<site>/` links redirect. Sites published without a key stay at `/<site>/`, so danger mode cannot spend the domain''s certificates.
 
 
   Danger mode (DANGER_MODE=on) lets anyone publish without a key, with a smaller size limit and a limit per address and hour. Leave it off on a domain you care about: an open host attracts phishing, and that can get the whole domain blocked.
