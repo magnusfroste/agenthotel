@@ -198,7 +198,21 @@ AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 }
 ```
 
-**Fleet** — `list_agents`, `get_agent`, `create_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`
+**Fleet** — `list_agents`, `get_agent`, `create_agent`, `update_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `get_deploy_log`
+
+**Names** — `list_domains` shows the zones the hotel already has guests under and
+whether a new name there works without a DNS change (a wildcard record).
+`check_domain` says, before a deploy, whether one name is free and reaches the
+hotel. `create_agent` takes a template id as `runtime`, warns when the name has
+no DNS record, and keeps a guest whose first deploy failed so it can be fixed
+with `update_agent` (domain, port) or `set_agent_env` instead of being deleted
+and created again.
+
+Calls that deploy take `wait_seconds` (default 60). A build that outlasts it
+keeps going; the call returns `done: false` with the agent id, and `get_agent`
+and `get_deploy_log` tell the rest. A proxy in front of the panel usually cuts a
+request at about 100 seconds, so a long build should not be waited out in one
+call.
 
 **Put agents to work** — `ask_agent` hands a hosted agent a task and returns its
 reply, or dispatches it in the background so the agent keeps working after the

@@ -6,7 +6,9 @@ const { containerNameFor } = require('./lib/containerFor');
 const {
   collectHostMetrics, collectDockerUsage, collectAgentStats, collectUptime, buildHealthReport
 } = require('./lib/observability');
-const { listTemplates, getTemplate, saveTemplate } = require('./lib/templates');
+const { listTemplates, getTemplate, saveTemplate, materializeDeploy } = require('./lib/templates');
+const { domainProblem } = require('./lib/domainName');
+const { createDomainCheck, parentOf } = require('./lib/domainCheck');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
 // is readable by every connected agent, so keys must never travel over it —
@@ -25,6 +27,64 @@ function redactConfig(raw) {
   return JSON.stringify(safe);
 }
 
+// What is wrong with a call's arguments, or null. A tool used to be handed
+// whatever arrived: get_template called with `id` instead of `template_id`
+// answered 'The "path" argument must be of type string', and a `PORT` sent
+// beside `port` was dropped without a word. The caller is an agent reading the
+// reply, so the reply names what the tool takes.
+function argumentProblem(tool, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return 'The arguments must be an object';
+  const schema = tool.inputSchema || {};
+  const known = Object.keys(schema.properties || {});
+  const required = schema.required || [];
+  const missing = required.filter(k => args[k] === undefined || args[k] === null || args[k] === '');
+  const unknown = Object.keys(args).filter(k => !known.includes(k));
+  if (!missing.length && !unknown.length) return null;
+  const parts = [];
+  if (missing.length) parts.push(`Missing: ${missing.join(', ')}`);
+  if (unknown.length) parts.push(`Not an argument of this tool: ${unknown.join(', ')}`);
+  parts.push(known.length
+    ? `It takes: ${known.map(k => (required.includes(k) ? k : `${k} (optional)`)).join(', ')}`
+    : 'It takes no arguments');
+  return parts.join('. ');
+}
+
+// A deploy can take many minutes, and a request through a proxy does not live
+// that long: Cloudflare cuts it at 100 s, and the agent's own client gave up
+// at 90 (2026-11-14, a create waiting behind a nine-minute build). The call
+// waits this long for the deploy and then answers that it is still going; the
+// deploy carries on either way.
+const DEFAULT_WAIT_SECONDS = 60;
+const MAX_WAIT_SECONDS = 600;
+
+function waitSeconds(value) {
+  const n = Number(value);
+  if (value === undefined || value === null || !Number.isFinite(n)) return DEFAULT_WAIT_SECONDS;
+  return Math.min(Math.max(n, 0), MAX_WAIT_SECONDS);
+}
+
+// `run` resolves to the tool's result and never rejects. `pending` is the
+// answer when it has not resolved in time.
+async function settleWithin(run, seconds, pending) {
+  let timer;
+  const LATE = Symbol('late');
+  const late = new Promise(resolve => { timer = setTimeout(() => resolve(LATE), seconds * 1000); });
+  try {
+    const first = await Promise.race([run, late]);
+    return first === LATE ? pending() : first;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const ok = (body) => ({ content: [{ type: 'text', text: JSON.stringify(body) }] });
+const fail = (body) => ({ content: [{ type: 'text', text: JSON.stringify(typeof body === 'string' ? { error: body } : body) }], isError: true });
+
+const WAIT_PROPERTY = {
+  type: 'number',
+  description: `How long to wait for the deploy before answering that it is still going (default ${DEFAULT_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}; 0 answers at once). The deploy continues either way: follow it with get_deploy_log`
+};
+
 function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, extras = {}) {
   const MCP_VERSION = '2024-11-05';
   // pruneDocker is the same routine the REST endpoint and the daily job use,
@@ -37,10 +97,57 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   // image between the two was never removed (2026-10-09).
   const enqueueDeploy = extras.enqueueDeploy || ((work) => work());
   const deployLog = extras.deployLog || null;
-  const { issueTransfer, startImportFrom, importJobs } = extras;
+  const { issueTransfer, startImportFrom, importJobs, attachComposeRoute } = extras;
+  const domainCheck = extras.domainCheck || createDomainCheck();
+  // The server's public address, when the panel can tell. The panel's own name
+  // may sit behind Cloudflare, and then DNS does not show it.
+  const serverAddress = async () => {
+    try { return (extras.serverAddress && await extras.serverAddress()) || null; } catch (_) { return null; }
+  };
   // See server.js: ask the plugin whether it runs its own containers, rather
   // than matching the runtime's name.
   const composeManaged = (runtime) => !!runtimes[runtime]?.composeManaged;
+
+  // What an operator did over MCP belongs in the event log like what was done
+  // in the panel. A create and a delete here used to leave no trace.
+  const logEvent = (type, agentId, message) => {
+    try { db.prepare('INSERT INTO events (type, agent_id, message) VALUES (?, ?, ?)').run(type, agentId || null, message); }
+    catch (err) { console.error('[MCP] Failed to log event:', err.message); }
+  };
+
+  const setting = (key) => {
+    try { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null; }
+    catch (_) { return null; }
+  };
+  // The names the hotel itself answers on: what a guest's name is compared with.
+  const hotelNames = () => [setting('panel_domain'), ...String(setting('panel_domain_aliases') || '').split(',').map(s => s.trim())].filter(Boolean);
+
+  const describeHolder = (a) => `${a.name} (${a.id}, ${a.status})`;
+  const KEPT = 'A create that fails keeps its guest: redeploy_agent retries it, update_agent changes its domain or port, delete_agent frees its name and domain';
+
+  // Who already answers on this domain, as a sentence, or null when it is free.
+  function domainTaken(domain, exceptId = null) {
+    if (!domain) return null;
+    if (hotelNames().includes(domain)) return `${domain} is the panel's own address`;
+    const holder = db.prepare('SELECT id, name, status FROM agents WHERE domain = ? AND id != ?').get(domain, exceptId || '');
+    if (!holder) return null;
+    return `${domain} is held by the agent ${describeHolder(holder)}. ${KEPT}`;
+  }
+
+  function portProblem(port) {
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? null : `Invalid port ${JSON.stringify(port)}: a whole number from 1 to 65535`;
+  }
+
+  // Said with the result of a create or a move, never a refusal: the record
+  // may be on its way, and the guest is built the same.
+  async function dnsWarning(domain) {
+    if (!domain) return null;
+    try {
+      const found = await domainCheck.lookup(domain);
+      if (!found.missing) return null;
+      return `${domain} has no DNS record yet. The guest is deployed, but nobody reaches it and it gets no certificate until the name points at this hotel. check_domain says when it does; list_domains shows where new names need no DNS change`;
+    } catch (_) { return null; }
+  }
 
   const tools = {
     list_agents: {
@@ -58,22 +165,50 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
     },
     create_agent: {
-      description: 'Create and deploy a new AI agent',
+      description: "Check a new guest in and deploy it. `runtime` is a runtime from list_runtimes or a template id from list_templates (get_template shows the config it expects); a repository with a Dockerfile is runtime git-app with config {GIT_REPO, GIT_REF}. Give `port` when the app does not listen on the runtime's default (git-app 8000, docker-app 80): the panel does not read a Dockerfile's EXPOSE. Give a `domain` that already points at this hotel: check_domain says whether one does, list_domains where new names work without a DNS change. A build takes minutes, so the call waits wait_seconds and then answers done:false while the deploy goes on. A create that fails keeps its guest as failed, still holding its name and domain: read get_deploy_log, fix the cause and redeploy_agent, or delete_agent to start over",
       inputSchema: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Agent name (unique)' },
-          runtime: { type: 'string', description: 'Runtime: openclaw, hermes, odysseus, docker-app, or compose' },
-          domain: { type: 'string', description: 'Full domain for the agent (optional, e.g. hermes.example.com)' },
+          name: { type: 'string', description: 'Agent name (unique): lowercase letters, digits and hyphens' },
+          runtime: { type: 'string', description: 'A runtime id from list_runtimes (hermes, openclaw, git-app, docker-app, …) or a template id from list_templates' },
+          domain: { type: 'string', description: 'The name the guest answers on, e.g. game.example.com. Optional; without one the guest has no public address' },
           image: { type: 'string', description: 'Docker image (optional, uses default)' },
-          port: { type: 'integer', description: 'Port (optional, uses default)' },
-          config: { type: 'object', description: 'Agent configuration (env vars, volumes, etc)' }
+          port: { type: 'integer', description: "The port the app listens on inside its container. Defaults to config.PORT where the runtime has that field, else the runtime's default" },
+          config: { type: 'object', description: 'Agent configuration: the fields the runtime or template lists, and environment variables' },
+          wait_seconds: WAIT_PROPERTY
         },
         required: ['name', 'runtime']
       }
     },
+    update_agent: {
+      description: "Move a guest to another domain or change the port the panel sends its traffic to, without deleting and creating it again: its id, volumes and deploy history stay. Applied by redeploying the guest, which replaces its container (and for a Git App builds its ref again). Config values that carried the old domain follow the new one. If the build fails the guest keeps running where it was and nothing is changed. For environment variables use set_agent_env",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID' },
+          domain: { type: 'string', description: 'The new name it answers on. check_domain first: it must point at this hotel' },
+          port: { type: 'integer', description: 'The port the app listens on inside its container' },
+          wait_seconds: WAIT_PROPERTY
+        },
+        required: ['agent_id']
+      }
+    },
+    check_domain: {
+      description: "Whether a name can be given to a guest, or works for the one that has it: valid as a domain, free or held (and by whom), what public DNS says (no-record, here, proxied through Cloudflare, elsewhere), whether its parent zone has a wildcard record, and for a held name what it answers from outside. Ask before create_agent or update_agent, and after a deploy to see the guest from the outside — a guest cannot reach its own public address from inside the hotel",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          domain: { type: 'string', description: 'The full name, e.g. game.example.com' }
+        },
+        required: ['domain']
+      }
+    },
+    list_domains: {
+      description: "Where this hotel's guests live: each parent zone guests have names under, the guests there, and whether the zone has a wildcard DNS record — under a wildcard a new name already resolves, to wherever the wildcard points, and needs no DNS change; elsewhere a new name needs its own record before the guest is reachable. The panel cannot create DNS records",
+      inputSchema: { type: 'object', properties: {} }
+    },
     delete_agent: {
-      description: 'Delete an agent and its container',
+      description: 'Delete an agent: its container, routes and volumes. Its data is gone with it',
       inputSchema: {
         type: 'object',
         properties: {
@@ -88,7 +223,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         type: 'object',
         properties: {
           agent_id: { type: 'string', description: 'The agent ID to redeploy' },
-          rebuild: { type: 'boolean', description: 'Rebuild the runtime template image first, picking up edits to templates/<runtime>/Dockerfile (slower)' }
+          rebuild: { type: 'boolean', description: 'Rebuild the runtime template image first, picking up edits to templates/<runtime>/Dockerfile (slower)' },
+          wait_seconds: WAIT_PROPERTY
         },
         required: ['agent_id']
       }
@@ -140,7 +276,8 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         properties: {
           agent_id: { type: 'string', description: 'The agent ID' },
           env: { type: 'object', description: 'Variables to set, e.g. {"SOME_API_TOKEN": "abc123"}. A null value removes that variable' },
-          apply: { type: 'boolean', description: 'Redeploy so the container picks the values up (default true). False stores them for the next redeploy without disturbing a running agent' }
+          apply: { type: 'boolean', description: 'Redeploy so the container picks the values up (default true). False stores them for the next redeploy without disturbing a running agent' },
+          wait_seconds: WAIT_PROPERTY
         },
         required: ['agent_id', 'env']
       }
@@ -304,6 +441,11 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   };
 
   async function handleToolCall(name, args) {
+    const tool = tools[name];
+    if (!tool) return fail(`Unknown tool: ${name}`);
+    const problem = argumentProblem(tool, args);
+    if (problem) return fail(`${name}: ${problem}`);
+
     switch (name) {
       case 'list_agents': {
         const agents = db.prepare('SELECT id, name, runtime, domain, image, port, status, config, created_at FROM agents').all()
@@ -318,38 +460,289 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
 
       case 'create_agent': {
-        const id = `${args.runtime}-${args.name}-${Date.now()}`;
-        const plugin = runtimes[args.runtime];
-        if (!plugin) return { content: [{ type: 'text', text: JSON.stringify({ error: `Unknown runtime: ${args.runtime}` }) }], isError: true };
-        const badDomain = require('./lib/domainName').domainProblem(args.domain);
-        if (badDomain) return { content: [{ type: 'text', text: JSON.stringify({ error: badDomain }) }], isError: true };
+        const name = args.name;
+        // The name flows into container and volume names.
+        if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+          return fail('Invalid name: use lowercase letters, digits and hyphens, starting with a letter or digit');
+        }
+        if (args.config !== undefined && (args.config === null || typeof args.config !== 'object' || Array.isArray(args.config))) {
+          return fail('config must be an object of field names to values');
+        }
+        const domain = args.domain || null;
+        const badDomain = domainProblem(domain);
+        if (badDomain) return fail(badDomain);
 
-        const image = args.image || plugin.defaultImage;
-        const port = args.port || plugin.defaultPort;
+        // A template is a recipe for a runtime, filled in the way POST
+        // /api/agents fills it. get_template has always said "use the template
+        // id as the runtime for create_agent", and this answered "Unknown
+        // runtime" to every one of them.
+        let runtime = args.runtime;
+        let config = args.config || {};
+        let image = args.image;
+        let port = args.port;
+        let templateId = null;
+        if (!runtimes[runtime]) {
+          const template = getTemplate(runtime, runtimes);
+          if (!template || !template.deploy) {
+            return fail(`Unknown runtime: ${runtime}. list_runtimes and list_templates say what there is`);
+          }
+          try {
+            const filled = materializeDeploy(template.deploy, { ...config, DOMAIN: domain || '', AGENT_NAME: name });
+            templateId = template.id;
+            runtime = filled.runtime;
+            config = filled.config;
+            if (!image && filled.image) image = filled.image;
+            if (port === undefined && filled.port) port = filled.port;
+          } catch (err) {
+            return fail(`Template ${template.name}: ${err.message}`);
+          }
+        }
+        const plugin = runtimes[runtime];
+        if (!plugin) return fail(`Unknown runtime: ${runtime}`);
+        if (runtime === 'compose' && !config.COMPOSE_FILE) return fail('COMPOSE_FILE is required for compose agents');
 
+        // Where the panel sends the guest's traffic. An app runtime has a PORT
+        // field, and an agent that filled it in was still routed to the
+        // default: a game's nginx listened on 8080, its route went to 8000,
+        // and health said ECONNREFUSED with nothing to connect the two
+        // (2026-11-14).
+        const notes = [];
+        const hasPortField = (plugin.configFields || []).some(f => f.key === 'PORT');
+        if (port === undefined && hasPortField && config.PORT !== undefined && config.PORT !== '') port = Number(config.PORT);
+        if (port === undefined) {
+          port = plugin.defaultPort;
+          if (hasPortField) notes.push(`No port given: traffic goes to ${port}, this runtime's default. If the app listens elsewhere, update_agent with its port`);
+        }
+        const badPort = portProblem(port);
+        if (badPort) return fail(badPort);
+        if (hasPortField) config = { ...config, PORT: String(port) };
+        image = image || plugin.defaultImage;
+
+        // Said before the row exists. The table's own answer to a second
+        // create was "UNIQUE constraint failed: agents.domain".
+        const sameName = db.prepare('SELECT id, name, status FROM agents WHERE name = ?').get(name);
+        if (sameName) return fail(`The name ${name} is held by the agent ${describeHolder(sameName)}. ${KEPT}`);
+        const taken = domainTaken(domain);
+        if (taken) return fail(taken);
+
+        const id = `${runtime}-${name}-${Date.now()}`;
         // Auto-inject API keys from providers + default models (shared with
         // server.js /api/agents via lib/providerEnv.js).
-        const finalConfig = await injectProviderEnv(db, args.config, plugin);
-
-        const agentConfig = plugin.buildConfig({ name: args.name, domain: args.domain, image, port, config: finalConfig });
-
-        db.prepare('INSERT INTO agents (id, name, runtime, domain, image, port, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, args.name, args.runtime, args.domain || null, image, port, 'creating', JSON.stringify(agentConfig));
-
+        const finalConfig = await injectProviderEnv(db, config, plugin);
+        let agentConfig;
         try {
-          await enqueueDeploy(async () => {
-            if (args.runtime === 'compose') {
-              await plugin.deploy(id, args.name, agentConfig, plugin);
-            } else {
-              await deployAgent(id, args.name, args.runtime, args.domain, image, port, agentConfig, plugin);
-            }
-          }, id, { kind: 'create', trigger: 'MCP', config: agentConfig });
-          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-          return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: id, status: 'running' }) }] };
+          agentConfig = plugin.buildConfig({ name, domain, image, port, config: finalConfig });
         } catch (err) {
-          db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
+          return fail(err.message);
         }
+
+        db.prepare('INSERT INTO agents (id, name, runtime, domain, image, port, status, config, template) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, name, runtime, domain, image, port, 'creating', JSON.stringify(agentConfig), templateId);
+
+        const dns = dnsWarning(domain);
+        const extra = async () => {
+          const warning = await dns;
+          return { ...(warning ? { warning } : {}), ...(notes.length ? { notes } : {}) };
+        };
+
+        const run = Promise.resolve().then(() => enqueueDeploy(async () => {
+          if (composeManaged(runtime)) {
+            await plugin.deploy(id, name, agentConfig, plugin);
+            // A compose guest's route is added after its stack is up. Only the
+            // runtime named 'compose' was told apart here, and nothing attached
+            // a route, so a stack created over MCP had no address.
+            if (attachComposeRoute) await attachComposeRoute({ id }, plugin, agentConfig, domain);
+          } else {
+            await deployAgent(id, name, runtime, domain, image, port, agentConfig, plugin);
+          }
+        }, id, { kind: 'create', trigger: 'MCP', config: agentConfig })).then(async () => {
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+          logEvent('agent.create', id, `Created agent ${name} over MCP`);
+          return ok({ success: true, agent_id: id, status: 'running', ...(domain ? { domain } : {}), port, ...(await extra()) });
+        }, async (err) => {
+          // The guest is kept: its deploy log is the only account of what went
+          // wrong, and the fix is usually a redeploy after a push.
+          db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+          logEvent('agent.error', id, `Create of ${name} over MCP failed: ${err.message}`);
+          return fail({
+            error: err.message, agent_id: id, status: 'failed',
+            next: `The guest ${name} is kept and holds its name${domain ? ' and ' + domain : ''}. get_deploy_log shows the build; when the cause is fixed, redeploy_agent retries it (update_agent first for another port or domain). delete_agent starts over`
+          });
+        });
+
+        return settleWithin(run, waitSeconds(args.wait_seconds), async () => ok({
+          agent_id: id, status: 'creating', done: false, ...(domain ? { domain } : {}), port,
+          next: 'Still deploying, and it goes on without this call. get_deploy_log shows progress; get_agent says running or failed when it ends',
+          ...(await extra())
+        }));
+      }
+
+      case 'update_agent': {
+        const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
+        if (!agent) return fail('Agent not found');
+        if (args.domain === undefined && args.port === undefined) return fail('Nothing to change: give domain, port or both');
+        if (composeManaged(agent.runtime)) {
+          return fail(`${agent.name} runs its own containers (${agent.runtime}); update_agent does not move such a guest`);
+        }
+        if (['creating', 'redeploying', 'updating'].includes(agent.status)) {
+          return fail(`A deploy of ${agent.name} is going (${agent.status}). Wait for it: get_deploy_log shows where it is`);
+        }
+
+        let domain = agent.domain;
+        if (args.domain !== undefined) {
+          if (typeof args.domain !== 'string' || !args.domain) return fail('domain must be a name like game.example.com');
+          const badDomain = domainProblem(args.domain);
+          if (badDomain) return fail(badDomain);
+          domain = args.domain;
+        }
+        let port = agent.port;
+        if (args.port !== undefined) {
+          const badPort = portProblem(args.port);
+          if (badPort) return fail(badPort);
+          port = args.port;
+        }
+        if (domain === agent.domain && port === agent.port) {
+          return ok({ success: true, agent_id: agent.id, changed: false, domain, port });
+        }
+        if (domain !== agent.domain) {
+          const taken = domainTaken(domain, agent.id);
+          if (taken) return fail(taken);
+        }
+
+        // Values written from the old domain follow it (lib/orphans.js), and
+        // the PORT field says what the port column says.
+        let config = {};
+        try { config = JSON.parse(agent.config || '{}'); } catch (_) {}
+        const moved = require('./lib/orphans').withDomainChanged(config, agent.domain, domain);
+        config = moved.config;
+        if (port !== agent.port && config.PORT !== undefined) config = { ...config, PORT: String(port) };
+
+        const changes = [
+          domain !== agent.domain ? `${agent.domain || 'no domain'} → ${domain}` : null,
+          port !== agent.port ? `port ${agent.port} → ${port}` : null
+        ].filter(Boolean).join(', ');
+
+        if (!redeployAgent) return fail('Redeploys unavailable');
+        db.prepare('UPDATE agents SET domain = ?, port = ?, config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(domain, port, JSON.stringify(config), agent.id);
+        const dns = domain !== agent.domain ? dnsWarning(domain) : Promise.resolve(null);
+
+        // The panel's redeploy reads the row again, so it builds, routes and
+        // starts the guest with the new values. Its routes for the old name
+        // are not its to know about: that one is removed here, afterwards, so
+        // the old name serves until the new one does.
+        const dropOldRoute = async () => {
+          if (!agent.domain || agent.domain === domain) return;
+          try { await removeAgentRoutes({ domain: agent.domain, config: '{}' }); } catch (_) {}
+        };
+        const run = Promise.resolve().then(() => redeployAgent(agent.id, { trigger: 'MCP', kind: 'update' })).then(async () => {
+          await dropOldRoute();
+          logEvent('agent.update', agent.id, `Updated agent ${agent.name} over MCP: ${changes}`);
+          const warning = await dns;
+          return ok({ success: true, agent_id: agent.id, status: 'running', changed: true, domain, port, ...(warning ? { warning } : {}) });
+        }, async (err) => {
+          if (/left running/.test(err.message)) {
+            // The build failed before anything was taken down: the guest still
+            // answers where it did, and the row says so again.
+            db.prepare('UPDATE agents SET domain = ?, port = ?, config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+              .run(agent.domain, agent.port, agent.config, agent.id);
+            return fail({ error: err.message, agent_id: agent.id, changed: false, domain: agent.domain, port: agent.port });
+          }
+          await dropOldRoute();
+          logEvent('agent.update', agent.id, `Updated agent ${agent.name} over MCP: ${changes}, and its deploy failed`);
+          return fail({
+            error: err.message, agent_id: agent.id, changed: true, domain, port,
+            next: 'The new domain and port are saved, but the guest did not come back up. get_deploy_log shows why; redeploy_agent retries'
+          });
+        });
+
+        return settleWithin(run, waitSeconds(args.wait_seconds), async () => {
+          const warning = await dns;
+          return ok({
+            agent_id: agent.id, status: 'redeploying', done: false, domain, port,
+            next: 'Still deploying, and it goes on without this call. get_deploy_log shows progress; get_agent says running when it ends, with the old domain and port back if the build failed',
+            ...(warning ? { warning } : {})
+          });
+        });
+      }
+
+      case 'check_domain': {
+        const domain = String(args.domain).trim().toLowerCase();
+        const problem = domainProblem(domain);
+        if (problem) return ok({ domain, valid: false, ready: false, verdict: problem });
+
+        const hotel = hotelNames();
+        const isPanel = hotel.includes(domain);
+        const holder = db.prepare('SELECT id, name, status FROM agents WHERE domain = ?').get(domain) || null;
+        const parent = parentOf(domain);
+        const address = await serverAddress();
+        const [dns, wildcard] = await Promise.all([
+          domainCheck.check(domain, { hotel, addresses: [address] }),
+          parent ? domainCheck.hasWildcard(parent) : Promise.resolve(false)
+        ]);
+        // Asked only for a name a guest holds: an unheld name has no route
+        // here, and what it answers says nothing about this hotel.
+        let answers = null;
+        if (holder && dns.addresses.length) answers = await domainCheck.answers(domain, dns.addresses[0]);
+        const reaches = answers && answers.status && answers.status < 500;
+
+        const where = dns.hotelAddresses.length ? dns.hotelAddresses.join(', ') : (hotel[0] ? `where ${hotel[0]} points` : "this hotel's address");
+        let ready, verdict;
+        if (isPanel) {
+          ready = false; verdict = "This is the panel's own address";
+        } else if (dns.state === 'no-record') {
+          ready = false;
+          verdict = `No DNS record. It needs an A record to ${where} before anyone reaches a guest on it. The panel cannot create DNS records: ask the operator, or pick a name under a zone list_domains shows a wildcard for`;
+        } else if (dns.state === 'unknown') {
+          ready = null; verdict = `DNS did not answer (${dns.error}). Ask again`;
+        } else if (dns.state === 'elsewhere') {
+          ready = false; verdict = `Points at ${dns.addresses.join(', ')}, which is not this hotel (${dns.hotelAddresses.join(', ')})`;
+        } else if (holder) {
+          ready = !!reaches;
+          verdict = reaches
+            ? `Answers from outside with HTTP ${answers.status}`
+            : `Resolves, but from outside it answers ${answers && answers.status ? 'HTTP ' + answers.status : (answers && answers.error) || 'nothing'}. A 502 or 52x is the route or the port: health_check and get_agent_logs, then update_agent with the port the app listens on. A certificate takes a minute after the first deploy`;
+        } else if (dns.state === 'here') {
+          ready = true; verdict = 'Free, and points at this hotel';
+        } else if (dns.state === 'proxied') {
+          ready = null; verdict = 'Free, and resolves through Cloudflare, which hides where it ends up. If the record is meant for this hotel it works: deploy, then ask again to see what it answers';
+        } else {
+          ready = null; verdict = "Free, and resolves. The hotel's own address is not known to compare with: deploy, then ask again to see what it answers";
+        }
+
+        return ok({
+          domain, valid: true, ready, verdict,
+          held_by: holder ? { agent_id: holder.id, name: holder.name, status: holder.status } : (isPanel ? 'the panel' : null),
+          dns: { state: dns.state, addresses: dns.addresses },
+          parent: parent ? { zone: parent, wildcard } : null,
+          ...(answers ? { answers } : {})
+        });
+      }
+
+      case 'list_domains': {
+        const guests = db.prepare("SELECT id, name, domain, status FROM agents WHERE domain IS NOT NULL AND domain != '' ORDER BY domain").all();
+        const zones = new Map();
+        for (const g of guests) {
+          const zone = parentOf(g.domain) || g.domain;
+          if (!zones.has(zone)) zones.set(zone, []);
+          zones.get(zone).push({ domain: g.domain, name: g.name, agent_id: g.id, status: g.status });
+        }
+        const out = await Promise.all([...zones].map(async ([zone, list]) => {
+          const wildcard = await domainCheck.hasWildcard(zone);
+          return {
+            zone, wildcard,
+            new_names: wildcard === true ? 'resolve already: no DNS change needed'
+              : wildcard === false ? 'need a DNS record of their own first'
+              : 'unknown: DNS did not answer',
+            guests: list
+          };
+        }));
+        return ok({
+          panel: hotelNames()[0] || null,
+          address: await serverAddress(),
+          zones: out,
+          note: 'A zone is the part of a guest\'s name after its first label; address is where a DNS record for a new name points. check_domain says whether one name is free and where it points'
+        });
       }
 
       case 'delete_agent': {
@@ -385,6 +778,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         }
 
         db.prepare('DELETE FROM agents WHERE id = ?').run(args.agent_id);
+        logEvent('agent.delete', args.agent_id, `Deleted agent ${agent.name} over MCP`);
         return { content: [{ type: 'text', text: JSON.stringify({ success: true, deleted: args.agent_id }) }] };
       }
 
@@ -451,7 +845,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         const deployConfig = await injectProviderEnv(db, config, plugin);
         db.prepare("UPDATE agents SET config = ?, status = 'redeploying', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(deployConfig), args.agent_id);
 
-        try {
+        const applied = (async () => { try {
           let buildError = null;
           await enqueueDeploy(async () => {
             if (composeManaged(agent.runtime)) {
@@ -482,7 +876,11 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         } catch (err) {
           db.prepare("UPDATE agents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(args.agent_id);
           return { content: [{ type: 'text', text: JSON.stringify({ error: err.message, set, removed, applied: false }) }], isError: true };
-        }
+        } })();
+        return settleWithin(applied, waitSeconds(args.wait_seconds), () => ok({
+          set, removed, applied: false, status: 'redeploying', done: false,
+          next: 'The values are stored and the redeploy that applies them is still going. get_deploy_log shows progress; get_agent says running when it ends'
+        }));
       }
 
       case 'redeploy_agent': {
@@ -495,12 +893,13 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
         // built a second time (lib/redeployGate.js). This used to be a copy
         // that ran outside the queue — a redeploy here a minute after one from
         // the button built the same commit twice, side by side (2026-10-09).
-        try {
-          await redeployAgent(agent.id, { rebuildImage: args.rebuild === true, trigger: 'MCP' });
-          return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent_id: args.agent_id, status: 'running' }) }] };
-        } catch (err) {
-          return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
-        }
+        const run = Promise.resolve().then(() => redeployAgent(agent.id, { rebuildImage: args.rebuild === true, trigger: 'MCP' })).then(
+          () => ok({ success: true, agent_id: args.agent_id, status: 'running' }),
+          (err) => fail(err.message));
+        return settleWithin(run, waitSeconds(args.wait_seconds), () => ok({
+          agent_id: args.agent_id, status: 'redeploying', done: false,
+          next: 'Still deploying, and it goes on without this call. get_deploy_log shows progress; get_agent says running when it ends'
+        }));
       }
 
       case 'create_transfer': {
@@ -773,10 +1172,13 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
   }
 
   async function handleMcpRequest(req, res) {
-    const { method, params, id } = req.body;
+    const { method, params, id } = req.body || {};
 
     try {
       let result;
+
+      // A notification has no id and gets no reply.
+      if (typeof method === 'string' && method.startsWith('notifications/')) return res.status(202).send();
 
       switch (method) {
         case 'initialize':
@@ -787,16 +1189,22 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           };
           break;
 
-        case 'notifications/initialized':
-          return res.status(204).send();
+        case 'ping':
+          result = {};
+          break;
 
+        // The tool list is an array of named tools, as the protocol has it.
+        // This sent the object the tools are kept in, keyed by name, which a
+        // client that checks the reply refuses: the panel's own Connect page
+        // was the only reader, so nobody saw it until an agent was asked to
+        // run the hotel and had to write its JSON-RPC by hand (2026-11-14).
         case 'tools/list':
-          result = { tools };
+          result = { tools: Object.entries(tools).map(([name, tool]) => ({ name, ...tool })) };
           break;
 
         case 'tools/call': {
-          const { name, arguments: args } = params;
-          result = await handleToolCall(name, args || {});
+          const { name, arguments: args } = params || {};
+          result = await handleToolCall(name, args === undefined || args === null ? {} : args);
           break;
         }
 
