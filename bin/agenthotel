@@ -16,6 +16,33 @@ cd "$DIR"
 
 current() { git rev-parse --short HEAD 2>/dev/null || echo unknown; }
 
+# The commit the backend container was built from (the GIT_COMMIT build arg,
+# baked into its environment), read from the container itself, running or
+# stopped. The checkout is not the answer: an upgrade moves it before the
+# build, and a build that fails leaves the old container running. Empty when
+# there is no backend container.
+running_commit() {
+  id=$(docker compose ps --all --quiet backend 2>/dev/null | head -n 1)
+  [ -n "$id" ] || return 0
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" 2>/dev/null \
+    | sed -n 's/^GIT_COMMIT=//p' | head -n 1
+}
+
+# Whether the running commit is the checkout's HEAD. Short hashes can differ
+# in length between the build and now, so both are resolved to full ones.
+runs_checkout() {
+  [ -n "$1" ] && [ "$1" != unknown ] || return 1
+  [ "$(git rev-parse --quiet --verify "$1^{commit}" 2>/dev/null)" = "$(git rev-parse HEAD)" ]
+}
+
+describe_running() {
+  case "$1" in
+    "") echo "nothing (no backend container)" ;;
+    unknown) echo "an unknown commit (built without GIT_COMMIT)" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 panel_answers() {
   # The container serves the API on 8080; going through the domain would test
   # DNS and a tunnel as well, which is not what an upgrade broke.
@@ -64,16 +91,26 @@ refuse_if_busy() {
 }
 
 cmd_version() {
+  running=$(running_commit)
   echo "installed at $DIR"
-  echo "commit      $(current)  $(git log -1 --format=%s 2>/dev/null | cut -c1-60)"
-  echo "running     $(docker compose ps --status running --format '{{.Service}}' 2>/dev/null | tr '\n' ' ')"
+  echo "checkout    $(current)  $(git log -1 --format=%s 2>/dev/null | cut -c1-60)"
+  echo "panel runs  $(describe_running "$running")"
+  echo "services    $(docker compose ps --status running --format '{{.Service}}' 2>/dev/null | tr '\n' ' ')"
+  runs_checkout "$running" || echo "the panel does not run the checkout; '$SELF upgrade' builds and starts it"
 }
 
 cmd_check() {
   git fetch --quiet origin main || die "could not reach the remote"
+  running=$(running_commit)
   behind=$(git rev-list --count HEAD..origin/main)
-  if [ "$behind" -eq 0 ]; then
-    echo "up to date ($(current))"
+  echo "checkout    $(current)"
+  echo "panel runs  $(describe_running "$running")"
+  if [ "$behind" -eq 0 ] && runs_checkout "$running"; then
+    echo "up to date"
+  elif [ "$behind" -eq 0 ]; then
+    echo "the checkout is up to date, but the panel does not run it (an upgrade that did not finish?)"
+    echo ""
+    echo "run: $SELF upgrade"
   else
     echo "$behind commit(s) behind:"
     git log --oneline HEAD..origin/main | sed 's/^/  /'
@@ -105,13 +142,31 @@ cmd_upgrade() {
 
   git fetch --quiet origin main || die "could not reach the remote"
   before=$(current)
+  running=$(running_commit)
   behind=$(git rev-list --count HEAD..origin/main)
-  if [ "$behind" -eq 0 ]; then echo "already up to date ($before)"; exit 0; fi
+
+  # The checkout moves before the build, so a build that failed left HEAD at
+  # origin/main and the old panel running, and the next run answered "already
+  # up to date" (2026-11-17: a Node header download timed out mid-build).
+  # Up to date means the panel runs the checkout, not that the checkout is new.
+  if [ "$behind" -eq 0 ]; then
+    if runs_checkout "$running"; then echo "already up to date ($before)"; exit 0; fi
+    echo "the checkout is at $before, but the panel runs $(describe_running "$running")"
+    echo "finishing the upgrade that did not complete"
+  fi
+
+  # What to go back to if the new one does not answer: what the panel runs
+  # now, when that is a commit this checkout knows, else where HEAD was.
+  previous=$before
+  if [ -n "$running" ] && git rev-parse --quiet --verify "$running^{commit}" >/dev/null 2>&1; then
+    previous=$running
+  fi
+
   refuse_if_busy upgrade
 
   # The panel's own database, before anything changes. Agent volumes are not
   # touched by an upgrade; this one is, by every migration.
-  backup="/var/backups/agenthotel"
+  backup="${AGENTHOTEL_BACKUPS:-/var/backups/agenthotel}"
   mkdir -p "$backup"
   stamp=$(date +%Y%m%d-%H%M%S)
   if docker compose cp backend:/data/agenthotel.db "$backup/agenthotel-$stamp.db" >/dev/null 2>&1; then
@@ -120,9 +175,11 @@ cmd_upgrade() {
     echo "warning: could not back up the database — continuing" >&2
   fi
 
-  echo "upgrading $before → $(git rev-parse --short origin/main)"
-  git log --oneline HEAD..origin/main | sed 's/^/  /'
-  git merge --ff-only --quiet origin/main || die "the local branch has diverged from origin/main"
+  if [ "$behind" -gt 0 ]; then
+    echo "upgrading $previous → $(git rev-parse --short origin/main)"
+    git log --oneline HEAD..origin/main | sed 's/^/  /'
+    git merge --ff-only --quiet origin/main || die "the local branch has diverged from origin/main"
+  fi
 
   # This command was copied to /usr/local/bin at install and never again, so a
   # fix to it reached no panel installed before the fix. Replace it by a
@@ -134,7 +191,13 @@ cmd_upgrade() {
   fi
 
   # Baked in so the panel can report the version it is actually running.
-  docker compose build --build-arg GIT_COMMIT="$(current)" backend frontend
+  if ! docker compose build --build-arg GIT_COMMIT="$(current)" backend frontend; then
+    echo "" >&2
+    echo "$SELF: the build of $(current) failed. Nothing was restarted: the panel still runs $(describe_running "$running")." >&2
+    echo "A download that timed out (npm, nodejs.org, Docker Hub) usually passes the next time:" >&2
+    echo "  $SELF upgrade   # try again; it picks up where this one stopped" >&2
+    exit 1
+  fi
   docker compose up -d
 
   printf "waiting for the panel"
@@ -152,7 +215,7 @@ cmd_upgrade() {
   echo ""
   echo "$SELF: the panel is not answering after the upgrade." >&2
   echo "  docker compose logs --tail 50 backend" >&2
-  echo "  $SELF rollback $before" >&2
+  echo "  $SELF rollback $previous" >&2
   exit 1
 }
 
