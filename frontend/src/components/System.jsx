@@ -820,6 +820,11 @@ sysctl -w vm.swappiness=10`}</pre>
           help: 'The Docker network agents and compose guests are joined to so Caddy can reach them by name. Only change this if you renamed the compose project.' },
       ]} />
 
+      <SettingCard title="Guest isolation" icon={Container} fields={[
+        { name: 'default_container_runtime', label: 'Default container runtime', placeholder: 'Docker default (runc)',
+          help: 'The runtime every guest runs under unless it chooses its own on its Overview tab. Empty means Docker\'s default, runc, which shares the host kernel. runsc (gVisor) gives each guest a kernel of its own and needs no KVM; it must be registered in /etc/docker/daemon.json first. Applied to each guest on its next redeploy.' },
+      ]} />
+
       <BackupsCard />
       <InstanceBackup />
 

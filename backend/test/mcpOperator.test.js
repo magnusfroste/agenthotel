@@ -60,7 +60,9 @@ function setup({ records = {}, failing = [], http = async () => ({ status: 200 }
   const deploys = [];
   const routesRemoved = [];
   const container = { stop: async () => {}, remove: async () => {} };
-  const server = createMcpServer(db, { getContainer: () => container }, runtimes,
+  // Docker's runtimes as this host had them on 2026-11-18, gVisor registered.
+  const docker = { getContainer: () => container, info: async () => ({ Runtimes: { runc: {}, runsc: {} }, DefaultRuntime: 'runc' }) };
+  const server = createMcpServer(db, docker, runtimes,
     deployAgent || (async (...a) => { deploys.push(a); }),
     async (agent) => { routesRemoved.push(agent.domain); },
     {
@@ -333,6 +335,35 @@ test('update_agent: a deploy that fails after the guest was taken down keeps the
   assert.strictEqual(out.changed, true);
   assert.match(out.next, /redeploy_agent retries/);
   assert.strictEqual(row(GAME).domain, 'geo.games.example');
+});
+
+test('update_agent moves a guest under gVisor, and back to the hotel default', async () => {
+  const { server, redeploys, row, events } = withRedeploy();
+  const out = await call(server, 'update_agent', { agent_id: GAME, container_runtime: 'runsc' });
+  assert.strictEqual(out.success, true);
+  assert.strictEqual(out.container_runtime, 'runsc');
+  // The redeploy reads a row that already names the runtime.
+  assert.strictEqual(JSON.parse(redeploys[0].row.config).CONTAINER_RUNTIME, 'runsc');
+  assert.strictEqual(row(GAME).domain, 'geogeniet.games.example');
+  assert.deepStrictEqual(events().map(e => e.message), ['Updated agent geogeniet over MCP: runtime hotel default → runsc']);
+
+  const back = await call(server, 'update_agent', { agent_id: GAME, container_runtime: '' });
+  assert.strictEqual(back.changed, true);
+  assert.ok(!('CONTAINER_RUNTIME' in JSON.parse(row(GAME).config)), 'the hotel default is no key at all');
+
+  const same = await call(server, 'update_agent', { agent_id: GAME, container_runtime: '' });
+  assert.strictEqual(same.changed, false);
+  assert.strictEqual(redeploys.length, 2);
+});
+
+test('update_agent refuses a runtime Docker does not have, and leaves the guest alone', async () => {
+  const { server, redeploys, row } = withRedeploy();
+  const before = row(GAME).config;
+  const out = await call(server, 'update_agent', { agent_id: GAME, container_runtime: 'kata' });
+  assert.ok(out.isError);
+  assert.match(out.error, /no runtime "kata" \(registered: runc, runsc\)/);
+  assert.strictEqual(redeploys.length, 0);
+  assert.strictEqual(row(GAME).config, before);
 });
 
 test('update_agent refuses what it cannot do, before it touches anything', async () => {
