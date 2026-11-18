@@ -95,6 +95,7 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 - **Dashboard** — app-centric cards with live status, system CPU/RAM/disk stats, auto-refresh; fleet search, status filter and sorting for larger installations
 - **Activity** — who is using the server right now, like Activity Monitor: CPU and memory over the last few minutes as a stacked area by kind (agents, tools, apps, builds, the panel, the system), and the heaviest guests with a curve each. Build containers are shown as the build of the guest that is deploying. Sampled every 3 s with `docker stats` one-shots, only while someone has the Fleet open (`GET /api/system/activity`)
 - **Resource guardrails** — the panel can never be frozen out by its own fleet: every agent gets a CPU cap (default 1 core, `CPU_LIMIT`) and RAM cap (default 1024 MB, `MEMORY_LIMIT_MB`), low cpu-shares (256) and a high OOM-kill priority, while the panel containers run at 2048 shares with `oom_score_adj: -500`. Shares only matter under saturation, so agents still use all idle capacity — but the panel always stays responsive, no reboot needed. Host-wide defaults via `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB`
+- **Guest isolation** — a guest can run under gVisor (`runsc`) instead of an ordinary container, with a kernel of its own rather than the one every other guest shares; Kata Containers or Firecracker give it a microVM where the host has KVM. Choose it per guest on its Overview tab, for the whole hotel on the System page, or over MCP (`update_agent`); any runtime Docker has registered works, and one it lacks is refused before the guest is touched. gVisor needs no KVM, so it runs on an ordinary VPS; it costs CPU on system calls (an idle Hermes: ~14 % of a core against 2 %) ([manual](docs/MANUAL.md#guest-isolation))
 - **Serialized deploys** — one build/deploy at a time, so concurrent deploys can't saturate the host
 - **Roll back** — a Git App deploy that went wrong is one click from the commit it ran before: the Deployments tab builds that commit again, and the next redeploy follows the branch
 - **Deploy log** — every create, redeploy and settings change is kept with its full log (build output, pulls, container start, the error if it failed), followed live on the agent's **Deployments** tab and readable over MCP; secrets are masked
@@ -344,6 +345,10 @@ can do anything on that machine. Treat panel access as you would root SSH.
   reach the Docker socket. But an agent with a shell tool and your API keys can
   spend your money and read what it is given. Give it the keys it needs, not all
   of them (`INJECT_PROVIDER_ENV` is opt-in for generic runtimes for this reason).
+- By default guests are ordinary containers and share the host's kernel, so a
+  kernel escape from one reaches all of them. A guest that runs code you do not
+  trust, or holds data you would not want next door, can run under gVisor or a
+  microVM runtime instead ([Guest isolation](docs/MANUAL.md#guest-isolation)).
 - Back up the panel database (`agenthotel upgrade` does, before every upgrade,
   to `/var/backups/agenthotel/`) and export the instance from Settings before
   anything you would not want to redo.
