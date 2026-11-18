@@ -189,7 +189,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           agent_id: { type: 'string', description: 'The agent ID' },
           domain: { type: 'string', description: 'The new name it answers on. check_domain first: it must point at this hotel' },
           port: { type: 'integer', description: 'The port the app listens on inside its container' },
-          container_runtime: { type: 'string', description: 'The Docker runtime the guest runs under: "runc" shares the host kernel, "runsc" (gVisor) gives it a kernel of its own, a Kata runtime a microVM. Only runtimes registered in Docker on this host work (system_status does not list them; a wrong name is refused with the list). An empty string means the hotel default' },
+          container_runtime: { type: 'string', description: 'The Docker runtime the guest runs under: "runc" shares the host kernel, "runsc" (gVisor) gives it a kernel of its own, a Kata runtime a microVM. Only runtimes registered in Docker on this host work: system_status lists them under container_runtimes. An empty string means the hotel default' },
           wait_seconds: WAIT_PROPERTY
         },
         required: ['agent_id']
@@ -296,7 +296,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
     },
     system_status: {
-      description: 'Get system information and resource usage',
+      description: 'Get system information: host, Docker version, every guest with the container runtime it is set to run under, and container_runtimes: the runtimes Docker on this host has registered (the names update_agent takes as container_runtime), what each isolates, and the hotel default',
       inputSchema: { type: 'object', properties: {} }
     },
     list_runtimes: {
@@ -978,15 +978,46 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
 
       case 'system_status': {
         const { execSync } = require('child_process');
-        const agents = db.prepare('SELECT id, name, runtime, status FROM agents').all();
-        const hostname = execSync('hostname').toString().trim();
-        const uptime = execSync('uptime').toString().trim();
-        const dockerVersion = execSync('docker --version').toString().trim();
-        
+        // One command that is missing must not cost the whole answer.
+        const run = (cmd) => {
+          try { return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch (_) { return null; }
+        };
+        const hostname = run('hostname');
+        const uptime = run('uptime');
+        const dockerVersion = run('docker --version');
+
+        // The runtimes a guest can be moved to with update_agent's
+        // container_runtime, so an agent does not have to guess a name.
+        const setting = db.prepare('SELECT value FROM settings WHERE key = ?').get(containerRuntime.SETTING_KEY)?.value || '';
+        const hotel = containerRuntime.chosenRuntime({}, { setting });
+        let container_runtimes;
+        let dockerDefault = null;
+        try {
+          const registered = await containerRuntime.registeredRuntimes(docker);
+          dockerDefault = registered.dockerDefault;
+          container_runtimes = {
+            available: registered.runtimes,
+            hotel_default: hotel.name || dockerDefault,
+            hotel_default_source: hotel.source,
+            applies: 'on the guest\'s next redeploy; update_agent with container_runtime saves and redeploys'
+          };
+        } catch (err) {
+          container_runtimes = { error: `Docker did not say which runtimes it has: ${err.message}` };
+        }
+
+        // Each guest's container runtime as chosen (its own, else the hotel's);
+        // its config itself stays out, it can hold keys.
+        const agents = db.prepare('SELECT id, name, runtime, status, config FROM agents').all().map(({ config, ...a }) => {
+          let own = {};
+          try { own = JSON.parse(config || '{}'); } catch (_) {}
+          const chosen = containerRuntime.chosenRuntime(own, { setting });
+          return { ...a, container_runtime: chosen.name || dockerDefault, container_runtime_source: chosen.source };
+        });
+
         return {
           content: [{
             type: 'text',
-            text: JSON.stringify({ hostname, uptime, dockerVersion, agents }, null, 2)
+            text: JSON.stringify({ hostname, uptime, dockerVersion, container_runtimes, agents }, null, 2)
           }]
         };
       }

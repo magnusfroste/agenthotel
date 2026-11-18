@@ -366,6 +366,29 @@ test('update_agent refuses a runtime Docker does not have, and leaves the guest 
   assert.strictEqual(row(GAME).config, before);
 });
 
+// 2026-11-18: update_agent named system_status as the place to find the
+// runtimes, and system_status did not list them, so an agent had to guess.
+test('system_status lists the runtimes a guest can run under, and which one each guest is set to', async () => {
+  const { db, server } = setup();
+  db.prepare("INSERT INTO agents (id, name, runtime, domain, port, config, status) VALUES ('hermes-porter-1', 'porter', 'hermes', 'porter.example.org', 9119, ?, 'running')")
+    .run(JSON.stringify({ CONTAINER_RUNTIME: 'runsc', OPENAI_API_KEY: 'sk-example-not-a-key' }));
+
+  const out = await call(server, 'system_status', {});
+  assert.deepStrictEqual(out.container_runtimes.available.map(r => [r.name, r.isDockerDefault, r.isolation.kind]),
+    [['runc', true, 'container'], ['runsc', false, 'gvisor']]);
+  assert.strictEqual(out.container_runtimes.hotel_default, 'runc');
+  assert.strictEqual(out.container_runtimes.hotel_default_source, 'docker');
+  const by = Object.fromEntries(out.agents.map(a => [a.name, [a.container_runtime, a.container_runtime_source]]));
+  assert.deepStrictEqual(by, { geogeniet: ['runc', 'docker'], porter: ['runsc', 'guest'] });
+  assert.ok(!JSON.stringify(out).includes('sk-example'), 'a guest\'s config stays out of the answer');
+
+  db.prepare("INSERT INTO settings VALUES ('default_container_runtime', 'runsc')").run();
+  const later = await call(server, 'system_status', {});
+  assert.strictEqual(later.container_runtimes.hotel_default, 'runsc');
+  assert.strictEqual(later.container_runtimes.hotel_default_source, 'setting');
+  assert.deepStrictEqual(later.agents.find(a => a.name === 'geogeniet').container_runtime, 'runsc');
+});
+
 test('update_agent refuses what it cannot do, before it touches anything', async () => {
   const { db, server, redeploys } = withRedeploy();
   db.prepare("INSERT INTO agents (id, name, runtime, domain, port, config, status) VALUES ('hermes-porter-1', 'porter', 'hermes', 'porter.example.org', 9119, '{}', 'running')").run();
