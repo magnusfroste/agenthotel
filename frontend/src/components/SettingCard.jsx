@@ -39,7 +39,9 @@ export default function SettingCard({ title, icon: Icon, description, fields }) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       })
-      if (!res.ok) throw new Error('Saving failed')
+      // The server says why it refused (a runtime Docker lacks, a bad
+      // domain); "Saving failed" alone left the operator guessing.
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Saving failed')
       setOriginal(values)
       toast.success(`${title} saved`)
     } catch (err) {

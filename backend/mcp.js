@@ -8,6 +8,7 @@ const {
 } = require('./lib/observability');
 const { listTemplates, getTemplate, saveTemplate, materializeDeploy } = require('./lib/templates');
 const { domainProblem } = require('./lib/domainName');
+const containerRuntime = require('./lib/containerRuntime');
 const { createDomainCheck, parentOf } = require('./lib/domainCheck');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
@@ -181,13 +182,14 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
     },
     update_agent: {
-      description: "Move a guest to another domain or change the port the panel sends its traffic to, without deleting and creating it again: its id, volumes and deploy history stay. Applied by redeploying the guest, which replaces its container (and for a Git App builds its ref again). Config values that carried the old domain follow the new one. If the build fails the guest keeps running where it was and nothing is changed. For environment variables use set_agent_env",
+      description: "Move a guest to another domain, change the port the panel sends its traffic to, or change the container runtime it runs under, without deleting and creating it again: its id, volumes and deploy history stay. Applied by redeploying the guest, which replaces its container (and for a Git App builds its ref again). Config values that carried the old domain follow the new one. If the build fails, or the runtime is not registered in Docker on this host, the guest keeps running where it was and nothing is changed. For environment variables use set_agent_env",
       inputSchema: {
         type: 'object',
         properties: {
           agent_id: { type: 'string', description: 'The agent ID' },
           domain: { type: 'string', description: 'The new name it answers on. check_domain first: it must point at this hotel' },
           port: { type: 'integer', description: 'The port the app listens on inside its container' },
+          container_runtime: { type: 'string', description: 'The Docker runtime the guest runs under: "runc" shares the host kernel, "runsc" (gVisor) gives it a kernel of its own, a Kata runtime a microVM. Only runtimes registered in Docker on this host work (system_status does not list them; a wrong name is refused with the list). An empty string means the hotel default' },
           wait_seconds: WAIT_PROPERTY
         },
         required: ['agent_id']
@@ -580,7 +582,9 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       case 'update_agent': {
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(args.agent_id);
         if (!agent) return fail('Agent not found');
-        if (args.domain === undefined && args.port === undefined) return fail('Nothing to change: give domain, port or both');
+        if (args.domain === undefined && args.port === undefined && args.container_runtime === undefined) {
+          return fail('Nothing to change: give domain, port or container_runtime');
+        }
         if (composeManaged(agent.runtime)) {
           return fail(`${agent.name} runs its own containers (${agent.runtime}); update_agent does not move such a guest`);
         }
@@ -601,8 +605,18 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           if (badPort) return fail(badPort);
           port = args.port;
         }
-        if (domain === agent.domain && port === agent.port) {
-          return ok({ success: true, agent_id: agent.id, changed: false, domain, port });
+        let config = {};
+        try { config = JSON.parse(agent.config || '{}'); } catch (_) {}
+        const runtimeBefore = config[containerRuntime.CONFIG_KEY] || '';
+        let runtimeAfter = runtimeBefore;
+        if (args.container_runtime !== undefined) {
+          if (typeof args.container_runtime !== 'string') return fail('container_runtime must be a runtime name, or "" for the hotel default');
+          runtimeAfter = args.container_runtime.trim();
+          try { await containerRuntime.assertRuntimeUsable(docker, runtimeAfter); }
+          catch (err) { return fail(err.message); }
+        }
+        if (domain === agent.domain && port === agent.port && runtimeAfter === runtimeBefore) {
+          return ok({ success: true, agent_id: agent.id, changed: false, domain, port, container_runtime: runtimeAfter });
         }
         if (domain !== agent.domain) {
           const taken = domainTaken(domain, agent.id);
@@ -611,15 +625,19 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
 
         // Values written from the old domain follow it (lib/orphans.js), and
         // the PORT field says what the port column says.
-        let config = {};
-        try { config = JSON.parse(agent.config || '{}'); } catch (_) {}
         const moved = require('./lib/orphans').withDomainChanged(config, agent.domain, domain);
         config = moved.config;
         if (port !== agent.port && config.PORT !== undefined) config = { ...config, PORT: String(port) };
+        if (runtimeAfter !== runtimeBefore) {
+          config = { ...config };
+          if (runtimeAfter) config[containerRuntime.CONFIG_KEY] = runtimeAfter;
+          else delete config[containerRuntime.CONFIG_KEY];
+        }
 
         const changes = [
           domain !== agent.domain ? `${agent.domain || 'no domain'} → ${domain}` : null,
-          port !== agent.port ? `port ${agent.port} → ${port}` : null
+          port !== agent.port ? `port ${agent.port} → ${port}` : null,
+          runtimeAfter !== runtimeBefore ? `runtime ${runtimeBefore || 'hotel default'} → ${runtimeAfter || 'hotel default'}` : null
         ].filter(Boolean).join(', ');
 
         if (!redeployAgent) return fail('Redeploys unavailable');
@@ -639,7 +657,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           await dropOldRoute();
           logEvent('agent.update', agent.id, `Updated agent ${agent.name} over MCP: ${changes}`);
           const warning = await dns;
-          return ok({ success: true, agent_id: agent.id, status: 'running', changed: true, domain, port, ...(warning ? { warning } : {}) });
+          return ok({ success: true, agent_id: agent.id, status: 'running', changed: true, domain, port, ...(args.container_runtime !== undefined ? { container_runtime: runtimeAfter } : {}), ...(warning ? { warning } : {}) });
         }, async (err) => {
           if (/left running/.test(err.message)) {
             // The build failed before anything was taken down: the guest still
@@ -652,7 +670,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
           logEvent('agent.update', agent.id, `Updated agent ${agent.name} over MCP: ${changes}, and its deploy failed`);
           return fail({
             error: err.message, agent_id: agent.id, changed: true, domain, port,
-            next: 'The new domain and port are saved, but the guest did not come back up. get_deploy_log shows why; redeploy_agent retries'
+            next: 'The changes are saved, but the guest did not come back up. get_deploy_log shows why; redeploy_agent retries'
           });
         });
 

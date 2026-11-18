@@ -26,6 +26,7 @@ const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { openExportZip } = require('./lib/exportZip');
 const { domainProblem } = require('./lib/domainName');
+const containerRuntime = require('./lib/containerRuntime');
 const volumeTar = require('./lib/volumeTar');
 const netbirdPublish = require('./lib/netbirdPublish');
 const { sendNotification, anyChannelConfigured } = require('./lib/notify');
@@ -499,6 +500,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   if (!settings.session_timeout) settings.session_timeout = '60';
   if (!settings.default_memory_limit) settings.default_memory_limit = '';
   if (!settings.default_cpu_limit) settings.default_cpu_limit = '';
+  if (!settings[containerRuntime.SETTING_KEY]) settings[containerRuntime.SETTING_KEY] = '';
   if (!settings.theme) settings.theme = 'dark';
   if (!settings.language) settings.language = 'sv';
   if (!settings.timezone) settings.timezone = 'Europe/Stockholm';
@@ -510,6 +512,12 @@ app.put('/api/settings', requireAuth, async (req, res) => {
   try {
     const badPanelDomain = domainProblem(req.body?.panel_domain);
     if (badPanelDomain) return res.status(400).json({ error: badPanelDomain });
+    // The hotel's default runtime applies to every guest's next deploy, so one
+    // Docker does not have would fail them all: refuse it here instead.
+    if (req.body && containerRuntime.SETTING_KEY in req.body) {
+      try { await containerRuntime.assertRuntimeUsable(docker, req.body[containerRuntime.SETTING_KEY]); }
+      catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+    }
     let domainChanged = false;
     let newDomain = null;
     let oldDomain = null;
@@ -2529,7 +2537,12 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
   // and a negative oom_score_adj — see docker-compose.yml). Defaults come
   // from host-wide env vars; per-agent overrides live in the agent config
   // (MEMORY_LIMIT_MB / CPU_LIMIT). Set a very high value to opt out.
-  const { MEMORY_LIMIT_MB, CPU_LIMIT, ...envConfig } = config;
+  const { MEMORY_LIMIT_MB, CPU_LIMIT, [containerRuntime.CONFIG_KEY]: _containerRuntime, ...envConfig } = config;
+  // The runtime the guest runs under (lib/containerRuntime.js). Checked before
+  // the image is built, so a guest that asked for one this host lacks fails at
+  // once and clearly rather than at createContainer.
+  const isolation = guestRuntime(config);
+  await containerRuntime.assertRuntimeUsable(docker, isolation.name);
   // Tell the guest which hostnames it answers to. A container cannot discover
   // this — it sees a Host header per request and never learns the set — so a
   // guest that serves several sites cannot tell a domain routed here with
@@ -2661,6 +2674,11 @@ async function deployAgent(id, name, runtime, domain, image, port, config, plugi
       'agenthotel.name': name
     }
   };
+
+  if (isolation.name) {
+    containerConfig.HostConfig.Runtime = isolation.name;
+    containerConfig.Labels['agenthotel.container-runtime'] = isolation.name;
+  }
 
   if (runtime === 'hermes') {
     containerConfig.Cmd = ['gateway', 'run'];
@@ -3242,6 +3260,14 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       }
     }
 
+    // Settings are saved and the guest restarted below; a runtime this host
+    // does not have would leave it stopped, so nothing is saved instead.
+    if (composeManaged(agent.runtime) && updatedConfig[containerRuntime.CONFIG_KEY]) {
+      return res.status(400).json({ error: 'A compose guest sets its runtime per service in its compose file' });
+    }
+    try { await containerRuntime.assertRuntimeUsable(docker, guestRuntime(updatedConfig).name); }
+    catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+
     db.prepare("UPDATE agents SET config = ?, domain = ?, status = 'updating', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(JSON.stringify(updatedConfig), updatedDomain, req.params.id);
 
@@ -3350,6 +3376,80 @@ app.post('/api/agents/:id/resources', requireAuth, async (req, res) => {
   }
 });
 
+// The runtime a guest runs under: its own choice, else the hotel's (panel
+// setting, then DEFAULT_AGENT_RUNTIME), else Docker's default.
+function guestRuntime(config) {
+  const setting = db.prepare('SELECT value FROM settings WHERE key = ?').get(containerRuntime.SETTING_KEY)?.value || '';
+  return containerRuntime.chosenRuntime(config, { setting });
+}
+
+// What this host can run guests under, and the hotel's default.
+app.get('/api/container-runtimes', requireAuth, async (req, res) => {
+  try {
+    const registered = await containerRuntime.registeredRuntimes(docker);
+    const hotel = guestRuntime({});
+    res.json({ ...registered, hotelDefault: hotel.name || registered.dockerDefault, hotelDefaultSource: hotel.source });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// A guest's runtime: what it asked for, what that resolves to, and what its
+// container runs under now. The two differ until the next redeploy, because a
+// container's runtime cannot change while it runs.
+app.get('/api/agents/:id/container-runtime', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const config = JSON.parse(agent.config || '{}');
+    const { dockerDefault } = await containerRuntime.registeredRuntimes(docker);
+    const chosen = guestRuntime(config);
+    let running = null;
+    try {
+      const info = await docker.getContainer(`agenthotel-${agent.id}`).inspect();
+      running = info.HostConfig?.Runtime || dockerDefault;
+    } catch (e) { /* no container: nothing runs */ }
+    const effective = chosen.name || dockerDefault;
+    res.json({
+      saved: config[containerRuntime.CONFIG_KEY] || '',
+      effective,
+      source: chosen.source,
+      isolation: containerRuntime.isolationOf(effective),
+      running,
+      runningIsolation: running ? containerRuntime.isolationOf(running) : null,
+      pendingRedeploy: running !== null && running !== effective,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Choose a guest's runtime. Saved only; it takes effect on the next redeploy,
+// which the caller starts (the panel asks first, since a redeploy restarts the
+// guest). An empty runtime means the hotel default.
+app.post('/api/agents/:id/container-runtime', requireAuth, async (req, res) => {
+  try {
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    if (composeManaged(agent.runtime)) return res.status(400).json({ error: 'A compose guest sets its runtime per service in its compose file' });
+    const wanted = typeof req.body?.runtime === 'string' ? req.body.runtime.trim() : '';
+    try { await containerRuntime.assertRuntimeUsable(docker, wanted); }
+    catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+
+    const config = JSON.parse(agent.config || '{}');
+    if (wanted) config[containerRuntime.CONFIG_KEY] = wanted;
+    else delete config[containerRuntime.CONFIG_KEY];
+    db.prepare('UPDATE agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(config), agent.id);
+
+    const effective = guestRuntime(config).name || (await containerRuntime.registeredRuntimes(docker)).dockerDefault;
+    logEvent('agent.config', agent.id, `Container runtime set to ${wanted || `the hotel default (${effective})`}, applied on next redeploy`);
+    res.json({ updated: true, saved: wanted, effective, applied: 'on next redeploy' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The one way an agent is redeployed — the Redeploy button, and anything that
 // changes an agent's config behind the scenes, such as connecting it to
 // SkillHub. Kept in one place so the status handling below applies to all.
@@ -3366,6 +3466,10 @@ function withCurrentLimits(agentId, config) {
     for (const key of ['MEMORY_LIMIT_MB', 'CPU_LIMIT']) {
       if (saved[key] !== undefined) out[key] = saved[key];
     }
+    // The runtime too, and its removal: one cleared during a build means the
+    // hotel default again (lib/containerRuntime.js).
+    if (saved[containerRuntime.CONFIG_KEY] !== undefined) out[containerRuntime.CONFIG_KEY] = saved[containerRuntime.CONFIG_KEY];
+    else delete out[containerRuntime.CONFIG_KEY];
     return out;
   } catch (e) {
     return config;
@@ -3428,6 +3532,14 @@ async function runRedeploy(agent, plugin, savedConfig, rebuildImage, gateEntry, 
         } catch (err) {
           db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
           throw new Error(`Build failed, the agent was left running: ${err.message}`);
+        }
+        // Before the old container goes: a runtime that was uninstalled, or a
+        // hotel default that names one, must not leave the guest stopped.
+        try {
+          await containerRuntime.assertRuntimeUsable(docker, guestRuntime(withCurrentLimits(agentId, config)).name);
+        } catch (err) {
+          db.prepare("UPDATE agents SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(agentId);
+          throw new Error(`The agent was left running: ${err.message}`);
         }
         const container = docker.getContainer(`agenthotel-${agentId}`);
         // Separately: stopping a container that is already stopped throws

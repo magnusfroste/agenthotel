@@ -2,7 +2,7 @@
 // about — e.g. provider slug vars (HERTZNER_API_KEY, HERTZNER_BASE_URL)
 // injected by injectProviderEnv. Plugins that whitelist their env keys
 // would otherwise silently drop injected provider credentials.
-const INTERNAL_KEYS = new Set(['domain', 'volumes', 'CUSTOM_ENV', 'MEMORY_LIMIT_MB', 'CPU_LIMIT']);
+const INTERNAL_KEYS = new Set(['domain', 'volumes', 'CUSTOM_ENV', 'MEMORY_LIMIT_MB', 'CPU_LIMIT', 'CONTAINER_RUNTIME']);
 
 function appendUnknownEnv(env, config, knownKeys) {
   const known = new Set(knownKeys);

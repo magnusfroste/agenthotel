@@ -358,6 +358,7 @@ function AgentDetail() {
           <AgentSource agent={agent} onSaved={fetchAgent} />
           <AgentStats agentId={id} />
           <AgentResources agentId={id} config={agent.config} runtime={agent.runtime} onSaved={fetchAgent} />
+          <AgentIsolation agentId={id} runtime={agent.runtime} onRedeploy={() => handleAction('redeploy', 'POST')} />
           <AgentUptime agentId={id} />
         </div>
       )}
@@ -1066,6 +1067,102 @@ function AgentResources({ agentId, config, runtime, onSaved }) {
       <button className="btn btn-primary" disabled={!dirty || saving} onClick={save} style={{ marginTop: '0.9rem' }}>
         {saving ? 'Applying…' : 'Apply limits'}
       </button>
+    </div>
+  )
+}
+
+// Which container runtime the guest runs under (backend lib/containerRuntime.js).
+// runc shares the host kernel with every guest; gVisor (runsc) or a microVM
+// runtime gives this one a kernel of its own. A container's runtime cannot
+// change while it runs, so a new choice waits for the next redeploy, which
+// this offers but does not start on its own.
+function AgentIsolation({ agentId, runtime, onRedeploy }) {
+  const toast = useToast()
+  const [state, setState] = useState(null)
+  const [hotel, setHotel] = useState(null)
+  const [choice, setChoice] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function load() {
+    try {
+      const [mine, all] = await Promise.all([
+        authFetch(`/api/agents/${agentId}/container-runtime`).then(r => r.json()),
+        authFetch('/api/container-runtimes').then(r => r.json()),
+      ])
+      if (mine.error || all.error) return
+      setState(mine)
+      setHotel(all)
+      setChoice(mine.saved || '')
+    } catch (err) { /* the section stays hidden */ }
+  }
+
+  useEffect(() => { load() }, [agentId])
+
+  if (runtime === 'compose' || !state || !hotel) return null
+
+  const options = hotel.runtimes || []
+  const dirty = choice !== (state.saved || '')
+  const label = name => {
+    const r = options.find(o => o.name === name)
+    return r ? `${name} — ${r.isolation.label}` : name
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      const res = await authFetch(`/api/agents/${agentId}/container-runtime`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runtime: choice }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.updated) { toast.error(data.error || 'Could not save the runtime'); return }
+      toast.success(`Saved: ${data.effective} on the next redeploy`)
+      await load()
+    } catch (err) {
+      toast.error('Could not save the runtime: ' + err.message)
+    } finally { setSaving(false) }
+  }
+
+  function redeploy() {
+    if (!confirm(`Redeploy now to run under ${state.effective}?\n\nThe agent restarts, which ends its open conversations.`)) return
+    onRedeploy?.()
+  }
+
+  return (
+    <div className="stats-section">
+      <h3 className="stats-section-title">Isolation</h3>
+      <div style={{ fontSize: '0.85rem', marginBottom: '0.6rem' }}>
+        {state.running
+          ? <>Runs under <strong>{state.running}</strong>. {state.runningIsolation?.label}</>
+          : <>Not running. It will run under <strong>{state.effective}</strong>.</>}
+      </div>
+
+      <div className="form-group" style={{ marginBottom: '0.6rem' }}>
+        <label className="form-label" htmlFor={`isolation-${agentId}`}>Container runtime</label>
+        <select id={`isolation-${agentId}`} className="form-input" value={choice} onChange={e => setChoice(e.target.value)}>
+          <option value="">Hotel default ({hotel.hotelDefault})</option>
+          {options.map(o => <option key={o.name} value={o.name}>{label(o.name)}</option>)}
+        </select>
+        <div className="form-help">
+          Only runtimes registered in Docker on this host are listed. gVisor needs no KVM; a microVM runtime does.
+        </div>
+      </div>
+
+      {state.pendingRedeploy && !dirty && (
+        <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginBottom: '0.6rem' }}>
+          Saved as {state.effective}, still running under {state.running} until the next redeploy.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" disabled={!dirty || saving} onClick={save}>
+          {saving ? 'Saving…' : 'Save runtime'}
+        </button>
+        {state.pendingRedeploy && !dirty && (
+          <button className="btn btn-secondary" onClick={redeploy}>Redeploy now</button>
+        )}
+      </div>
     </div>
   )
 }

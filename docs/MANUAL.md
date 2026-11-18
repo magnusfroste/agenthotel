@@ -470,6 +470,24 @@ Agents can never starve the panel or freeze the host:
 - Per agent: set `CPU_LIMIT` (cores) / `MEMORY_LIMIT_MB` on the Environment tab, applied on redeploy. Host-wide defaults: `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB` in the backend environment.
 - Limits apply to containers created after the change — redeploy existing agents to enforce them.
 
+## Guest Isolation
+
+Every guest runs under Docker's default runtime, runc, unless told otherwise: an ordinary container that shares the host kernel with every other guest. A guest can run under another runtime Docker has registered instead, with the same image:
+
+- **gVisor (`runsc`)** gives the guest a kernel of its own in user space. It needs no hardware virtualisation, so it works on a VPS without KVM. System calls cost more: an idle Hermes used about 14 % of a core under runsc against 2 % under runc; browser recording (Take) ran at full frame rate.
+- **Kata Containers / Firecracker** give each guest a small VM with its own kernel. They need `/dev/kvm` on the host.
+
+Choose per guest on its Overview tab (Isolation), over the panel MCP (`update_agent` with `container_runtime`), or for the whole hotel on the System page (Guest isolation, setting `default_container_runtime`; `DEFAULT_AGENT_RUNTIME` in the backend environment when the setting is empty). A guest's own choice wins. The change applies on the guest's next redeploy. Compose guests set a runtime per service in their compose file.
+
+The runtime must be registered with Docker first. For gVisor, install `runsc` from gVisor's apt repository, then:
+
+```sh
+sudo runsc install            # adds "runsc" under "runtimes" in /etc/docker/daemon.json
+sudo systemctl reload docker  # reloads the runtime list; running containers keep running
+```
+
+Do not restart Docker for this: without `live-restore` a restart stops every guest. A runtime Docker does not have is refused before anything is saved or torn down, with the list of the ones it has.
+
 ## Operations
 
 - **Backups / migration** — System page: full instance export/import, or per-agent zip export (optionally including volume data; stop the agent first for a consistent copy).

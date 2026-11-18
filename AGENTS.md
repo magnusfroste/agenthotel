@@ -17,6 +17,7 @@ The panel is self-protecting (no Docker Swarm — deliberately, plain Docker onl
 - Panel containers (backend/frontend/caddy) run with `cpu_shares: 2048` and `oom_score_adj: -500`
 - Agent containers are created with `cpu_shares: 256`, `OomScoreAdj: 500`, `PidsLimit: 512`, plus CPU/RAM caps (defaults 1 core / 1024 MB, overridable per agent via `CPU_LIMIT` / `MEMORY_LIMIT_MB` in the agent config, host-wide via `DEFAULT_AGENT_CPU` / `DEFAULT_AGENT_MEM_MB`)
 - Shares only matter under CPU saturation, so agents use all idle capacity but can never starve the panel
+- Agent containers run under Docker's default runtime (runc) unless `CONTAINER_RUNTIME` in the agent config, the `default_container_runtime` setting or `DEFAULT_AGENT_RUNTIME` names another registered one, such as gVisor's `runsc` (`backend/lib/containerRuntime.js`). It is checked against `docker info` before a guest is torn down, and never passed to the guest as env
 
 ## Critical Build Details
 
