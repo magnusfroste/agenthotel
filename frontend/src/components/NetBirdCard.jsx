@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Network, Power } from 'lucide-react'
 import { authFetch } from '../lib/auth'
+import { formatTime } from '../lib/time'
 import { useToast } from './Toast'
 
 // NetBird (backend/lib/netbird.js): the hotel as a peer on a WireGuard mesh —
@@ -249,7 +250,7 @@ export default function NetBirdCard() {
                 <button className="btn btn-secondary" onClick={() => setPublish(false)} disabled={publishBusy}>Stop publishing</button>
                 <span className="section-hint" style={{ margin: 0 }}>
                   Token <span data-secret="" className="text-mono">{publish.apiToken}</span>
-                  {report?.at && <> · synced {new Date(report.at).toLocaleTimeString()}</>}
+                  {report?.at && <> · synced {formatTime(report.at)}</>}
                 </span>
               </div>
             </>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
+import { formatDateTime } from '../lib/time'
 import { AlertTriangle } from 'lucide-react'
 
 // Replies that failed at the model (backend lib/modelErrors.js). The agent is
@@ -17,7 +18,7 @@ const KIND_LABEL = {
   other: 'Model call failed'
 }
 
-const when = (ms) => new Date(ms).toLocaleString()
+const when = (ms) => formatDateTime(ms)
 
 // One line for the dashboard card, from the summary in the agents list.
 export function ModelErrorsLine({ summary }) {

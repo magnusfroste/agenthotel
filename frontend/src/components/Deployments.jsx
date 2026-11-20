@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, GitCommit, Undo2 } from 'lucide-react'
 import { authFetch, authFetchOk } from '../lib/auth'
+import { formatDate, formatDateTime } from '../lib/time'
 import { useToast } from './Toast'
 
 // An agent's deploys, newest first, and the full log of the one selected —
@@ -37,7 +38,7 @@ function ago(ms) {
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
-  return new Date(ms).toLocaleDateString()
+  return formatDate(ms)
 }
 
 function StatusBadge({ status }) {
@@ -144,7 +145,7 @@ export default function Deployments({ agentId, rollbackable = false }) {
   // A rollback lasts as long as its deploy; the list shows it from the start.
   async function rollBack(d) {
     const short = d.commit_sha.slice(0, 7)
-    if (!confirm(`Roll back to ${short}, deployed ${new Date(d.queued_at).toLocaleString()}?\n\nThe agent is built from that commit again and restarts. Its branch setting is unchanged, so the next redeploy brings it back up to date.`)) return
+    if (!confirm(`Roll back to ${short}, deployed ${formatDateTime(d.queued_at)}?\n\nThe agent is built from that commit again and restarts. Its branch setting is unchanged, so the next redeploy brings it back up to date.`)) return
     setRolling(true)
     const done = authFetchOk(`/api/agents/${agentId}/rollback`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deploymentId: d.id })
@@ -180,7 +181,7 @@ export default function Deployments({ agentId, rollbackable = false }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <StatusBadge status={current.status} />
               <span style={{ fontSize: '0.85rem' }}>{KIND[current.kind] || current.kind} #{current.id}</span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(current.queued_at).toLocaleString()} · {duration(current)}</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatDateTime(current.queued_at)} · {duration(current)}</span>
             </div>
             {!done && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Following live…</span>}
             {done && rollbackable && canRollBack(current) && running && current.id !== running.id && current.commit_sha !== running.commit_sha && (

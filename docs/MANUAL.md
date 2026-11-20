@@ -519,3 +519,4 @@ Do not restart Docker for this: without `live-restore` a restart stops every gue
   agent reaches `[gateway] ready` without restarting.
 - **Cleanup** — daily automatic Docker prune (agent volumes are never touched); history on the System page.
 - **Alerts** — webhook (Slack/Discord) or Telegram notifications for agent down/recovered and host disk/memory thresholds.
+- **Time zone** — Settings → Time zone picks the zone every time in the panel is shown in (deploys, events, backups, certificates). Unset, each browser shows times where it is. Display only: the hotel's clock, logs and scheduled jobs stay on UTC.

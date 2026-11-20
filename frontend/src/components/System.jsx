@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk, setToken } from '../lib/auth'
+import { formatDateTime } from '../lib/time'
 import { useToast } from './Toast'
 import NetBirdCard from './NetBirdCard'
 import DiskByAgent from './DiskByAgent'
@@ -697,7 +698,7 @@ sysctl -w vm.swappiness=10`}</pre>
               <tbody>
                 {cleanupHistory.map((log) => (
                   <tr key={log.id}>
-                    <td>{new Date(log.executed_at).toLocaleString()}</td>
+                    <td>{formatDateTime(log.executed_at)}</td>
                     <td>
                       <span className={log.success ? 'text-success' : 'text-danger'}>
                         {log.success ? '✓ Success' : '✗ Failed'}
@@ -748,7 +749,7 @@ sysctl -w vm.swappiness=10`}</pre>
                 {orphanedVolumes.map((v) => (
                   <tr key={v.name}>
                     <td className="text-mono">{v.name}</td>
-                    <td>{v.createdAt ? new Date(v.createdAt).toLocaleString() : '—'}</td>
+                    <td>{formatDateTime(v.createdAt)}</td>
                     <td className="num">
                       <button className="btn btn-danger" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }} onClick={() => deleteVolume(v.name)}>
                         Delete
@@ -782,7 +783,7 @@ sysctl -w vm.swappiness=10`}</pre>
               <tbody>
                 {events.map((event) => (
                   <tr key={event.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(event.ts + 'Z').toLocaleString()}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(event.ts)}</td>
                     <td>
                       <span className={event.type.includes('down') || event.type.includes('delete') ? 'badge-danger' : 'badge-success'} style={{
                         padding: '0.15rem 0.5rem', borderRadius: '1rem', fontSize: '0.72rem', fontWeight: 600

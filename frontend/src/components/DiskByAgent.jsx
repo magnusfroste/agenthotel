@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { HardDrive, RefreshCw } from 'lucide-react'
 import { authFetch } from '../lib/auth'
+import { formatTime } from '../lib/time'
 
 // Where the disk goes, per agent (GET /api/system/disk, lib/diskUsage.js).
 // An agent's total is what it alone holds: its volumes (its memory, files,
@@ -126,7 +127,7 @@ export default function DiskByAgent() {
       )}
       {report?.measuredAt && (
         <p className="section-description" style={{ marginTop: '0.5rem' }}>
-          Measured {new Date(report.measuredAt).toLocaleTimeString()}.
+          Measured {formatTime(report.measuredAt)}.
         </p>
       )}
     </section>
