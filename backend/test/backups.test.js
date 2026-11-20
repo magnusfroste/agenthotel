@@ -58,3 +58,42 @@ test('local backups are listed newest first with their size', () => {
   assert.strictEqual(list[0].bytes, 2);
   assert.deepStrictEqual(b.listLocal('nobody', root), []);
 });
+
+// 2026-11-20: one part of a 3 GB upload sat on a silent socket for over an
+// hour, and the night's run never finished.
+function fakeUpload() {
+  const handlers = [];
+  let finish;
+  const up = {
+    aborted: false,
+    on: (ev, fn) => { if (ev === 'httpUploadProgress') handlers.push(fn); },
+    progress: (loaded) => handlers.forEach(fn => fn({ loaded })),
+    done: () => new Promise(resolve => { finish = resolve; }),
+    finish: () => finish(),
+    abort: async () => { up.aborted = true; },
+  };
+  return up;
+}
+
+test('an upload that stops moving is aborted, and the run goes on with an error', async () => {
+  let clock = 0;
+  const up = fakeUpload();
+  const waiting = b.doneOrStalled(up, { stallMs: 1000, checkMs: 5, label: 'big.tar.gz', now: () => clock });
+  up.progress(100); clock = 900; up.progress(200);   // moving
+  clock = 1500;                                       // 600 ms since the last bytes: still fine
+  await new Promise(r => setTimeout(r, 20));
+  assert.strictEqual(up.aborted, false);
+  clock = 2000;                                       // 1100 ms with nothing
+  await assert.rejects(waiting, /big\.tar\.gz: no progress for 0 min, aborted/);
+  assert.strictEqual(up.aborted, true);
+});
+
+test('an upload that keeps moving is waited for, however long it takes', async () => {
+  let clock = 0;
+  const up = fakeUpload();
+  const waiting = b.doneOrStalled(up, { stallMs: 1000, checkMs: 5, now: () => clock });
+  for (let i = 1; i <= 5; i++) { clock += 800; up.progress(i * 100); await new Promise(r => setTimeout(r, 10)); }
+  up.finish();
+  await waiting;
+  assert.strictEqual(up.aborted, false);
+});

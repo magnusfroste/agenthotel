@@ -106,7 +106,37 @@ function s3Client(c) {
     credentials: { accessKeyId: c.accessKey, secretAccessKey: c.secretKey },
     // Hetzner, R2 and MinIO address buckets by path, not by subdomain.
     forcePathStyle: true,
+    // Without these a connection the far end stops answering hangs for ever:
+    // on 2026-11-20 one part of a 3 GB upload to Contabo sat on a silent
+    // socket for over an hour, the night's run never finished, and every
+    // guest after it went without a backup (and the panel could not upgrade,
+    // since an upgrade waits for a backup). requestTimeout is idle time on the
+    // socket, not the length of a request, so a slow upload is fine.
+    requestHandler: { connectionTimeout: 15000, requestTimeout: 120000 },
+    maxAttempts: 5,
   });
+}
+
+// Waits for an @aws-sdk/lib-storage Upload, and aborts it when no bytes have
+// moved for stallMs: the socket timeout catches a dead connection, this
+// catches anything else that stops progress (a part that is retried for ever,
+// a response that never comes).
+function doneOrStalled(upload, { stallMs = 10 * 60 * 1000, checkMs = 15000, label = 'upload', now = Date.now } = {}) {
+  let last = now();
+  let loaded = -1;
+  upload.on('httpUploadProgress', p => {
+    if (p && typeof p.loaded === 'number' && p.loaded !== loaded) { loaded = p.loaded; last = now(); }
+  });
+  let timer;
+  const stalled = new Promise((_, reject) => {
+    timer = setInterval(() => {
+      if (now() - last < stallMs) return;
+      clearInterval(timer);
+      upload.abort().catch(() => {});
+      reject(new Error(`${label}: no progress for ${Math.round(stallMs / 60000)} min, aborted`));
+    }, checkMs);
+  });
+  return Promise.race([upload.done(), stalled]).finally(() => clearInterval(timer));
 }
 
 // Writes and removes a small object: the credentials, the bucket and the
@@ -128,12 +158,13 @@ async function uploadBackup(c, agentName, backupStamp, dir) {
   for (const f of fs.readdirSync(dir)) {
     const file = path.join(dir, f);
     bytes += fs.statSync(file).size;
-    await new Upload({
+    const upload = new Upload({
       client,
       params: { Bucket: c.bucket, Key: `${remotePrefix(c.prefix, agentName)}${backupStamp}/${f}`, Body: fs.createReadStream(file) },
       partSize: 16 * 1024 * 1024,
       queueSize: 2,
-    }).done();
+    });
+    await doneOrStalled(upload, { label: f });
   }
   return bytes;
 }
@@ -173,5 +204,5 @@ async function pruneRemote(c, agentName, keep) {
 module.exports = {
   BACKUP_ROOT, DEFAULTS, SECRET_KEY, KEYS, STAMP_RE,
   stamp, isDue, beyondKeep, readSettings, remotePrefix, listLocal,
-  testS3, uploadBackup, listRemote, pruneRemote,
+  testS3, uploadBackup, listRemote, pruneRemote, doneOrStalled,
 };
