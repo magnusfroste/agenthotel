@@ -4,7 +4,7 @@ import { useAgentUpdates, refreshAgentUpdates, updateText } from '../lib/agentUp
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw, LayoutGrid, List } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
 import { MoveIn } from './HotelTransfer'
 import { ModelErrorsLine } from './ModelErrors'
@@ -52,6 +52,8 @@ function BuildProgress({ agentId }) {
   )
 }
 
+const VIEW_KEY = 'agenthotel.dashboard.view'
+
 function Dashboard() {
   const updates = useAgentUpdates()
   const [agents, setAgents] = useState([])
@@ -61,6 +63,15 @@ function Dashboard() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('name')
+  // Cards or a list, remembered per browser: with forty guests the cards no
+  // longer fit a screen, and a list reads like a register.
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'cards' } catch { return 'cards' }
+  })
+  const chooseView = (v) => {
+    setView(v)
+    try { localStorage.setItem(VIEW_KEY, v) } catch { /* private window: it just is not remembered */ }
+  }
   // Runtime icon and colour come from the template library (meta.yaml), so a
   // card shows the same mark as its template and a new runtime needs no change
   // here. Fetched once — this is presentation metadata, not live state.
@@ -215,6 +226,52 @@ function Dashboard() {
       if (sortBy === 'runtime') return a.runtime.localeCompare(b.runtime) || a.name.localeCompare(b.name)
       return a.name.localeCompare(b.name)
     })
+
+  // Open or Manage, start/stop, redeploy, delete: the same buttons in a card
+  // and in a list row.
+  const actionButtons = (agent, url) => (
+    <>
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
+          <ExternalLink size={14} color="currentColor" /> <span className="btn-label">Open</span>
+        </a>
+      ) : (
+        <Link to={`/agent/${agent.id}`} className="btn btn-secondary">
+          <MoreHorizontal size={14} color="currentColor" /> <span className="btn-label">Manage</span>
+        </Link>
+      )}
+      <button 
+        className="btn" 
+        title={agent.status === 'running' ? 'Stop' : 'Start'} 
+        onClick={(e) => { e.preventDefault(); toggleAgent(agent.id, agent.status) }}
+        style={{ background: agent.status === 'running' ? 'var(--accent-yellow)' : 'var(--accent-green)', color: 'white' }}
+      >
+        {agent.status === 'running' ? <Square size={14} color="white" /> : <Play size={14} color="white" />}
+      </button>
+      {(() => {
+        const update = updates[agent.id]
+        const busy = agent.status === 'creating' || agent.status === 'redeploying'
+        const wanted = Boolean(update && update.updateAvailable)
+        return (
+          <button
+            className={wanted ? 'btn btn-primary' : 'btn btn-secondary'}
+            title={busy ? 'A deploy is running' : wanted ? updateText(update) : 'Redeploy'}
+            disabled={busy}
+            onClick={(e) => { e.preventDefault(); handleRedeploy(agent) }}
+          >
+            <RefreshCw size={14} color="currentColor" />
+          </button>
+        )
+      })()}
+      <button 
+        className="btn btn-danger" 
+        title="Delete" 
+        onClick={(e) => { e.preventDefault(); handleDelete(agent.id, agent.name) }}
+      >
+        <Trash2 size={14} color="white" />
+      </button>
+    </>
+  )
 
   const [showImport, setShowImport] = useState(false)
 
@@ -383,10 +440,54 @@ function Dashboard() {
               <option value="created">Sort: Newest</option>
               <option value="runtime">Sort: Runtime</option>
             </select>
+            <div className="view-toggle" role="group" aria-label="Show guests as">
+              <button type="button" className={view === 'cards' ? 'active' : ''} aria-pressed={view === 'cards'}
+                title="Cards" onClick={() => chooseView('cards')}><LayoutGrid size={16} color="currentColor" /></button>
+              <button type="button" className={view === 'list' ? 'active' : ''} aria-pressed={view === 'list'}
+                title="List" onClick={() => chooseView('list')}><List size={16} color="currentColor" /></button>
+            </div>
           </div>
         )}
         {visibleAgents.length === 0 ? (
           <div className="table-empty" style={{ padding: '3rem' }}>No agents match your search</div>
+        ) : view === 'list' ? (
+        <div className="card data-table-wrap guest-list">
+          <table className="data-table">
+            <thead>
+              <tr><th>Guest</th><th>Status</th><th className="wide-only">Domain</th><th className="wide-only">Health</th><th className="num">Actions</th></tr>
+            </thead>
+            <tbody>
+              {visibleAgents.map(agent => {
+                const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
+                const meta = runtimeMeta[agent.template] || runtimeMeta[agent.runtime]
+                return (
+                  <tr key={agent.id}>
+                    <td>
+                      <Link to={`/agent/${agent.id}`} className="guest-list-name">
+                        <RuntimeMark meta={meta} size={26} iconSize={15} />
+                        <span style={{ minWidth: 0 }}>
+                          <span className="guest-list-title">{agent.name}<UpdateDot status={updates[agent.id]} /></span>
+                          <span className="guest-list-sub">{runtimeMeta[agent.template || agent.runtime]?.name || agent.runtime}</span>
+                        </span>
+                      </Link>
+                    </td>
+                    <td><span className="status-badge" style={{ background: statusColor(agent.status) }}>{agent.status}</span></td>
+                    <td className="guest-list-domain wide-only">
+                      {url ? <a href={url} target="_blank" rel="noopener noreferrer">{agent.domain}</a> : (agent.domain || 'no domain')}
+                    </td>
+                    <td className="guest-list-health wide-only" style={{ color: healthColor(agent.health) }}>
+                      {(agent.status === 'creating' || agent.status === 'redeploying')
+                        ? <BuildProgress agentId={agent.id} />
+                        : <span title={agent.health || ''}>{agent.health ? healthText(agent.health) : '—'}</span>}
+                      <ModelErrorsLine summary={agent.modelErrors} />
+                    </td>
+                    <td className="num"><div className="guest-list-actions">{actionButtons(agent, url)}</div></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
         ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
           {visibleAgents.map(agent => {
@@ -428,45 +529,7 @@ function Dashboard() {
                   </div>
                 </Link>
                 <div className="agent-card-actions">
-                  {url ? (
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
-                      <ExternalLink size={14} color="currentColor" /> Open
-                    </a>
-                  ) : (
-                    <Link to={`/agent/${agent.id}`} className="btn btn-secondary">
-                      <MoreHorizontal size={14} color="currentColor" /> Manage
-                    </Link>
-                  )}
-                  <button 
-                    className="btn" 
-                    title={agent.status === 'running' ? 'Stop' : 'Start'} 
-                    onClick={(e) => { e.preventDefault(); toggleAgent(agent.id, agent.status) }}
-                    style={{ background: agent.status === 'running' ? 'var(--accent-yellow)' : 'var(--accent-green)', color: 'white' }}
-                  >
-                    {agent.status === 'running' ? <Square size={14} color="white" /> : <Play size={14} color="white" />}
-                  </button>
-                  {(() => {
-                    const update = updates[agent.id]
-                    const busy = agent.status === 'creating' || agent.status === 'redeploying'
-                    const wanted = Boolean(update && update.updateAvailable)
-                    return (
-                      <button
-                        className={wanted ? 'btn btn-primary' : 'btn btn-secondary'}
-                        title={busy ? 'A deploy is running' : wanted ? updateText(update) : 'Redeploy'}
-                        disabled={busy}
-                        onClick={(e) => { e.preventDefault(); handleRedeploy(agent) }}
-                      >
-                        <RefreshCw size={14} color="currentColor" />
-                      </button>
-                    )
-                  })()}
-                  <button 
-                    className="btn btn-danger" 
-                    title="Delete" 
-                    onClick={(e) => { e.preventDefault(); handleDelete(agent.id, agent.name) }}
-                  >
-                    <Trash2 size={14} color="white" />
-                  </button>
+                  {actionButtons(agent, url)}
                 </div>
               </div>
             )
