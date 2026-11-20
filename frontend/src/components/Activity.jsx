@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Cpu, MemoryStick, ChevronDown, ChevronUp } from 'lucide-react'
 import { authFetch } from '../lib/auth'
+import { formatTime } from '../lib/time.js'
 
 // Who is using the server right now (GET /api/system/activity,
 // lib/activity.js), drawn the way Activity Monitor and Stats on a Mac do:
@@ -11,6 +12,10 @@ import { authFetch } from '../lib/auth'
 //
 // CPU per guest is given as Activity Monitor does, in percent of one core
 // (200 % = two cores); the server's total is given in cores out of all.
+//
+// Two ranges (2026-11-20): the last hour, one point a minute that the panel
+// keeps all the time, so opening the view shows what already happened; and
+// live, every 3 s for the last 3 minutes, sampled only while it is open.
 
 const KIND = {
   agent: { label: 'Agents', color: '#3b82f6' },
@@ -22,8 +27,12 @@ const KIND = {
   system: { label: 'System', color: 'var(--text-muted)' }
 }
 const STACK = ['agent', 'tool', 'app', 'build', 'hotel', 'other', 'system']
-const POLL_MS = 3000
+const RANGES = {
+  hour: { label: 'Last hour', poll: 15000, ago: '60 min ago' },
+  live: { label: 'Live', poll: 3000, ago: '3 min ago' }
+}
 const COLLAPSED_KEY = 'agenthotel.activity.collapsed'
+const RANGE_KEY = 'agenthotel.activity.range'
 
 const gb = (bytes) => {
   if (!bytes) return '0 MB'
@@ -37,6 +46,21 @@ function readCollapsed() {
 }
 function writeCollapsed(v) {
   try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0') } catch (_) { /* private window */ }
+}
+function readRange() {
+  try { return localStorage.getItem(RANGE_KEY) === 'live' ? 'live' : 'hour' } catch (_) { return 'hour' }
+}
+function writeRange(v) {
+  try { localStorage.setItem(RANGE_KEY, v) } catch (_) { /* private window */ }
+}
+
+// A guest's average over the whole window, a minute it was not running
+// counting as nothing: what the hour ranks by, since "now" is one minute of
+// sixty, and a build that ran ten minutes is not as heavy as one that ran
+// the hour.
+function averageOf(values, points) {
+  const sum = values.reduce((a, v) => a + (v || 0), 0)
+  return points ? sum / points : 0
 }
 
 // The series of one metric per kind, aligned at the newest sample. A guest
@@ -58,7 +82,7 @@ function stackedSeries(snap, metric) {
   return { series, n }
 }
 
-function StackedArea({ snap, metric, max, slots }) {
+function StackedArea({ snap, metric, max, slots, ago }) {
   const { series, n } = useMemo(() => stackedSeries(snap, metric), [snap, metric])
   const W = 300, H = 84
   // Fixed width in time: the curve fills from the right as samples come in,
@@ -79,13 +103,16 @@ function StackedArea({ snap, metric, max, slots }) {
     top.forEach((v, i) => { base[i] = v })
   }
   return (
-    <svg className="activity-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
-      aria-label={`${metric === 'cpu' ? 'CPU' : 'Memory'} over the last ${Math.round(slots * POLL_MS / 60000)} minutes`}>
-      {[0.25, 0.5, 0.75].map(f => (
-        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="activity-grid" vectorEffect="non-scaling-stroke" />
-      ))}
-      {paths}
-    </svg>
+    <>
+      <svg className="activity-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
+        aria-label={`${metric === 'cpu' ? 'CPU' : 'Memory'} over the last ${Math.round(slots * snap.intervalMs / 60000)} minutes`}>
+        {[0.25, 0.5, 0.75].map(f => (
+          <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="activity-grid" vectorEffect="non-scaling-stroke" />
+        ))}
+        {paths}
+      </svg>
+      <div className="activity-axis" aria-hidden="true"><span>{ago}</span><span>now</span></div>
+    </>
   )
 }
 
@@ -97,17 +124,19 @@ function Sparkline({ values, max, color }) {
   const d = pts.map(([i, v], k) => `${k ? 'L' : 'M'}${(i * step).toFixed(1)},${(H - 1 - Math.min(v / max, 1) * (H - 2)).toFixed(1)}`).join(' ')
   return (
     <svg className="activity-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-      <path d={`${d} L${((values.length - 1) * step).toFixed(1)},${H} L${(pts[0][0] * step).toFixed(1)},${H} Z`} fill={color} fillOpacity="0.15" />
+      <path d={`${d} L${(pts[pts.length - 1][0] * step).toFixed(1)},${H} L${(pts[0][0] * step).toFixed(1)},${H} Z`} fill={color} fillOpacity="0.15" />
       <path d={d} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
     </svg>
   )
 }
 
-function Panel({ snap, metric, showAll }) {
+function Panel({ snap, metric, showAll, range }) {
   const isCpu = metric === 'cpu'
+  const hour = range === 'hour'
   const max = isCpu ? snap.host.cores : snap.host.mem.total
   const now = isCpu ? snap.host.cpu || 0 : snap.host.mem.used
-  const valueOf = (item) => (isCpu ? item.cores || 0 : item.mem)
+  const points = snap.host.history[metric].length
+  const valueOf = (item) => (hour ? averageOf(item.history[metric], points) : (isCpu ? item.cores || 0 : item.mem))
   const ranked = [...snap.items].sort((a, b) => valueOf(b) - valueOf(a))
   const top = showAll ? ranked : ranked.slice(0, 6)
   const heaviest = Math.max(valueOf(ranked[0] || {}), isCpu ? 0.05 : 1)
@@ -129,7 +158,7 @@ function Panel({ snap, metric, showAll }) {
         </div>
         <div className="activity-pct">{Math.round((now / max) * 100)} %</div>
       </div>
-      <StackedArea snap={snap} metric={metric} max={max} slots={60} />
+      <StackedArea snap={snap} metric={metric} max={max} slots={60} ago={RANGES[range].ago} />
       <div className="activity-legend">
         {totals.map(([k, v]) => (
           <span key={k} title={k === 'system' ? 'The host outside every container: the kernel, Docker, caches' : undefined}>
@@ -145,13 +174,13 @@ function Panel({ snap, metric, showAll }) {
             ? <Link to={`/agent/${item.agentId}`}>{item.name}</Link>
             : <span>{item.name}</span>
           return (
-            <li key={item.key}>
+            <li key={item.key} className={item.gone ? 'activity-gone' : undefined} title={item.gone ? 'Not running now' : undefined}>
               <i className="activity-dot" style={{ background: KIND[item.kind].color }} title={KIND[item.kind].label} />
               <span className="activity-name">{name}</span>
               <Sparkline values={item.history[metric]} max={sparkMax} color={KIND[item.kind].color} />
-              <span className="activity-value" title={isCpu ? 'Percent of one core, as in Activity Monitor' : item.limit && item.limit < snap.host.mem.total ? `Limit ${gb(item.limit)}` : undefined}>
+              <span className="activity-value" title={hour ? 'Average over the hour' : isCpu ? 'Percent of one core, as in Activity Monitor' : item.limit && item.limit < snap.host.mem.total ? `Limit ${gb(item.limit)}` : undefined}>
                 {isCpu ? pctOfCore(v) : gb(v)}
-                {!isCpu && item.limit > 0 && item.limit < snap.host.mem.total && (
+                {!hour && !isCpu && item.limit > 0 && item.limit < snap.host.mem.total && (
                   <small> / {gb(item.limit)}</small>
                 )}
               </span>
@@ -169,54 +198,79 @@ export default function Activity() {
   const [error, setError] = useState(null)
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const [showAll, setShowAll] = useState(false)
+  const [range, setRange] = useState(readRange)
 
   useEffect(() => {
     if (collapsed) return undefined
     let alive = true
     let timer
+    setSnap(null)
     const tick = async () => {
       if (!document.hidden) {
         try {
-          const res = await authFetch('/api/system/activity')
+          const res = await authFetch(range === 'hour' ? '/api/system/activity?range=hour' : '/api/system/activity')
           const data = await res.json()
           if (!res.ok) throw new Error(data.error || 'Could not read activity')
           if (alive) { setSnap(data); setError(null) }
         } catch (e) { if (alive) setError(e.message) }
       }
-      if (alive) timer = setTimeout(tick, POLL_MS)
+      if (alive) timer = setTimeout(tick, RANGES[range].poll)
     }
     tick()
     return () => { alive = false; clearTimeout(timer) }
-  }, [collapsed])
+  }, [collapsed, range])
 
   function toggle() {
     setCollapsed(c => { writeCollapsed(!c); return !c })
   }
 
-  const building = snap?.items.filter(i => i.kind === 'build') || []
+  function choose(r) {
+    writeRange(r)
+    setRange(r)
+  }
+
+  const building = snap?.items?.filter(i => i.kind === 'build' && !i.gone) || []
+  // The panel keeps the hour from when it started; say so while it is younger.
+  const since = snap?.since && Date.now() - Date.parse(snap.since) < 60 * 60 * 1000
+    ? formatTime(snap.since, { hour: '2-digit', minute: '2-digit' }) : null
 
   return (
     <section className="activity">
       <button className="activity-header" onClick={toggle} aria-expanded={!collapsed}>
         <span className="activity-title">
           Activity
-          {!collapsed && snap && <span className="activity-live" title={`Updated every ${POLL_MS / 1000} s`} />}
+          {!collapsed && snap && <span className="activity-live" title={range === 'hour' ? 'One point a minute' : 'Updated every 3 s'} />}
         </span>
         <span className="activity-sub">
           {collapsed ? 'Who is using the CPU and the memory, live'
-            : snap ? <>{snap.items.length} guests · {building.length ? building.map(b => b.name).join(', ') : 'no build running'}</>
+            : snap?.ready ? <>{snap.items.filter(i => !i.gone).length} guests · {building.length ? building.map(b => b.name).join(', ') : 'no build running'}</>
             : 'Measuring…'}
         </span>
         {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
       </button>
 
+      {!collapsed && (
+        <div className="activity-range" role="group" aria-label="Range">
+          {Object.entries(RANGES).map(([key, r]) => (
+            <button key={key} type="button" className={range === key ? 'active' : ''} aria-pressed={range === key} onClick={() => choose(key)}>
+              {r.label}
+            </button>
+          ))}
+          {range === 'hour' && snap?.ready && (
+            <span className="activity-since">Per guest: the hour's average{since ? ` · since the panel started at ${since}` : ''}</span>
+          )}
+        </div>
+      )}
       {!collapsed && error && <div className="table-empty" style={{ color: 'var(--accent-red)' }}>{error}</div>}
       {!collapsed && !snap && !error && <div className="activity-skeleton" />}
+      {!collapsed && snap && !snap.ready && range === 'hour' && (
+        <div className="table-empty">The hour fills in from when the panel started; the first point comes within a minute.</div>
+      )}
       {!collapsed && snap && snap.ready && (
         <>
           <div className="activity-panels">
-            <Panel snap={snap} metric="cpu" showAll={showAll} />
-            <Panel snap={snap} metric="mem" showAll={showAll} />
+            <Panel snap={snap} metric="cpu" showAll={showAll} range={range} />
+            <Panel snap={snap} metric="mem" showAll={showAll} range={range} />
           </div>
           {snap.items.length > 6 && (
             <button className="activity-more" onClick={() => setShowAll(s => !s)}>

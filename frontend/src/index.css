@@ -2283,6 +2283,16 @@ input[type="checkbox"] {
   border-radius: var(--radius-sm);
 }
 .activity-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 3; }
+.activity-axis { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-tertiary); margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
+.activity-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; margin-top: var(--space-sm); }
+.activity-range button {
+  font: inherit; font-size: 0.8rem; padding: 0.2rem 0.65rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+}
+.activity-range button.active { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--text-tertiary); }
+.activity-range button:focus-visible { outline: 2px solid var(--accent-blue, #3b82f6); outline-offset: 2px; }
+.activity-since { font-size: 0.75rem; color: var(--text-tertiary); }
+.activity-list li.activity-gone .activity-name, .activity-list li.activity-gone .activity-name a { color: var(--text-tertiary); }
 .activity-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin: 0.55rem 0 0.4rem; font-size: 0.78rem; color: var(--text-secondary); }
 .activity-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .activity-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
