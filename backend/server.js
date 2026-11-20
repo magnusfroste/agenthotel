@@ -994,9 +994,9 @@ app.get('/api/system/stats', requireAuth, async (req, res) => {
   }
 });
 
-// Who is using the CPU and the memory right now, per guest, with a few
-// minutes of history (lib/activity.js). The sampler runs only while the
-// Fleet's Activity view is open.
+// Who is using the CPU and the memory, per guest (lib/activity.js): live,
+// with a few minutes of history, while the Fleet's Activity view is open;
+// and one point a minute for the last hour, kept in memory all the time.
 let panelProjectName;
 async function panelProject() {
   if (panelProjectName !== undefined) return panelProjectName;
@@ -1028,14 +1028,16 @@ const activity = require('./lib/activity').createActivity({
   }
 });
 
+activity.start();
+
 app.get('/api/system/activity', requireAuth, async (req, res) => {
   try {
-    const snap = await activity.snapshot();
+    const snap = req.query.range === 'hour' ? activity.hourSnapshot() : await activity.snapshot();
     // Only what the view draws: never a guest's config.
     res.json({
       ...snap,
-      items: snap.items.map(({ key, name, kind, agentId, cores, mem, limit, containers, history }) =>
-        ({ key, name, kind, agentId, cores, mem, limit, containers, history }))
+      items: (snap.items || []).map(({ key, name, kind, agentId, cores, mem, limit, containers, gone, history }) =>
+        ({ key, name, kind, agentId, cores, mem, limit, containers, gone: Boolean(gone), history }))
     });
   } catch (err) {
     console.error('Activity error:', err);

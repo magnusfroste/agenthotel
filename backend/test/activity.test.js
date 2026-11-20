@@ -5,7 +5,7 @@
 // containers, often the heaviest, were not shown anywhere.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createActivity, kindOf, coresBetween, memoryOf, ownerOf } = require('../lib/activity');
+const { createActivity, createSeries, kindOf, coresBetween, memoryOf, ownerOf } = require('../lib/activity');
 
 const META = {
   hermes: { category: 'AI Agent' },
@@ -143,4 +143,79 @@ test('the sampler stops by itself when nobody looks', async () => {
   await new Promise(r => setTimeout(r, 150));
   assert.strictEqual(calls, after, 'no samples once nobody has asked for a while');
   activity.stop();
+});
+
+// 2026-11-20: opening the view showed nothing until it had sampled for a
+// while; the question is usually "what happened in the last minutes".
+function reading(containers, hostBusy, hostIdle) {
+  return {
+    hostCpu: { idle: hostIdle, total: hostBusy + hostIdle },
+    hostMem: { total: 1000, used: 600 },
+    containers: containers.map(([id, name, cpu, sys, mem]) => ({
+      id, owner: { key: id, name, kind: 'app', agentId: id }, cpu: { cpu, sys, online: 2 }, mem: { used: mem, limit: 0 }
+    }))
+  };
+}
+
+test('the hour keeps a fixed window: the oldest point slides out as a new one comes', () => {
+  const s = createSeries({ cores: 2, intervalMs: 60000, keep: 3, keepGone: true, now: () => 0 });
+  for (let i = 0; i <= 5; i++) s.add(reading([['a', 'shop', i * 1e9, i * 4e9, 100 + i]], i * 10, i * 10));
+  const snap = s.latest();
+  assert.strictEqual(snap.host.history.mem.length, 3);
+  assert.deepStrictEqual(snap.items[0].history.mem, [103, 104, 105]);
+  // A point's CPU is the average since the one before: 1e9 of 4e9 on 2 cores.
+  assert.deepStrictEqual(snap.items[0].history.cpu, [0.5, 0.5, 0.5]);
+});
+
+test('a guest that stopped stays in the hour until its last point slides out', () => {
+  const s = createSeries({ cores: 2, intervalMs: 60000, keep: 3, keepGone: true, now: () => 0 });
+  s.add(reading([['a', 'shop', 0, 0, 10], ['b', 'Building quiz', 0, 0, 50]], 0, 0));
+  s.add(reading([['a', 'shop', 1e9, 4e9, 10], ['b', 'Building quiz', 2e9, 4e9, 50]], 10, 10));
+  s.add(reading([['a', 'shop', 2e9, 8e9, 10]], 20, 20));
+  let b = s.latest().items.find(i => i.key === 'b');
+  assert.ok(b && b.gone, 'the build is still shown after it ended');
+  assert.strictEqual(b.name, 'Building quiz');
+  assert.deepStrictEqual(b.history.mem, [50, 50, null]);
+  // Gone guests count in no total.
+  assert.strictEqual(s.latest().kinds.app.count, 1);
+  s.add(reading([['a', 'shop', 3e9, 12e9, 10]], 30, 30));
+  s.add(reading([['a', 'shop', 4e9, 16e9, 10]], 40, 40));
+  b = s.latest().items.find(i => i.key === 'b');
+  assert.strictEqual(b, undefined, 'gone once all its points have slid out');
+});
+
+test('the live view drops a stopped guest at once, as before', () => {
+  const s = createSeries({ cores: 2, intervalMs: 3000, keep: 60, now: () => 0 });
+  s.add(reading([['a', 'shop', 0, 0, 10], ['b', 'quiz', 0, 0, 50]], 0, 0));
+  s.add(reading([['a', 'shop', 1e9, 4e9, 10]], 10, 10));
+  assert.deepStrictEqual(s.latest().items.map(i => i.key), ['a']);
+});
+
+test('the hour fills by itself, and asking for it starts no live sampling', async () => {
+  const host = fakeHost();
+  const containers = [{ id: 'a', labels: {}, cpu: 0, sys: 0, perSample: 1e8, mem: 1 }];
+  let calls = 0;
+  const docker = fakeDocker(containers);
+  const list = docker.listContainers;
+  docker.listContainers = async () => { calls += 1; return list(); };
+  const origStat = host.readFileSync.bind(host);
+  host.readFileSync = (f) => { if (f === '/proc/stat') { host.busy += 10; host.idle += 30; } return origStat(f); };
+  const activity = createActivity({
+    docker, fs: host, cores: 2, intervalMs: 20, idleMs: 60, hourIntervalMs: 30, hourKeep: 4, firstHourMs: 0,
+    context: async () => ({ agents: new Map(), projects: new Map(), meta: META, panelProject: null, building: [] })
+  });
+  assert.strictEqual(activity.hourSnapshot().ready, false);
+  activity.start();
+  // Well past the four points the window holds.
+  await new Promise(r => setTimeout(r, 600));
+  const snap = activity.hourSnapshot();
+  activity.stop();
+  assert.ok(snap.ready);
+  assert.ok(snap.since);
+  assert.strictEqual(snap.intervalMs, 30);
+  assert.strictEqual(snap.host.history.mem.length, 4, 'never more than the window');
+  const after = calls;
+  activity.hourSnapshot();
+  await new Promise(r => setTimeout(r, 80));
+  assert.strictEqual(calls, after, 'stopped, and reading the hour sampled nothing');
 });

@@ -7,10 +7,12 @@
 // covered the build containers, which during a Git App deploy are often the
 // heaviest thing on the host.
 //
-// One sampler for the whole panel. It runs only while someone is looking:
-// the first request starts it, and it stops by itself when nobody has asked
-// for a while. A sample is one `docker stats` one-shot per running container
-// (about 0.4 s for 27 containers), and CPU is the difference between two of
+// One sampler for the whole panel. The live view runs only while someone is
+// looking: the first request starts it, and it stops by itself when nobody
+// has asked for a while. Beside it, one point a minute is kept for the last
+// hour, always (see createActivity). A sample is one `docker stats` one-shot
+// per running container (about 0.4 s for 27 containers), and CPU is the
+// difference between two of
 // them, so the first answer waits for a second sample.
 
 const KINDS = ['agent', 'tool', 'app', 'build', 'hotel', 'other'];
@@ -96,28 +98,45 @@ function push(list, value, keep) {
   if (list.length > keep) list.splice(0, list.length - keep);
 }
 
-// `docker` is a dockerode instance; `context()` returns
-// { agents: Map(id → row), projects: Map(compose project → row), meta,
-//   panelProject, building: [{ id, name }] } at the time of a sample.
-function createActivity({ docker, context, fs = require('fs'), cores = require('os').cpus().length,
-  intervalMs = 3000, keep = 60, idleMs = 30000, now = () => Date.now() } = {}) {
-  let timer = null;
-  let lastAsked = 0;
+// One reading of everything: the host's counters and every running
+// container's, each with the guest it belongs to. Two series below turn
+// readings into curves, each with its own previous reading, since CPU is
+// the difference between two of them.
+async function readAll({ docker, context, fs }) {
+  const ctx = await context();
+  const list = await docker.listContainers();
+  const stats = await Promise.all(list.map(c =>
+    docker.getContainer(c.Id).stats({ stream: false, 'one-shot': true }).catch(() => null)));
+  const containers = [];
+  list.forEach((c, i) => {
+    const s = stats[i];
+    if (!s) return;
+    containers.push({ id: c.Id, owner: ownerOf(c, ctx), cpu: cpuOf(s), mem: memoryOf(s) });
+  });
+  return { hostCpu: readProcStat(fs), hostMem: readMemory(fs), containers };
+}
+
+// Curves of `keep` points from readings. `keepGone`: a guest that is no
+// longer running stays, with empty points, until its last point slides out
+// of the window. The hour keeps it, since "what was building twenty minutes
+// ago" is the question; the live view drops it at once, as it always did.
+function createSeries({ cores, intervalMs, keep, keepGone = false, now }) {
   let prevHost = null;
   let prevByContainer = new Map();
-  const history = new Map(); // key → { cpu: [], mem: [] }
+  const history = new Map(); // key → { owner, cpu: [], mem: [] }
   const hostHistory = { cpu: [], mem: [] };
   let latest = null;
-  let sampling = null;
 
-  async function sample() {
-    const ctx = await context();
-    const list = await docker.listContainers();
-    const stats = await Promise.all(list.map(c =>
-      docker.getContainer(c.Id).stats({ stream: false, 'one-shot': true }).catch(() => null)));
+  function reset() {
+    prevHost = null;
+    prevByContainer = new Map();
+    history.clear();
+    hostHistory.cpu.length = 0;
+    hostHistory.mem.length = 0;
+    latest = null;
+  }
 
-    const hostCpu = readProcStat(fs);
-    const hostMem = readMemory(fs);
+  function add({ hostCpu, hostMem, containers }) {
     let hostCores = null;
     if (prevHost) {
       const dTotal = hostCpu.total - prevHost.total;
@@ -127,41 +146,44 @@ function createActivity({ docker, context, fs = require('fs'), cores = require('
 
     const groups = new Map();
     const seen = new Map();
-    list.forEach((c, i) => {
-      const s = stats[i];
-      if (!s) return;
-      const cpuNow = cpuOf(s);
-      seen.set(c.Id, cpuNow);
-      const used = coresBetween(prevByContainer.get(c.Id), cpuNow);
-      const mem = memoryOf(s);
-      const owner = ownerOf(c, ctx);
-      const g = groups.get(owner.key) || { ...owner, cores: null, mem: 0, limit: 0, containers: 0 };
+    for (const c of containers) {
+      seen.set(c.id, c.cpu);
+      const used = coresBetween(prevByContainer.get(c.id), c.cpu);
+      const g = groups.get(c.owner.key) || { ...c.owner, cores: null, mem: 0, limit: 0, containers: 0 };
       if (used != null) g.cores = (g.cores || 0) + used;
-      g.mem += mem.used;
-      g.limit += mem.limit;
+      g.mem += c.mem.used;
+      g.limit += c.mem.limit;
       g.containers += 1;
-      groups.set(owner.key, g);
-    });
+      groups.set(c.owner.key, g);
+    }
     prevByContainer = seen;
 
     const items = [...groups.values()];
     for (const g of items) {
       const h = history.get(g.key) || { cpu: [], mem: [] };
+      h.owner = { key: g.key, name: g.name, kind: g.kind, agentId: g.agentId };
       push(h.cpu, g.cores == null ? null : Math.round(g.cores * 1000) / 1000, keep);
       push(h.mem, g.mem, keep);
       history.set(g.key, h);
       g.history = h;
     }
-    // A guest that stopped keeps no history; one that comes back starts over.
-    for (const key of history.keys()) if (!groups.has(key)) history.delete(key);
+    for (const [key, h] of history) {
+      if (groups.has(key)) continue;
+      if (!keepGone) { history.delete(key); continue; }
+      push(h.cpu, null, keep);
+      push(h.mem, null, keep);
+      if (h.cpu.every(v => v == null) && h.mem.every(v => v == null)) { history.delete(key); continue; }
+      items.push({ ...h.owner, cores: null, mem: 0, limit: 0, containers: 0, gone: true, history: h });
+    }
 
-    const sumCores = items.reduce((a, g) => a + (g.cores || 0), 0);
-    const sumMem = items.reduce((a, g) => a + g.mem, 0);
+    const live = items.filter(g => !g.gone);
+    const sumCores = live.reduce((a, g) => a + (g.cores || 0), 0);
+    const sumMem = live.reduce((a, g) => a + g.mem, 0);
     push(hostHistory.cpu, hostCores == null ? null : Math.round(hostCores * 1000) / 1000, keep);
     push(hostHistory.mem, hostMem.used, keep);
 
     const byKind = Object.fromEntries(KINDS.map(k => [k, { cores: 0, mem: 0, count: 0 }]));
-    for (const g of items) {
+    for (const g of live) {
       byKind[g.kind].cores += g.cores || 0;
       byKind[g.kind].mem += g.mem;
       byKind[g.kind].count += 1;
@@ -190,8 +212,33 @@ function createActivity({ docker, context, fs = require('fs'), cores = require('
     return latest;
   }
 
+  return { add, reset, latest: () => latest };
+}
+
+// `docker` is a dockerode instance; `context()` returns
+// { agents: Map(id → row), projects: Map(compose project → row), meta,
+//   panelProject, building: [{ id, name }] } at the time of a sample.
+//
+// Two views of the same readings:
+// - live: every `intervalMs` (3 s) for the last `keep` points (3 min), only
+//   while someone looks, as before.
+// - hour: one point a minute for the last hour, always, so the view can show
+//   what happened before anyone opened it (2026-11-20). It is kept in memory
+//   only: 60 points per guest, gone when the panel restarts, never written
+//   anywhere. A point's CPU is the average over its minute.
+function createActivity({ docker, context, fs = require('fs'), cores = require('os').cpus().length,
+  intervalMs = 3000, keep = 60, idleMs = 30000, hourIntervalMs = 60000, hourKeep = 60, firstHourMs = 2000,
+  now = () => Date.now() } = {}) {
+  let timer = null;
+  let lastAsked = 0;
+  let sampling = null;
+  const live = createSeries({ cores, intervalMs, keep, now });
+  const hour = createSeries({ cores, intervalMs: hourIntervalMs, keep: hourKeep, keepGone: true, now });
+  let hourTimer = null;
+  let hourSince = null;
+
   function sampleOnce() {
-    if (!sampling) sampling = sample().finally(() => { sampling = null; });
+    if (!sampling) sampling = readAll({ docker, context, fs }).then(r => live.add(r)).finally(() => { sampling = null; });
     return sampling;
   }
 
@@ -204,34 +251,58 @@ function createActivity({ docker, context, fs = require('fs'), cores = require('
     if (timer.unref) timer.unref();
   }
 
-  // The latest snapshot. Starts the sampler when it is idle; the first
+  // The latest live snapshot. Starts the sampler when it is idle; the first
   // answer after a start waits for two samples so CPU is known.
   async function snapshot() {
     lastAsked = now();
     if (!timer) {
+      const latest = live.latest();
       if (!latest || !latest.ready || now() - Date.parse(latest.at) > intervalMs * 2) {
         // After a pause the old curves would join across the gap as if
         // nothing happened in between; start them over instead.
-        prevHost = null;
-        prevByContainer = new Map();
-        history.clear();
-        hostHistory.cpu.length = 0;
-        hostHistory.mem.length = 0;
+        live.reset();
         await sampleOnce();
         await new Promise(r => setTimeout(r, 1000));
         await sampleOnce();
       }
       loop();
     }
-    return latest;
+    return live.latest();
+  }
+
+  async function sampleHour() {
+    try { hour.add(await readAll({ docker, context, fs })); } catch (_) { /* next minute */ }
+  }
+
+  // The hour's series: one point a minute from start(), never more than an
+  // hour of them. Asking for it starts nothing.
+  function hourSnapshot() {
+    const latest = hour.latest();
+    if (latest && latest.ready) return { ...latest, since: hourSince };
+    return { ready: false, since: hourSince, intervalMs: hourIntervalMs };
+  }
+
+  // The first point comes a moment after start (the panel is still setting
+  // up when it calls this), the next ones a minute apart.
+  function start() {
+    if (hourTimer) return;
+    hourSince = new Date(now()).toISOString();
+    hourTimer = setTimeout(function tick() {
+      sampleHour();
+      hourTimer = setTimeout(tick, hourIntervalMs);
+      if (hourTimer.unref) hourTimer.unref();
+    }, firstHourMs);
+    if (hourTimer.unref) hourTimer.unref();
   }
 
   function stop() {
     if (timer) clearTimeout(timer);
     timer = null;
+    if (hourTimer) clearTimeout(hourTimer);
+    hourTimer = null;
   }
 
-  return { snapshot, sample: sampleOnce, stop };
+  return { snapshot, hourSnapshot, sample: sampleOnce, sampleHour, start, stop };
 }
 
-module.exports = { createActivity, kindOf, coresBetween, memoryOf, ownerOf, KINDS };
+module.exports = { createActivity, createSeries, kindOf, coresBetween, memoryOf, ownerOf, KINDS };
