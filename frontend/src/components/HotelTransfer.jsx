@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Copy, Check, Loader2, Truck, CheckCircle2, XCircle } from 'lucide-react'
 import { authFetch } from '../lib/auth'
+import { formatDateTime } from '../lib/time'
 
 // Moving an agent between hotels (backend/lib/transfers.js). This hotel
 // issues a one-time link; the other hotel pastes it under Import Agent and
@@ -66,7 +67,7 @@ export function MoveOut({ agent }) {
             <li>Delete it here once it runs there.</li>
           </ol>
           <p className="modal-text" style={{ fontSize: '0.8rem', marginBottom: 0 }}>
-            Expires {new Date(ticket.expiresAt).toLocaleString()}. The link is a key: give it only to the hotel that should get the agent.
+            Expires {formatDateTime(ticket.expiresAt)}. The link is a key: give it only to the hotel that should get the agent.
           </p>
         </>
       )}

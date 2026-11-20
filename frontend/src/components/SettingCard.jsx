@@ -9,8 +9,10 @@ import { Save, RotateCcw, AlertCircle } from 'lucide-react'
 // keys. The Settings page used to hold all of them; it now holds the hotel's
 // alerts and API rate limit.
 //
-// fields: [{ name, label, help, type, placeholder, fallback, secret }]
-export default function SettingCard({ title, icon: Icon, description, fields }) {
+// fields: [{ name, label, help, type, placeholder, fallback, secret, options }]
+// type 'select' takes options: [{ value, label }]. onSaved(values) runs after a
+// save, for a setting the page itself uses (the time zone).
+export default function SettingCard({ title, icon: Icon, description, fields, onSaved }) {
   const [values, setValues] = useState(null)
   const [original, setOriginal] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -43,6 +45,7 @@ export default function SettingCard({ title, icon: Icon, description, fields }) 
       // domain); "Saving failed" alone left the operator guessing.
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Saving failed')
       setOriginal(values)
+      onSaved?.(values)
       toast.success(`${title} saved`)
     } catch (err) {
       toast.error(err.message)
@@ -57,14 +60,21 @@ export default function SettingCard({ title, icon: Icon, description, fields }) 
         <h2>{Icon && <Icon size={20} />} {title}</h2>
       </div>
       {description && <p className="section-description">{description}</p>}
-      {fields.map(({ name, label, help, type = 'text', placeholder, secret = false }) => (
+      {fields.map(({ name, label, help, type = 'text', placeholder, secret = false, options = [] }) => (
         <div className="form-group" key={name}>
           <label className="form-label" htmlFor={`setting-${name}`}>{label}</label>
-          <input id={`setting-${name}`} className="form-input" data-secret={secret ? '' : undefined}
-            type={type} name={name} placeholder={placeholder}
-            value={values[name]}
-            onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))} />
-          {help && <div className="form-help">{help}</div>}
+          {type === 'select' ? (
+            <select id={`setting-${name}`} className="form-input" name={name} value={values[name]}
+              onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))}>
+              {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          ) : (
+            <input id={`setting-${name}`} className="form-input" data-secret={secret ? '' : undefined}
+              type={type} name={name} placeholder={placeholder}
+              value={values[name]}
+              onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))} />
+          )}
+          {help && <div className="form-help">{typeof help === 'function' ? help(values) : help}</div>}
         </div>
       ))}
       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>

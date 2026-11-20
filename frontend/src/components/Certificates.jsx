@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
+import { formatDate as formatDateIn } from '../lib/time'
 import { Shield, Mail } from 'lucide-react'
 import SettingCard from './SettingCard'
 
@@ -25,11 +26,7 @@ function Certificates() {
 
   function formatDate(dateStr) {
     if (!dateStr) return 'N/A'
-    return new Date(dateStr).toLocaleDateString('sv-SE', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    })
+    return formatDateIn(dateStr, { year: 'numeric', month: 'short', day: 'numeric' }, 'sv-SE')
   }
 
   function daysUntilExpiry(dateStr) {

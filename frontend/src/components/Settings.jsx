@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { authFetch } from '../lib/auth'
-import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send, ConciergeBell } from 'lucide-react'
+import { Shield, Save, RotateCcw, CheckCircle, AlertCircle, Bell, Send, ConciergeBell, Globe } from 'lucide-react'
+import SettingCard from './SettingCard'
+import { allZones, browserZone, isZone, setZone, zoneOffset } from '../lib/time'
 
 // Each card saves only its own keys. One form for everything meant that a
 // changed Telegram chat id re-sent the panel domain too — and the backend, seeing
@@ -183,7 +185,7 @@ function Settings() {
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', fontWeight: '700' }}>Settings</h1>
         <p style={{ margin: 0, color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem' }}>
-          Your own choices: access and alerts. Each card saves on its own. The panel domain, certificate e-mail, Docker network and backups live on Domains, Certificates and System.
+          Your own choices: access, alerts and the time zone. Each card saves on its own. The panel domain, certificate e-mail, Docker network and backups live on Domains, Certificates and System.
         </p>
       </div>
 
@@ -238,8 +240,27 @@ function Settings() {
         </button>
       </>)}
 
+      <SettingCard title="Time zone" icon={Globe}
+        description="The zone every time in the panel is shown in: deploys, events, backups, certificates. Unset, it is where you are, as your browser says."
+        fields={[{ name: 'timezone', label: 'Show times in', type: 'select', fallback: '', options: zoneOptions(),
+          help: (v) => {
+            const zone = v.timezone && isZone(v.timezone) ? v.timezone : browserZone()
+            return `Now in ${zone}: ${new Date().toLocaleString(undefined, { timeZone: zone })}. The hotel's own clock, its logs and its scheduled jobs stay on UTC.`
+          } }]}
+        onSaved={(v) => setZone(v.timezone)} />
+
     </div>
   )
+}
+
+// "Where you are" first, then every zone the browser knows with its offset
+// now, so Stockholm reads "Europe/Stockholm (UTC+1)".
+function zoneOptions() {
+  const here = browserZone()
+  return [
+    { value: '', label: `Where you are: ${here} (${zoneOffset(here)})` },
+    ...allZones().map(z => ({ value: z, label: `${z} (${zoneOffset(z)})` })),
+  ]
 }
 
 export default Settings

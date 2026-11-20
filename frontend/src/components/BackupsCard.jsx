@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authFetch, authFetchOk } from '../lib/auth'
+import { formatDateTime } from '../lib/time'
 import { useToast } from './Toast'
 import { Archive, Save, Play, CloudUpload, RotateCcw, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 
@@ -9,7 +10,7 @@ import { Archive, Save, Play, CloudUpload, RotateCcw, CheckCircle2, AlertTriangl
 // server says whether one is stored and its last four characters.
 
 const mb = bytes => (bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${Math.max(0.1, bytes / 1048576).toFixed(1)} MB`)
-const when = stamp => new Date(stamp.replace(/T(\d\d)-(\d\d)-(\d\d)Z$/, 'T$1:$2:$3Z')).toLocaleString()
+const when = stamp => formatDateTime(stamp.replace(/T(\d\d)-(\d\d)-(\d\d)Z$/, 'T$1:$2:$3Z'))
 
 export default function BackupsCard() {
   const toast = useToast()
@@ -99,7 +100,7 @@ export default function BackupsCard() {
       {last && (
         <div className="form-help" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', color: problems.length ? 'var(--accent-yellow)' : 'var(--text-secondary)' }}>
           {problems.length ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} color="var(--accent-green)" />}
-          Last run {new Date(last.at).toLocaleString()} ({last.trigger}, {last.seconds}s): {last.results.filter(r => r.ok).length} of {last.results.length} guests{last.s3 ? ', copied to S3' : ''}
+          Last run {formatDateTime(last.at)} ({last.trigger}, {last.seconds}s): {last.results.filter(r => r.ok).length} of {last.results.length} guests{last.s3 ? ', copied to S3' : ''}
           {problems.length > 0 && ` — ${problems.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}`}
         </div>
       )}

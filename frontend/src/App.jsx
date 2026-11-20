@@ -3,6 +3,7 @@ import UpdateDot from './components/UpdateDot'
 import { useAgentUpdates } from './lib/agentUpdates'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
+import { loadZone, useTimeZone } from './lib/time'
 import { ToastProvider, useToast } from './components/Toast'
 import Dashboard from './components/Dashboard'
 import CreateAgent from './components/CreateAgent'
@@ -405,10 +406,17 @@ function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   // Disk or memory past its threshold, shown as a quiet badge in the top bar.
   const [alerts, setAlerts] = useState(null)
+  // The zone every time is shown in (lib/time.js). Read here so the whole
+  // panel re-renders when the setting changes.
+  useTimeZone()
 
   useEffect(() => {
     checkState()
   }, [])
+
+  useEffect(() => {
+    if (state === 'authenticated') loadZone()
+  }, [state])
 
   useEffect(() => {
     if (state !== 'authenticated') return

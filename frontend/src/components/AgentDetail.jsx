@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
+import { formatDate, formatDateTime } from '../lib/time'
 import { useToast } from './Toast'
 import {
   Key, Copy, ExternalLink, Play, Square, RefreshCw, Trash2, Plus, X,
@@ -329,7 +330,7 @@ function AgentDetail() {
             {[
               ['Runtime', agent.runtime], ['Domain', agent.domain || '—'],
               ['Image', agent.image], ['Port', String(agent.port || '—')],
-              ['Created', new Date(agent.created_at).toLocaleString()], ['Updated', new Date(agent.updated_at).toLocaleString()]
+              ['Created', formatDateTime(agent.created_at)], ['Updated', formatDateTime(agent.updated_at)]
             ].map(([label, value]) => (
               <div key={label} style={{ background: 'var(--bg-secondary)', borderRadius: '0.5rem', padding: '1rem', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>{label}</div>
@@ -907,7 +908,7 @@ function AgentSource({ agent, onSaved }) {
           {src.error ? <span style={{ color: 'var(--accent-red)' }}>{src.error}</span>
             : src.commit
               ? <>Running <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{src.commit}</span>
-                  {src.committedAt ? ` from ${new Date(src.committedAt).toLocaleDateString()}` : ''}
+                  {src.committedAt ? ` from ${formatDate(src.committedAt)}` : ''}
                   {src.subject ? ` — ${src.subject}` : ''}</>
               : src.checkedOut ? 'Checked out, no commit read yet' : 'Not checked out yet'}
         </div>
@@ -1215,7 +1216,7 @@ function AgentUptime({ agentId }) {
               <div
                 key={i}
                 className={`uptime-bar${c.ok ? '' : ' down'}`}
-                title={`${new Date(c.checked_at + 'Z').toLocaleString()} — ${c.ok ? 'ok' : 'down'}${c.status_code != null ? ` (HTTP ${c.status_code})` : ''}`}
+                title={`${formatDateTime(c.checked_at)} — ${c.ok ? 'ok' : 'down'}${c.status_code != null ? ` (HTTP ${c.status_code})` : ''}`}
               />
             ))}
           </div>

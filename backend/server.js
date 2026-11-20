@@ -26,6 +26,7 @@ const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { openExportZip } = require('./lib/exportZip');
 const { domainProblem } = require('./lib/domainName');
+const { timeZoneProblem } = require('./lib/timeZone');
 const containerRuntime = require('./lib/containerRuntime');
 const volumeTar = require('./lib/volumeTar');
 const netbirdPublish = require('./lib/netbirdPublish');
@@ -503,7 +504,8 @@ app.get('/api/settings', requireAuth, (req, res) => {
   if (!settings[containerRuntime.SETTING_KEY]) settings[containerRuntime.SETTING_KEY] = '';
   if (!settings.theme) settings.theme = 'dark';
   if (!settings.language) settings.language = 'sv';
-  if (!settings.timezone) settings.timezone = 'Europe/Stockholm';
+  // '' = each browser shows times where it is (frontend/src/lib/time.js).
+  if (!settings.timezone) settings.timezone = '';
   
   res.json(settings);
 });
@@ -512,6 +514,8 @@ app.put('/api/settings', requireAuth, async (req, res) => {
   try {
     const badPanelDomain = domainProblem(req.body?.panel_domain);
     if (badPanelDomain) return res.status(400).json({ error: badPanelDomain });
+    const badZone = timeZoneProblem(req.body?.timezone);
+    if (badZone) return res.status(400).json({ error: badZone });
     // The hotel's default runtime applies to every guest's next deploy, so one
     // Docker does not have would fail them all: refuse it here instead.
     if (req.body && containerRuntime.SETTING_KEY in req.body) {
