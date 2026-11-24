@@ -246,11 +246,11 @@ The backend does not listen on the Docker network. In compose (`BACKEND_SOCKET` 
 The chrome follows OpenRouter's split (`frontend/src/App.jsx`). The **sidebar**
 runs the full height with the brand on top, level with the bar; the **top bar**
 starts where it ends, and
-holds what you work with — Fleet, Templates, Connect (wiring your own AI
+holds what you work with — Chat, Templates, Connect (wiring your own AI
 agents to the hotel over MCP), Docs — and, on the right, *New
 agent* (Agent / From a template / Compose), the light/dark/system switch and
 the account menu. The **sidebar**
-holds what you look after: the guests (agents and the tools they use, one list, each named by its template — *Take*, *Reports*, *Hermes Agent* — from the `template` column, `lib/agentTemplate.js`; guests deployed before it are matched once at start by repository or image), then Infrastructure (Providers,
+holds what you look after: *Dashboard* (`/`, the numbers: `Home.jsx`) and *Agents & apps* (`/agents`, every guest, grouped as agents, tools and apps: `Agents.jsx`; each guest named by its template — *Take*, *Reports*, *Hermes Agent* — from the `template` column, `lib/agentTemplate.js`), then *Needs attention*: only the guests that need something, worst first, each with why, ten at most (`backend/lib/attention.js`, `frontend/src/lib/attention.js`; 2026-11-24 — the full list of guests had grown past what a sidebar can show with the broken one findable in it), then Infrastructure (Providers,
 Domains, Certificates, Console, System, Settings), and in its footer the host
 IP (one click copies it, for a DNS A record) above the version. A new page goes
 in one of those two places, not both.

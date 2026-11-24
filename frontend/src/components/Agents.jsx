@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import UpdateDot from './UpdateDot'
 import { useAgentUpdates, refreshAgentUpdates, updateText } from '../lib/agentUpdates'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw, LayoutGrid, List } from 'lucide-react'
+import { Trash2, Globe, Package, ExternalLink, Play, Square, MoreHorizontal, Bot, Plus, Layers, Upload, Activity, Loader, RefreshCw, LayoutGrid, List, AlertTriangle } from 'lucide-react'
 import RuntimeMark from './RuntimeMark'
 import { MoveIn } from './HotelTransfer'
 import { ModelErrorsLine } from './ModelErrors'
-import ActivityView from './Activity'
+import { compareAttention, KIND_LABELS, KIND_ORDER } from '../lib/attention'
 
 // What a card says while its image is being built. The backend records every
 // build step and pulled layer; without this the card read "creating" for
@@ -53,16 +53,55 @@ function BuildProgress({ agentId }) {
 }
 
 const VIEW_KEY = 'agenthotel.dashboard.view'
+const SORT_KEY = 'agenthotel.agents.sort'
+const GROUP_KEY = 'agenthotel.agents.grouped'
 
-function Dashboard() {
+// Why a guest is in the sidebar's "Needs attention", on its card and row too,
+// where the health line does not already say it: a guest that stopped by
+// itself reads "stopped" like one stopped on purpose, and one that is healthy
+// inside but does not answer at its domain reads "healthy". Model errors have
+// their own line, a deploy its build progress, a failed probe its health.
+function AttentionLine({ agent }) {
+  const attention = agent.attention
+  if (!attention || attention.level === 'busy') return null
+  const unsaid = agent.status === 'stopped' || /^Not answering|^Deploy was cut short/.test(attention.text)
+  if (!unsaid) return null
+  return (
+    <div className={`attention-line attention-${attention.level}`}>
+      <AlertTriangle size={14} color="currentColor" /> <span>{attention.text}</span>
+    </div>
+  )
+}
+
+// Every guest, findable (2026-11-24). The dashboard's home page has the
+// numbers and the sidebar only the guests that need something; this is the
+// register. Guests that need attention come first, the rest by name, so a
+// known guest is always in the same place; grouped by what they are.
+function Agents() {
   const updates = useAgentUpdates()
   const [agents, setAgents] = useState([])
   const [loading, setLoading] = useState(true)
-  const [systemStats, setSystemStats] = useState(null)
-  const [pruning, setPruning] = useState(false)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [sortBy, setSortBy] = useState('name')
+  // ?filter=attention or ?filter=updates: the sidebar's grouped rows link here.
+  const [params, setParams] = useSearchParams()
+  const statusFilter = params.get('filter') || 'all'
+  const setStatusFilter = (v) => setParams(v === 'all' ? {} : { filter: v }, { replace: true })
+  const [sortBy, setSortBy] = useState(() => {
+    try { return localStorage.getItem(SORT_KEY) || 'attention' } catch { return 'attention' }
+  })
+  const chooseSort = (v) => {
+    setSortBy(v)
+    try { localStorage.setItem(SORT_KEY, v) } catch { /* not remembered */ }
+  }
+  const [grouped, setGrouped] = useState(() => {
+    try { return localStorage.getItem(GROUP_KEY) !== 'off' } catch { return true }
+  })
+  const chooseGrouped = (v) => {
+    setGrouped(v)
+    try { localStorage.setItem(GROUP_KEY, v ? 'on' : 'off') } catch { /* not remembered */ }
+  }
+  // CPU per guest right now, for "Busiest now"; asked only when that sort is on.
+  const [busy, setBusy] = useState({})
   // Cards or a list, remembered per browser: with forty guests the cards no
   // longer fit a screen, and a list reads like a register.
   const [view, setView] = useState(() => {
@@ -80,11 +119,20 @@ function Dashboard() {
 
   useEffect(() => {
     fetchAgents()
-    fetchSystemStats()
     fetchRuntimeMeta()
-    const interval = setInterval(() => { if (!document.hidden) { fetchAgents(); fetchSystemStats() } }, 10000)
+    const interval = setInterval(() => { if (!document.hidden) fetchAgents() }, 10000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    if (sortBy !== 'busiest') return
+    const load = () => authFetch('/api/system/activity?range=hour').then(r => r.json())
+      .then(d => setBusy(Object.fromEntries((d.items || []).filter(i => i.agentId).map(i => [i.agentId, i.cores || 0]))))
+      .catch(() => {})
+    load()
+    const t = setInterval(() => { if (!document.hidden) load() }, 30000)
+    return () => clearInterval(t)
+  }, [sortBy])
 
   // Agents mid-deploy on the last look. When one settles, its update marker
   // may be stale; ask again instead of waiting for the five-minute refresh.
@@ -110,25 +158,6 @@ function Dashboard() {
         (Array.isArray(list) ? list : []).map(t => [t.id, { icon: t.icon, color: t.color, logo: t.logo, name: t.name }])
       ))
     } catch (err) { console.error('Failed to fetch runtime metadata:', err) }
-  }
-
-  async function fetchSystemStats() {
-    try {
-      const res = await authFetch('/api/system/stats')
-      setSystemStats(await res.json())
-    } catch (err) { console.error('Failed to fetch system stats:', err) }
-  }
-
-  async function handlePrune() {
-    if (!confirm('Remove unused Docker resources (containers, images, networks, volumes)?')) return
-    setPruning(true)
-    try {
-      const res = await authFetch('/api/docker/prune', { method: 'POST' })
-      const data = await res.json()
-      toast.success(`Pruned! Freed ${data.totalSpaceReclaimedMB} MB`)
-      fetchSystemStats()
-    } catch (err) { toast.error('Failed to prune Docker resources') }
-    finally { setPruning(false) }
   }
 
   async function toggleAgent(id, status) {
@@ -171,20 +200,6 @@ function Dashboard() {
     catch (err) { toast.error('Delete failed: ' + err.message) }
   }
 
-  function formatBytes(bytes) {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-  }
-
-  function getProgressClass(pct) {
-    if (pct > 80) return 'high'
-    if (pct > 60) return 'medium'
-    return 'low'
-  }
-
   // 'unhealthy' and 'failed' are the states that need attention, so they get
   // the alarming colour. A stopped agent is a deliberate act, not a fault —
   // it used to share red with genuine failures, which buried them.
@@ -218,14 +233,25 @@ function Dashboard() {
     .filter(a => {
       const q = search.trim().toLowerCase()
       if (q && !a.name.toLowerCase().includes(q) && !(a.domain || '').toLowerCase().includes(q)) return false
+      if (statusFilter === 'attention') return Boolean(a.attention) && a.attention.level !== 'busy'
+      if (statusFilter === 'updates') return Boolean(updates[a.id]?.updateAvailable)
       if (statusFilter !== 'all' && a.status !== statusFilter) return false
       return true
     })
     .sort((a, b) => {
       if (sortBy === 'created') return (b.created_at || '').localeCompare(a.created_at || '')
       if (sortBy === 'runtime') return a.runtime.localeCompare(b.runtime) || a.name.localeCompare(b.name)
+      if (sortBy === 'busiest') return (busy[b.id] || 0) - (busy[a.id] || 0) || a.name.localeCompare(b.name)
+      if (sortBy === 'attention') return compareAttention(a, b)
       return a.name.localeCompare(b.name)
     })
+
+  // Agents, the tools they use, and apps, each under its own heading, in the
+  // order chosen above. Off, it is one list as before.
+  const groups = grouped
+    ? KIND_ORDER.map(kind => ({ kind, list: visibleAgents.filter(a => (a.kind || 'app') === kind) })).filter(g => g.list.length)
+    : [{ kind: null, list: visibleAgents }]
+  const attentionCount = agents.filter(a => a.attention && a.attention.level !== 'busy').length
 
   // Open or Manage, start/stop, redeploy, delete: the same buttons in a card
   // and in a list row.
@@ -299,7 +325,7 @@ function Dashboard() {
     return (
       <div>
         <div className="page-header">
-          <h1 className="page-title">Fleet</h1>
+          <h1 className="page-title">Agents &amp; apps</h1>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
             <div style={{ width: '140px', height: '36px', background: 'var(--bg-secondary)', borderRadius: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }} />
@@ -331,11 +357,8 @@ function Dashboard() {
   return (
     <div>
       <div className="page-header">
-        <h1 className="page-title">Fleet</h1>
+        <h1 className="page-title">Agents &amp; apps</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn" onClick={handlePrune} disabled={pruning} style={{ background: '#f59e0b', color: 'white', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Trash2 size={16} color="white" /> {pruning ? 'Pruning…' : 'Prune Docker'}
-          </button>
           <button className="btn btn-secondary" title="Bring in an agent from a zip or from another hotel" onClick={() => setShowImport(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Upload size={16} color="currentColor" /> Import Agent
           </button>
@@ -354,30 +377,6 @@ function Dashboard() {
           </div>
         </div>
       )}
-
-      {systemStats && systemStats.cpu && systemStats.mem && systemStats.disk && (
-        <div className="stats-grid">
-          <div className="stat-item">
-            <div className="stat-label">CPU</div>
-            <div className="stat-value">{systemStats.cpu.pct}%</div>
-            <div className="progress-bar"><div className={`progress-fill ${getProgressClass(systemStats.cpu.pct)}`} style={{ width: `${systemStats.cpu.pct}%` }} /></div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-label">Memory</div>
-            <div className="stat-value">{formatBytes(systemStats.mem.used)} / {formatBytes(systemStats.mem.total)}</div>
-            <div className="stat-subtext">{systemStats.mem.pct}% used</div>
-            <div className="progress-bar"><div className={`progress-fill ${getProgressClass(systemStats.mem.pct)}`} style={{ width: `${systemStats.mem.pct}%` }} /></div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-label">Disk</div>
-            <div className="stat-value">{formatBytes(systemStats.disk.used)} / {formatBytes(systemStats.disk.total)}</div>
-            <div className="stat-subtext">{systemStats.disk.pct}% used</div>
-            <div className="progress-bar"><div className={`progress-fill ${getProgressClass(systemStats.disk.pct)}`} style={{ width: `${systemStats.disk.pct}%` }} /></div>
-          </div>
-        </div>
-      )}
-
-      {agents.length > 0 && <ActivityView />}
 
       {agents.length === 0 ? (
         <div className="empty-state">
@@ -425,6 +424,8 @@ function Dashboard() {
               borderRadius: '0.5rem', color: 'var(--text-primary)', fontSize: '0.875rem'
             }}>
               <option value="all">All statuses</option>
+              <option value="attention">Needs attention{attentionCount ? ` (${attentionCount})` : ''}</option>
+              <option value="updates">Update available</option>
               <option value="running">Running</option>
               <option value="unhealthy">Unhealthy</option>
               <option value="stopped">Stopped</option>
@@ -432,14 +433,19 @@ function Dashboard() {
               <option value="creating">Creating</option>
               <option value="redeploying">Redeploying</option>
             </select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{
+            <select value={sortBy} onChange={(e) => chooseSort(e.target.value)} style={{
               padding: '0.5rem 0.75rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               borderRadius: '0.5rem', color: 'var(--text-primary)', fontSize: '0.875rem'
             }}>
+              <option value="attention">Sort: Needs attention first</option>
               <option value="name">Sort: Name</option>
+              <option value="busiest">Sort: Busiest now</option>
               <option value="created">Sort: Newest</option>
               <option value="runtime">Sort: Runtime</option>
             </select>
+            <label className="group-toggle" title="Agents, tools and apps under their own headings">
+              <input type="checkbox" checked={grouped} onChange={(e) => chooseGrouped(e.target.checked)} /> Group by kind
+            </label>
             <div className="view-toggle" role="group" aria-label="Show guests as">
               <button type="button" className={view === 'cards' ? 'active' : ''} aria-pressed={view === 'cards'}
                 title="Cards" onClick={() => chooseView('cards')}><LayoutGrid size={16} color="currentColor" /></button>
@@ -450,14 +456,17 @@ function Dashboard() {
         )}
         {visibleAgents.length === 0 ? (
           <div className="table-empty" style={{ padding: '3rem' }}>No agents match your search</div>
-        ) : view === 'list' ? (
+        ) : groups.map(g => (
+        <section key={g.kind || 'all'} className="guest-group">
+        {g.kind && <h2 className="guest-group-title">{KIND_LABELS[g.kind]} <span>{g.list.length}</span></h2>}
+        {view === 'list' ? (
         <div className="card data-table-wrap guest-list">
           <table className="data-table">
             <thead>
               <tr><th>Guest</th><th>Status</th><th className="wide-only">Domain</th><th className="wide-only">Health</th><th className="num">Actions</th></tr>
             </thead>
             <tbody>
-              {visibleAgents.map(agent => {
+              {g.list.map(agent => {
                 const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
                 const meta = runtimeMeta[agent.template] || runtimeMeta[agent.runtime]
                 return (
@@ -479,6 +488,7 @@ function Dashboard() {
                       {(agent.status === 'creating' || agent.status === 'redeploying')
                         ? <BuildProgress agentId={agent.id} />
                         : <span title={agent.health || ''}>{agent.health ? healthText(agent.health) : '—'}</span>}
+                      <AttentionLine agent={agent} />
                       <ModelErrorsLine summary={agent.modelErrors} />
                     </td>
                     <td className="num"><div className="guest-list-actions">{actionButtons(agent, url)}</div></td>
@@ -490,7 +500,7 @@ function Dashboard() {
         </div>
         ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-          {visibleAgents.map(agent => {
+          {g.list.map(agent => {
             const url = agent.domain && agent.domain.includes('.') ? `https://${agent.domain}` : null
             return (
               <div key={agent.id} className="agent-card">
@@ -525,6 +535,7 @@ function Dashboard() {
                         <span title={agent.health}>{healthText(agent.health)}</span>
                       </div>
                     )}
+                    <AttentionLine agent={agent} />
                     <ModelErrorsLine summary={agent.modelErrors} />
                   </div>
                 </Link>
@@ -536,10 +547,12 @@ function Dashboard() {
           })}
         </div>
         )}
+        </section>
+        ))}
         </>
       )}
     </div>
   )
 }
 
-export default Dashboard
+export default Agents

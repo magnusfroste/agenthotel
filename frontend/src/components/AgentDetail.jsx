@@ -159,7 +159,7 @@ function AgentDetail() {
 
   async function handleDelete() {
     if (!confirm('Delete this agent? This cannot be undone.')) return
-    try { await authFetchOk(`/api/agents/${id}`, { method: 'DELETE' }); navigate('/') }
+    try { await authFetchOk(`/api/agents/${id}`, { method: 'DELETE' }); navigate('/agents') }
     catch (err) { notify('error', 'Delete failed: ' + err.message) }
   }
 

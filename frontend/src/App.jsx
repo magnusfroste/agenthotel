@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import UpdateDot from './components/UpdateDot'
 import { useAgentUpdates } from './lib/agentUpdates'
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { getToken, clearToken, authFetch } from './lib/auth'
 import { loadZone, useTimeZone } from './lib/time'
 import { ToastProvider, useToast } from './components/Toast'
-import Dashboard from './components/Dashboard'
+import Home from './components/Home'
+import Agents from './components/Agents'
+import { attentionRows } from './lib/attention'
 import CreateAgent from './components/CreateAgent'
 import Compose from './components/Compose'
 import AgentDetail from './components/AgentDetail'
@@ -22,7 +23,7 @@ import Chat from './components/Chat'
 import TemplateDetail from './components/TemplateDetail'
 import Setup from './components/Setup'
 import Login from './components/Login'
-import { Bot, BarChart3, Plus, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink, MessagesSquare, Server } from 'lucide-react'
+import { Bot, Plus, LayoutDashboard, Boxes, CircleCheck, Globe, Lock, Terminal, Monitor, MonitorSmartphone, Link2, Key, Settings as SettingsIcon, Layers, LayoutTemplate, Sun, Moon, Package, User, Download, Menu, X, AlertTriangle, ChevronDown, Copy, LogOut, ExternalLink, MessagesSquare, Server } from 'lucide-react'
 import { getThemeChoice, setThemeChoice } from './lib/theme'
 import './index.css'
 
@@ -117,7 +118,6 @@ function UserMenu({ onLogout }) {
 
 function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
   const location = useLocation()
-  const fleetActive = location.pathname === '/' || location.pathname.startsWith('/agent/')
   const templatesActive = location.pathname.startsWith('/templates')
   const chatActive = location.pathname.startsWith('/chat')
   const connectActive = location.pathname.startsWith('/connect')
@@ -129,7 +129,6 @@ function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
       </button>
       <Link to="/" className="topbar-brand"><Bot size={20} color="currentColor" /> AgentHotel</Link>
       <nav className="topbar-nav">
-        <Link to="/" className={fleetActive ? 'active' : ''}>Fleet</Link>
         <Link to="/chat" className={chatActive ? 'active' : ''}>Chat</Link>
         <Link to="/templates" className={templatesActive ? 'active' : ''}>Templates</Link>
         <Link to="/connect" className={connectActive ? 'active' : ''}>Connect</Link>
@@ -153,6 +152,8 @@ function Topbar({ onLogout, onToggleMenu, menuOpen, alerts }) {
   )
 }
 
+const ATTENTION_ROWS = 10
+
 function Sidebar({ onNavigate, className = '' }) {
   const updates = useAgentUpdates()
   const location = useLocation()
@@ -160,16 +161,12 @@ function Sidebar({ onNavigate, className = '' }) {
   const [updateInfo, setUpdateInfo] = useState(null)
   const [upgrading, setUpgrading] = useState(false)
   const [agents, setAgents] = useState([])
+  // Ten rows of "Needs attention" by default; the rest one click away.
+  const [showAll, setShowAll] = useState(false)
   const [ip, setIp] = useState('')
-  // What each guest is, by name: its template ("Take", "Reports") or, for a
-  // runtime guest, the runtime's own ("Hermes Agent"), from the library.
-  const [kindNames, setKindNames] = useState({})
   const toast = useToast()
 
   useEffect(() => {
-    authFetch('/api/templates').then(r => r.json())
-      .then(list => setKindNames(Object.fromEntries((Array.isArray(list) ? list : []).map(t => [t.id, t.name]))))
-      .catch(() => {})
     authFetch('/api/system/ip').then(r => r.json()).then(d => setIp(d.ip || '')).catch(() => {})
     fetchVersion()
     checkForUpdates()
@@ -297,8 +294,7 @@ function Sidebar({ onNavigate, className = '' }) {
     return ''
   }
 
-  const statusColor = (status) =>
-    status === 'running' ? 'var(--accent-green)' : status === 'stopped' ? 'var(--accent-red)' : 'var(--accent-yellow)'
+  const attention = attentionRows(agents, updates)
 
   const infrastructure = [
     { to: '/providers', label: 'Providers', Icon: Key },
@@ -319,30 +315,48 @@ function Sidebar({ onNavigate, className = '' }) {
       <nav className="sidebar-nav" onClick={onNavigate}>
         {/* On a phone the top bar has no room for its links; they live here. */}
         <div className="sidebar-group sidebar-mobile-only">
-          <Link to="/" className={`sidebar-link ${isActive('/')}`}><BarChart3 size={16} color="currentColor" /> Fleet</Link>
           <Link to="/chat" className={`sidebar-link ${isActive('/chat')}`}><MessagesSquare size={16} color="currentColor" /> Chat</Link>
           <Link to="/templates" className={`sidebar-link ${isActive('/templates')}`}><LayoutTemplate size={16} color="currentColor" /> Templates</Link>
           <Link to="/connect" className={`sidebar-link ${isActive('/connect')}`}><Link2 size={16} color="currentColor" /> Connect</Link>
         </div>
 
         <div className="sidebar-group">
-          {/* Agents and the tools they use, in one list: everything checked in
-              is a guest, and headings per kind would cost room for nothing. */}
-          <div className="sidebar-label">Guests</div>
-          {agents.length === 0 && (
+          <Link to="/" className={`sidebar-link ${isActive('/')}`}><LayoutDashboard size={16} color="currentColor" /> Dashboard</Link>
+          <Link to="/agents" className={`sidebar-link ${location.pathname === '/agents' || location.pathname.startsWith('/agent/') ? 'active' : ''}`}>
+            <Boxes size={16} color="currentColor" /> Agents &amp; apps
+            {agents.length > 0 && <span className="sidebar-count">{agents.length}</span>}
+          </Link>
+        </div>
+
+        <div className="sidebar-group">
+          {/* Only the guests that need something, worst first, each saying
+              why (lib/attention.js). The list of every guest grew past what a
+              sidebar can show with the broken one findable in it; that list
+              is Agents & apps now (2026-11-24). */}
+          <div className="sidebar-label">Needs attention</div>
+          {agents.length === 0 ? (
             <Link to="/create" className="sidebar-link sidebar-empty"><Plus size={16} color="currentColor" /> Check in your first agent</Link>
+          ) : attention.length === 0 ? (
+            <div className="sidebar-allgood"><CircleCheck size={15} color="currentColor" /> {agents.length === 1 ? 'Your guest is fine' : `All ${agents.length} guests are fine`}</div>
+          ) : (
+            <>
+              {(showAll ? attention : attention.slice(0, ATTENTION_ROWS)).map(row => (
+                <Link key={row.key} to={row.to} title={`${row.title}: ${row.text}`}
+                  className={`sidebar-attention level-${row.level} ${location.pathname === row.to ? 'active' : ''}`}>
+                  <span className="sidebar-agent-name">
+                    <span className="sidebar-attention-dot" />
+                    <span>{row.title}</span>
+                  </span>
+                  <span className="sidebar-attention-text">{row.text}</span>
+                </Link>
+              ))}
+              {attention.length > ATTENTION_ROWS && (
+                <button type="button" className="sidebar-more" onClick={(e) => { e.stopPropagation(); setShowAll(!showAll) }}>
+                  {showAll ? 'Show fewer' : `Show ${attention.length - ATTENTION_ROWS} more`}
+                </button>
+              )}
+            </>
           )}
-          {agents.map(agent => (
-            <Link key={agent.id} to={`/agent/${agent.id}`}
-              className={`sidebar-agent ${location.pathname === `/agent/${agent.id}` ? 'active' : ''}`}>
-              <span className="sidebar-agent-name">
-                <span className="sidebar-agent-dot" style={{ background: statusColor(agent.status) }} />
-                <span>{agent.name}</span>
-                <UpdateDot status={updates[agent.id]} />
-              </span>
-              <span className="sidebar-agent-runtime">{kindNames[agent.template || agent.runtime] || agent.runtime}</span>
-            </Link>
-          ))}
         </div>
 
         <div className="sidebar-group">
@@ -490,7 +504,8 @@ function App() {
           />
           <main className="main-content">
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/agents" element={<Agents />} />
               <Route path="/templates" element={<Templates />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/templates/:id" element={<TemplateDetail />} />

@@ -135,14 +135,14 @@ function CreateAgent() {
         let err = null
         try { err = await res.json() } catch (e) { err = null }
         if (err && err.error) throw new Error(err.error)
-        navigate('/')
+        navigate('/agents')
         return
       }
-      navigate('/')
+      navigate('/agents')
     } catch (err) {
       // Same story when the connection itself drops: the request outlived the
       // proxy, not the build.
-      if (/Unexpected token|Failed to fetch|NetworkError|JSON/i.test(err.message)) { navigate('/'); return }
+      if (/Unexpected token|Failed to fetch|NetworkError|JSON/i.test(err.message)) { navigate('/agents'); return }
       setError(err.message)
     }
     finally { setLoading(false) }
