@@ -26,6 +26,8 @@ const { containerNameFor } = require('./lib/containerFor');
 const { demuxDockerBuffer } = require('./lib/demux');
 const { openExportZip } = require('./lib/exportZip');
 const { domainProblem } = require('./lib/domainName');
+const guestDomain = require('./lib/guestDomain');
+const { createDomainCheck } = require('./lib/domainCheck');
 const { timeZoneProblem } = require('./lib/timeZone');
 const containerRuntime = require('./lib/containerRuntime');
 const volumeTar = require('./lib/volumeTar');
@@ -509,6 +511,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   if (!settings.language) settings.language = 'sv';
   // '' = each browser shows times where it is (frontend/src/lib/time.js).
   if (!settings.timezone) settings.timezone = '';
+  if (!settings[guestDomain.SETTING_KEY]) settings[guestDomain.SETTING_KEY] = '';
   
   res.json(settings);
 });
@@ -519,6 +522,11 @@ app.put('/api/settings', requireAuth, async (req, res) => {
     if (badPanelDomain) return res.status(400).json({ error: badPanelDomain });
     const badZone = timeZoneProblem(req.body?.timezone);
     if (badZone) return res.status(400).json({ error: badZone });
+    if (req.body && guestDomain.SETTING_KEY in req.body) {
+      const badGuestDomain = guestDomain.guestDomainProblem(req.body[guestDomain.SETTING_KEY]);
+      if (badGuestDomain) return res.status(400).json({ error: badGuestDomain });
+      req.body[guestDomain.SETTING_KEY] = guestDomain.normalizeGuestDomain(req.body[guestDomain.SETTING_KEY]);
+    }
     // The hotel's default runtime applies to every guest's next deploy, so one
     // Docker does not have would fail them all: refuse it here instead.
     if (req.body && containerRuntime.SETTING_KEY in req.body) {
@@ -4937,7 +4945,7 @@ app.post('/api/system/notify-test', requireAuth, async (req, res) => {
 // Instance export/import (VPS-to-VPS migration).
 // Exports agents (incl. compose definitions), providers and non-secret
 // settings. Admin credentials and auth_token are NEVER exported.
-const EXPORTABLE_SETTINGS = ['panel_domain', 'panel_domain_aliases', 'caddy_email', 'default_network'];
+const EXPORTABLE_SETTINGS = ['panel_domain', 'panel_domain_aliases', 'caddy_email', 'default_network', guestDomain.SETTING_KEY];
 
 app.get('/api/system/export', requireAuth, (req, res) => {
   try {
@@ -5969,6 +5977,23 @@ async function serverAddress() {
   publicAddress = { ip: data.ip, at: Date.now() };
   return data.ip;
 }
+
+// Whether the wildcard record for the hotel's guest domain (lib/guestDomain.js)
+// points here: the Domains page asks when it shows the setting.
+const panelDomainCheck = createDomainCheck();
+app.get('/api/guest-domain/check', requireAuth, async (req, res) => {
+  try {
+    const base = req.query.domain !== undefined ? String(req.query.domain)
+      : db.prepare('SELECT value FROM settings WHERE key = ?').get(guestDomain.SETTING_KEY)?.value || '';
+    const problem = guestDomain.guestDomainProblem(base);
+    if (problem) return res.status(400).json({ error: problem });
+    const primary = db.prepare("SELECT value FROM settings WHERE key = 'panel_domain'").get()?.value || '';
+    const address = await serverAddress().catch(() => null);
+    res.json(await guestDomain.checkGuestDomain(base, panelDomainCheck, { hotel: panelHostnames(primary), addresses: [address] }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/system/ip', requireAuth, async (req, res) => {
   try {

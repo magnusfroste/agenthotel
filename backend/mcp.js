@@ -10,6 +10,7 @@ const { listTemplates, getTemplate, saveTemplate, materializeDeploy } = require(
 const { domainProblem } = require('./lib/domainName');
 const containerRuntime = require('./lib/containerRuntime');
 const { createDomainCheck, parentOf } = require('./lib/domainCheck');
+const guestDomain = require('./lib/guestDomain');
 
 // An agent's stored config holds provider API keys verbatim. The MCP surface
 // is readable by every connected agent, so keys must never travel over it —
@@ -166,7 +167,7 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
       }
     },
     create_agent: {
-      description: "Check a new guest in and deploy it. `runtime` is a runtime from list_runtimes or a template id from list_templates (get_template shows the config it expects); a repository with a Dockerfile is runtime git-app with config {GIT_REPO, GIT_REF}. Give `port` when the app does not listen on the runtime's default (git-app 8000, docker-app 80): the panel does not read a Dockerfile's EXPOSE. Give a `domain` that already points at this hotel: check_domain says whether one does, list_domains where new names work without a DNS change. A build takes minutes, so the call waits wait_seconds and then answers done:false while the deploy goes on. A create that fails keeps its guest as failed, still holding its name and domain: read get_deploy_log, fix the cause and redeploy_agent, or delete_agent to start over",
+      description: "Check a new guest in and deploy it. `runtime` is a runtime from list_runtimes or a template id from list_templates (get_template shows the config it expects); a repository with a Dockerfile is runtime git-app with config {GIT_REPO, GIT_REF}. Give `port` when the app does not listen on the runtime's default (git-app 8000, docker-app 80): the panel does not read a Dockerfile's EXPOSE. Give a `domain` that already points at this hotel: check_domain says whether one does, list_domains where new names work without a DNS change, and its guest_domain the hotel's own domain for guests, under which <name>.<guest_domain> is the usual choice. A build takes minutes, so the call waits wait_seconds and then answers done:false while the deploy goes on. A create that fails keeps its guest as failed, still holding its name and domain: read get_deploy_log, fix the cause and redeploy_agent, or delete_agent to start over",
       inputSchema: {
         type: 'object',
         properties: {
@@ -755,9 +756,12 @@ function createMcpServer(db, docker, runtimes, deployAgent, removeAgentRoutes, e
             guests: list
           };
         }));
+        const base = guestDomain.normalizeGuestDomain(setting(guestDomain.SETTING_KEY));
         return ok({
           panel: hotelNames()[0] || null,
           address: await serverAddress(),
+          guest_domain: base || null,
+          ...(base ? { new_guest_domain: `<name>.${base}, e.g. ${guestDomain.suggestDomain('my-agent', base)}: the operator set ${base} as the hotel's domain for guests` } : {}),
           zones: out,
           note: 'A zone is the part of a guest\'s name after its first label; address is where a DNS record for a new name points. check_domain says whether one name is free and where it points'
         });
