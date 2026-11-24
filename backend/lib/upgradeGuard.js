@@ -31,7 +31,7 @@ function upgradeBlocker({ upgradeRunning = false, deploys = [], backup = null, m
     return {
       status: 409,
       forceable: true,
-      body: { error: `A backup is running (${backup}); it pauses each guest for the seconds it takes to copy it. Upgrade when it is done, in a few minutes.` }
+      body: { error: `A backup is running (${backup}); it pauses each guest while it copies it, and a night's run takes about an hour. Upgrade when it is done.` }
     };
   }
   if (moves.length) {

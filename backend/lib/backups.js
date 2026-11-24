@@ -2,9 +2,9 @@
 // its harness's own files in its volumes, which is what lets it move between
 // hotels; until now the only copy was the one an operator remembered to
 // export. Each night every guest gets a backup: a folder holding agent.json
-// (what the export carries) and one .tar.gz per volume, made while the
-// guest's containers are paused for the seconds the tar takes, so the copy is
-// consistent without a restart. The newest few stay on the host; with an S3
+// (what the export carries) and one .tar.gz per volume. The volume is copied
+// as a plain tar while the guest's containers are paused, so the copy is
+// consistent without a restart, and compressed after they run again. The newest few stay on the host; with an S3
 // bucket configured (Hetzner Object Storage, Cloudflare R2, Backblaze, MinIO:
 // any S3 API) each backup is uploaded too and the bucket keeps more.
 //
@@ -48,6 +48,39 @@ function isDue(now, lastRunIso, hour) {
 function beyondKeep(stamps, keep) {
   const n = Math.max(1, parseInt(keep, 10) || 1);
   return [...stamps].filter(s => STAMP_RE.test(s)).sort().reverse().slice(n);
+}
+
+// A run that was cut short, to be finished rather than begun again
+// (2026-11-24). The run lives in the backend, so anything that restarts it
+// stops the run where it is: that night an upgrade at 03:40 stopped it after
+// five guests, and the next check ten minutes later began again from the
+// first under a new stamp, which also left the host holding two of that
+// night's backups for those guests. The record is written after each guest;
+// within RESUME_WITHIN_MS it is taken up again under the same stamp, the
+// guests already done are skipped, and those that failed are tried again.
+const RESUME_WITHIN_MS = 20 * 3600 * 1000;
+
+function resumable(record, now = Date.now()) {
+  if (!record) return null;
+  let r = record;
+  if (typeof r === 'string') { try { r = JSON.parse(r); } catch (_) { return null; } }
+  if (!r || !STAMP_RE.test(r.stamp || '') || !Array.isArray(r.results)) return null;
+  const at = Date.parse(r.startedAt);
+  if (!Number.isFinite(at) || at > now || now - at > RESUME_WITHIN_MS) return null;
+  return { ...r, results: r.results.filter(x => x && x.ok && x.name) };
+}
+
+// Which of a guest's local backups to delete: those beyond the newest `keep`
+// that were verified, and any that never were except the one being written.
+// A backup is verified only once every archive matched its volume
+// (agent.json's verifiedAt), so one without it is what a cut-short run left
+// behind. Counted with the others, three of those could push out the last
+// good copy.
+function localToRemove(list, keep, current = null) {
+  const verified = list.filter(x => x.verified).map(x => x.stamp);
+  const drop = new Set(beyondKeep(verified, keep));
+  for (const x of list) if (!x.verified && x.stamp !== current && STAMP_RE.test(x.stamp)) drop.add(x.stamp);
+  return [...drop].sort();
 }
 
 // The settings, with defaults, numbers parsed, and whether S3 is complete.
@@ -203,6 +236,6 @@ async function pruneRemote(c, agentName, keep) {
 
 module.exports = {
   BACKUP_ROOT, DEFAULTS, SECRET_KEY, KEYS, STAMP_RE,
-  stamp, isDue, beyondKeep, readSettings, remotePrefix, listLocal,
+  stamp, isDue, beyondKeep, readSettings, remotePrefix, listLocal, resumable, localToRemove, RESUME_WITHIN_MS,
   testS3, uploadBackup, listRemote, pruneRemote, doneOrStalled,
 };
