@@ -250,3 +250,36 @@ test('the zeroclaw template turns pairing on and leaves an empty model key out o
   const withKey = materializeDeploy(deploy, { DOMAIN: 'zeroclaw.example.com', ZEROCLAW_providers__models__openrouter__default__api_key: 'sk-or-example' }).config;
   assert.strictEqual(withKey.ZEROCLAW_providers__models__openrouter__default__api_key, 'sk-or-example');
 });
+
+test('every variable a docker-app or git-app template sets reaches the container', () => {
+  // The ZeroClaw template's ZEROCLAW_gateway__require_pairing was stored and
+  // never passed on, because the passthrough took UPPER_SNAKE keys only
+  // (2026-11-24). Each key in a template's env file and form must pass it.
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const { ENV_KEY_RE } = require('../lib/envPassthrough');
+  const root = path.join(__dirname, '../../templates');
+  const dropped = [];
+  for (const id of fs.readdirSync(root)) {
+    const file = path.join(root, id, 'meta.yaml');
+    if (!fs.existsSync(file)) continue;
+    const deploy = normalizeDeploy((yaml.load(fs.readFileSync(file, 'utf8')) || {}).deploy);
+    if (!deploy || !['docker-app', 'git-app'].includes(deploy.runtime)) continue;
+    const keys = [...deploy.env.map(f => f.key),
+      ...String(deploy.envFile || '').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#') && l.includes('=')).map(l => l.slice(0, l.indexOf('=')).trim())];
+    for (const k of keys) if (!ENV_KEY_RE.test(k)) dropped.push(`${id}: ${k}`);
+  }
+  assert.deepStrictEqual(dropped, []);
+});
+
+test('a ZeroClaw setting reaches the container environment, the panel\'s own keys do not', () => {
+  const { appendUnknownEnv } = require('../lib/envPassthrough');
+  const env = appendUnknownEnv([], {
+    ZEROCLAW_gateway__require_pairing: 'true',
+    OPENAI_API_KEY: 'sk-example',
+    domain: 'zeroclaw.example.com',
+    volumes: 'zeroclaw:/zeroclaw-data',
+    IMAGE: 'ghcr.io/zeroclaw-labs/zeroclaw:debian',
+    EMPTY_ONE: ''
+  }, ['IMAGE']);
+  assert.deepStrictEqual(env, ['ZEROCLAW_gateway__require_pairing=true', 'OPENAI_API_KEY=sk-example']);
+});
