@@ -1683,6 +1683,8 @@ app.get('/api/agents/:id/export', requireAuth, async (req, res) => {
 // volumes and starts it again.
 const backups = require('./lib/backups');
 const backupState = { running: false, current: null };
+// The run in progress, written after each guest (lib/backups.js resumable).
+const BACKUP_RUN_KEY = 'backup_run';
 
 function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
@@ -1806,19 +1808,30 @@ async function backupAgent(agent, backupStamp) {
     const census = {};
     const paused = await containersUsing(volumes);
     if (paused.length) pausedForBackup.add(agent.id);
+    // How long the guest could not answer, and what of that was the copy and
+    // what the check: measured because "the seconds the tar takes" turned out
+    // to be minutes for the larger guests (2026-11-24).
+    const pausedAt = Date.now();
+    let tarMs = 0;
+    let verifyMs = 0;
+    // Paused, only what needs the volume to hold still: a plain tar (a copy
+    // at disk speed) and the volume's census. Compressing it is done after
+    // the guest is running again. It used to be done paused: davida's 4.8 GB
+    // went through gzip for over eight minutes with the guest frozen, every
+    // night (2026-11-24).
     for (const id of paused) await docker.getContainer(id).pause().catch(() => {});
     try {
       for (const vol of volumes) {
-        const [result] = await docker.run(image, ['tar', 'czf', `/staging/${rel}/${vol}.tar.gz`, '-C', '/vol', '.'], new PassThrough(), {
+        const t0 = Date.now();
+        const [result] = await docker.run(image, ['tar', 'cf', `/staging/${rel}/${vol}.tar`, '-C', '/vol', '.'], new PassThrough(), {
           Tty: true, HostConfig: { Binds: [`${vol}:/vol:ro`, `${dataMountSource}:/staging`], AutoRemove: true }
         });
+        tarMs += Date.now() - t0;
         if (result.StatusCode !== 0) throw new Error(`tar of ${vol} failed (exit ${result.StatusCode})`);
-        // Still paused, so the volume is as it was when it was copied: the
-        // backup counts only if its archive holds the same files and bytes.
-        const source = await censusOfVolume(vol);
-        const archived = await runCensus(volumeCensus.archiveScript(`/staging/${rel}/${vol}.tar.gz`, { gzip: true }), [`${dataMountSource}:/staging:ro`]);
-        volumeCensus.assertSame(vol, source, archived, 'in the backup');
-        census[vol] = source;
+        // Still paused, so the volume is as it was when it was copied.
+        const t1 = Date.now();
+        census[vol] = await censusOfVolume(vol);
+        verifyMs += Date.now() - t1;
       }
     } finally {
       for (const id of paused) {
@@ -1826,11 +1839,28 @@ async function backupAgent(agent, backupStamp) {
       }
       pausedForBackup.delete(agent.id);
     }
+    const pausedMs = paused.length ? Date.now() - pausedAt : 0;
+    // Running again. Compressed to the .tar.gz a restore reads, and the
+    // backup counts only if that archive holds the same files and bytes as
+    // the volume had while it was paused.
+    for (const vol of volumes) {
+      const t0 = Date.now();
+      const [result] = await docker.run(image, ['gzip', '-f', `/staging/${rel}/${vol}.tar`], new PassThrough(), {
+        Tty: true, HostConfig: { Binds: [`${dataMountSource}:/staging`], AutoRemove: true }
+      });
+      tarMs += Date.now() - t0;
+      if (result.StatusCode !== 0) throw new Error(`gzip of ${vol} failed (exit ${result.StatusCode})`);
+      const t1 = Date.now();
+      const archived = await runCensus(volumeCensus.archiveScript(`/staging/${rel}/${vol}.tar.gz`, { gzip: true }), [`${dataMountSource}:/staging:ro`]);
+      verifyMs += Date.now() - t1;
+      volumeCensus.assertSame(vol, census[vol], archived, 'in the backup');
+    }
     // Verified: what each volume held, for the card and for a restore to check.
     manifest.census = census;
     manifest.verifiedAt = new Date().toISOString();
     fs.writeFileSync(path.join(dir, 'agent.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
-    return { dir, volumes: volumes.length, paused: paused.length };
+    const sec = ms => Math.round(ms / 1000);
+    return { dir, volumes: volumes.length, paused: paused.length, pausedSeconds: sec(pausedMs), tarSeconds: sec(tarMs), verifySeconds: sec(verifyMs) };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw err;
@@ -1846,39 +1876,55 @@ function dirBytes(dir) {
 async function runBackups(trigger = 'schedule') {
   if (backupState.running) return null;
   backupState.running = true;
-  const started = Date.now();
-  const st = backups.stamp(new Date(started));
+  // A run the backend was restarted in the middle of is finished, not begun
+  // again (lib/backups.js resumable).
+  const pending = backups.resumable(getSetting(BACKUP_RUN_KEY));
+  const started = pending ? Date.parse(pending.startedAt) : Date.now();
+  const st = pending ? pending.stamp : backups.stamp(new Date(started));
+  if (pending) trigger = pending.trigger || trigger;
   const settings = backupSettings();
-  const results = [];
+  const results = pending ? pending.results : [];
+  const done = new Set(results.map(r => r.name));
+  const saveProgress = () => putSetting(BACKUP_RUN_KEY, JSON.stringify({ stamp: st, startedAt: new Date(started).toISOString(), trigger, results }));
+  if (pending) console.log(`[Backup] Resuming the run of ${st}: ${done.size} guest(s) already done`);
+  saveProgress();
   try {
-    for (const agent of db.prepare('SELECT * FROM agents ORDER BY name').all()) {
-      backupState.current = agent.name;
+    const agents = db.prepare('SELECT * FROM agents ORDER BY name').all();
+    for (const [i, agent] of agents.entries()) {
+      if (done.has(agent.name)) continue;
+      // "davida, 5 of 18": an upgrade refused because of it says how far along it is.
+      backupState.current = `${agent.name}, ${i + 1} of ${agents.length}`;
       const r = { name: agent.name, ok: false };
       try {
         if (deployQueue.has(agent.id)) throw new Error('skipped: a deploy is running');
         const b = await backupAgent(agent, st);
-        Object.assign(r, { ok: true, volumes: b.volumes, bytes: dirBytes(b.dir) });
-        for (const old of backups.beyondKeep(backups.listLocal(agent.name).map(x => x.stamp), settings.keepLocal)) {
+        Object.assign(r, { ok: true, volumes: b.volumes, bytes: dirBytes(b.dir), pausedSeconds: b.pausedSeconds, tarSeconds: b.tarSeconds, verifySeconds: b.verifySeconds });
+        for (const old of backups.localToRemove(backups.listLocal(agent.name), settings.keepLocal, st)) {
           fs.rmSync(path.join(backups.BACKUP_ROOT, agent.name, old), { recursive: true, force: true });
         }
         if (settings.s3Configured) {
+          const upStart = Date.now();
           try {
             await backups.uploadBackup(settings.s3, agent.name, st, b.dir);
             await backups.pruneRemote(settings.s3, agent.name, settings.keepRemote);
             r.s3 = 'uploaded';
           } catch (err) { r.s3 = `failed: ${err.message}`; }
+          r.uploadSeconds = Math.round((Date.now() - upStart) / 1000);
         }
       } catch (err) { r.error = err.message; }
-      console.log(`[Backup] ${agent.name}: ${r.ok ? `${r.volumes} volume(s), ${Math.round((r.bytes || 0) / 1048576)} MB${r.s3 ? `, S3 ${r.s3}` : ''}` : r.error}`);
+      console.log(`[Backup] ${agent.name}: ${r.ok ? `${r.volumes} volume(s), ${Math.round((r.bytes || 0) / 1048576)} MB, paused ${r.pausedSeconds} s, tar and gzip ${r.tarSeconds} s, check ${r.verifySeconds} s${r.s3 ? `, S3 ${r.s3} in ${r.uploadSeconds} s` : ''}` : r.error}`);
       results.push(r);
+      saveProgress();
     }
   } finally {
     backupState.running = false;
     backupState.current = null;
   }
-  const summary = { at: new Date(started).toISOString(), trigger, stamp: st, seconds: Math.round((Date.now() - started) / 1000), s3: settings.s3Configured, results };
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  const summary = { at: new Date(started).toISOString(), trigger, stamp: st, seconds: Math.round((Date.now() - started) / 1000), s3: settings.s3Configured, resumed: Boolean(pending), results };
   putSetting('backup_last_run', summary.at);
   putSetting('backup_last_result', JSON.stringify(summary));
+  db.prepare('DELETE FROM settings WHERE key = ?').run(BACKUP_RUN_KEY);
   const bad = results.filter(r => !r.ok || (r.s3 && r.s3 !== 'uploaded'));
   const okCount = results.filter(r => r.ok).length;
   logEvent('backup.run', null, `Backed up ${okCount} of ${results.length} guest(s)${settings.s3Configured ? ' (host and S3)' : ' (host only)'}${bad.length ? `; problems: ${bad.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}` : ''}`);
@@ -1889,7 +1935,10 @@ async function runBackups(trigger = 'schedule') {
 function checkBackupSchedule() {
   const s = backupSettings();
   if (!s.enabled || backupState.running) return;
-  if (!backups.isDue(new Date(), getSetting('backup_last_run'), s.hour)) return;
+  // Due tonight, or a run (tonight's or one started from the panel) that a
+  // restart cut short.
+  if (!backups.isDue(new Date(), getSetting('backup_last_run'), s.hour)
+    && !backups.resumable(getSetting(BACKUP_RUN_KEY))) return;
   runBackups('schedule').catch(err => console.error('[Backup] Run failed:', err.message));
 }
 

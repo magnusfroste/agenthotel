@@ -97,3 +97,46 @@ test('an upload that keeps moving is waited for, however long it takes', async (
   await waiting;
   assert.strictEqual(up.aborted, false);
 });
+
+// 2026-11-24: an upgrade at 03:40 restarted the backend after five guests;
+// the next check began again from the first under a new stamp.
+test('a run cut short is taken up again under its own stamp, with what was done', () => {
+  const now = Date.parse('2026-11-24T03:56:00Z');
+  const record = JSON.stringify({
+    stamp: '2026-11-24T03-05-29Z', startedAt: '2026-11-24T03:05:29.000Z', trigger: 'schedule',
+    results: [
+      { name: 'agent-take', ok: true, volumes: 1 },
+      { name: 'christer', ok: true, volumes: 3 },
+      { name: 'david', ok: false, error: 'skipped: a deploy is running' },
+    ]
+  });
+  const r = b.resumable(record, now);
+  assert.strictEqual(r.stamp, '2026-11-24T03-05-29Z');
+  // A guest that failed is tried again, so only the ones that worked count as done.
+  assert.deepStrictEqual(r.results.map(x => x.name), ['agent-take', 'christer']);
+});
+
+test('nothing to take up: no record, a broken one, or one from another night', () => {
+  const now = Date.parse('2026-11-24T03:56:00Z');
+  assert.strictEqual(b.resumable(null, now), null);
+  assert.strictEqual(b.resumable('{not json', now), null);
+  assert.strictEqual(b.resumable({ stamp: 'yesterday', startedAt: '2026-11-24T03:05:29Z', results: [] }, now), null);
+  const old = { stamp: '2026-11-23T03-05-28Z', startedAt: '2026-11-23T03:05:28Z', results: [] };
+  assert.strictEqual(b.resumable(old, now), null);
+  assert.ok(b.resumable(old, Date.parse('2026-11-23T20:00:00Z')));
+});
+
+test('a backup a cut-short run left unverified is removed, and never counts as one of the kept', () => {
+  const list = [
+    { stamp: '2026-11-24T03-56-58Z', verified: false }, // being written now
+    { stamp: '2026-11-24T03-05-29Z', verified: false }, // cut short
+    { stamp: '2026-11-23T03-05-28Z', verified: true },
+    { stamp: '2026-11-22T03-08-21Z', verified: true },
+    { stamp: '2026-11-21T03-08-07Z', verified: true },
+    { stamp: '2026-11-20T03-07-55Z', verified: true },
+  ];
+  assert.deepStrictEqual(b.localToRemove(list, 3, '2026-11-24T03-56-58Z'),
+    ['2026-11-20T03-07-55Z', '2026-11-24T03-05-29Z']);
+  // Without one being written, every unverified one goes.
+  assert.deepStrictEqual(b.localToRemove(list, 3), ['2026-11-20T03-07-55Z', '2026-11-24T03-05-29Z', '2026-11-24T03-56-58Z']);
+});
