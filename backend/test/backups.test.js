@@ -140,3 +140,73 @@ test('a backup a cut-short run left unverified is removed, and never counts as o
   // Without one being written, every unverified one goes.
   assert.deepStrictEqual(b.localToRemove(list, 3), ['2026-11-20T03-07-55Z', '2026-11-24T03-05-29Z', '2026-11-24T03-56-58Z']);
 });
+
+// ---- The upload queue ----
+
+test('a backup still waiting for S3 is never removed from the host', () => {
+  const list = [
+    { stamp: '2026-11-25T03-05-02Z', verified: true },
+    { stamp: '2026-11-24T03-56-58Z', verified: true },
+    { stamp: '2026-11-23T03-05-28Z', verified: true },
+    { stamp: '2026-11-22T03-08-21Z', verified: true }, // still queued: the bucket was slow
+  ];
+  assert.deepStrictEqual(b.localToRemove(list, 3, '2026-11-25T03-05-02Z'), ['2026-11-22T03-08-21Z']);
+  assert.deepStrictEqual(b.localToRemove(list, 3, ['2026-11-25T03-05-02Z', '2026-11-22T03-08-21Z']), []);
+});
+
+test('the queue takes each backup once, in order, and skips one waiting to be tried again', () => {
+  let q = b.queueAdd([], { name: 'alpha', stamp: '2026-11-25T03-05-02Z' }, 1000);
+  q = b.queueAdd(q, { name: 'beta', stamp: '2026-11-25T03-05-02Z' }, 2000);
+  // A resumed run queues alpha again; it stays one entry.
+  q = b.queueAdd(JSON.stringify(q), { name: 'alpha', stamp: '2026-11-25T03-05-02Z' }, 3000);
+  assert.deepStrictEqual(q.map(x => x.name), ['alpha', 'beta']);
+  assert.strictEqual(b.nextUpload(q, 5000).name, 'alpha');
+
+  const first = b.afterFailure(q, q[0], 'no progress for 10 min, aborted', 5000);
+  assert.strictEqual(first.gaveUp, false);
+  assert.strictEqual(first.queue[0].attempts, 1);
+  assert.strictEqual(first.queue[0].notBefore, 5000 + b.UPLOAD_RETRY_MS);
+  // alpha waits, so beta goes first; once alpha's time comes it is next again.
+  assert.strictEqual(b.nextUpload(first.queue, 6000).name, 'beta');
+  assert.strictEqual(b.nextUpload(b.queueRemove(first.queue, { name: 'beta', stamp: '2026-11-25T03-05-02Z' }), 6000), null);
+  assert.strictEqual(b.nextUpload(first.queue, 5000 + b.UPLOAD_RETRY_MS).name, 'alpha');
+  assert.deepStrictEqual(b.queuedStamps(first.queue, 'alpha'), ['2026-11-25T03-05-02Z']);
+});
+
+test('after the last attempt an upload leaves the queue as given up', () => {
+  let q = b.queueAdd([], { name: 'alpha', stamp: '2026-11-25T03-05-02Z' });
+  for (let i = 1; i < b.UPLOAD_ATTEMPTS; i++) {
+    const r = b.afterFailure(q, q[0], 'HTTP 503');
+    assert.strictEqual(r.gaveUp, false);
+    q = r.queue;
+  }
+  const last = b.afterFailure(q, q[0], 'HTTP 503');
+  assert.strictEqual(last.gaveUp, true);
+  assert.deepStrictEqual(last.queue, []);
+});
+
+test('the card sees each guest as uploaded, queued, retrying or as the run left it', () => {
+  const st = '2026-11-25T03-05-02Z';
+  const summary = { stamp: st, results: [
+    { name: 'alpha', ok: true, s3: 'queued' },
+    { name: 'beta', ok: true, s3: 'queued' },
+    { name: 'gamma', ok: true, s3: 'queued' },
+    { name: 'delta', ok: false, error: 'skipped: a deploy is running' },
+  ] };
+  let uploaded = b.recordUpload({}, st, 'alpha', { s3: 'uploaded', seconds: 40 });
+  let q = b.queueAdd([], { name: 'beta', stamp: st });
+  q = b.queueAdd(q, { name: 'gamma', stamp: st });
+  q = b.afterFailure(q, q[1], 'HTTP 503').queue;
+  const view = b.withUploads(summary, JSON.stringify(uploaded), q);
+  assert.deepStrictEqual(view.results.map(r => r.s3), ['uploaded', 'queued', 'retrying (HTTP 503)', undefined]);
+  assert.strictEqual(view.results[0].uploadSeconds, 40);
+  assert.strictEqual(b.withUploads(null, uploaded, q), null);
+});
+
+test('the upload record keeps only the newest few nights', () => {
+  let m = {};
+  for (const d of ['21', '22', '23', '24']) m = b.recordUpload(m, `2026-11-${d}T03-05-00Z`, 'alpha', { s3: 'uploaded' });
+  m = b.recordUpload(m, '2026-11-24T03-05-00Z', 'beta', { s3: 'failed: HTTP 403' });
+  assert.deepStrictEqual(Object.keys(m).sort(), ['2026-11-22T03-05-00Z', '2026-11-23T03-05-00Z', '2026-11-24T03-05-00Z']);
+  assert.deepStrictEqual(Object.keys(m['2026-11-24T03-05-00Z']), ['alpha', 'beta']);
+});
