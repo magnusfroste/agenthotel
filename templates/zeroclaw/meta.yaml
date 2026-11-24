@@ -12,7 +12,10 @@ agentUse: 'Another agent can hand ZeroClaw work over HTTP: POST https://<domain>
 instructions: 'Pairing is on: until you pair, the dashboard and API answer nobody. Right after the deploy, open the guest''s Logs and find "PAIRING REQUIRED — use this one-time code". Open https://<domain>, enter the code, and the dashboard keeps the token it gets back. The code works once. To get a new one later (another browser, after logging out), run zeroclaw gateway get-paircode --new in the guest''s console.
 
 
-  The model: with an OpenRouter key on the form, ZeroClaw answers with the model named there. Anything else (Anthropic, OpenAI, Ollama, an OpenAI-compatible endpoint of your own) is set in the dashboard''s config editor, or with ZEROCLAW_<path with __ for dots> variables on the Environment tab, which win over the config file.
+  The model: with an OpenRouter key on the form, ZeroClaw answers with the model named there. Anything else (Anthropic, OpenAI, Ollama, an OpenAI-compatible endpoint of your own) is set in the dashboard''s config editor, or with ZEROCLAW_<path with __ for dots> variables on the Environment tab, which win over the config file. For an OpenAI-compatible endpoint of your own (the custom provider), also set native_tools = true on it: without it the tools are described in the prompt, and a model such as DeepSeek answers with its own tool markup as text instead of calling them.
+
+
+  The image approves only reading tools by itself; writing a file or storing a memory waits for someone to approve it in the dashboard. For an agent that works on its own, add file_write, file_edit and memory_store to risk_profiles.default.auto_approve.
 
 
   Config, memory and pairing live in the guest''s zeroclaw volume and survive redeploys.
