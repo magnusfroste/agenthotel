@@ -1,0 +1,59 @@
+name: ZeroClaw
+category: AI Agent
+icon: bot
+color: '#f97316'
+source: builtin
+description: 'Small, fast autonomous assistant written in Rust, from zeroclaw-labs. A web dashboard for chat, memory, config, scheduled jobs and tools, channels (Telegram, Matrix, WhatsApp and more), and any model provider. The container uses about 15 MB of memory at rest.
+
+  '
+agentUse: 'Another agent can hand ZeroClaw work over HTTP: POST https://<domain>/webhook with {"message": "..."} and the header Authorization: Bearer <token>, where the token comes from pairing (POST /pair with the one-time code). The REST API at https://<domain>/api is documented at /api/docs.
+
+  '
+instructions: 'Pairing is on: until you pair, the dashboard and API answer nobody. Right after the deploy, open the guest''s Logs and find "PAIRING REQUIRED — use this one-time code". Open https://<domain>, enter the code, and the dashboard keeps the token it gets back. The code works once. To get a new one later (another browser, after logging out), run zeroclaw gateway get-paircode --new in the guest''s console.
+
+
+  The model: with an OpenRouter key on the form, ZeroClaw answers with the model named there. Anything else (Anthropic, OpenAI, Ollama, an OpenAI-compatible endpoint of your own) is set in the dashboard''s config editor, or with ZEROCLAW_<path with __ for dots> variables on the Environment tab, which win over the config file.
+
+
+  Config, memory and pairing live in the guest''s zeroclaw volume and survive redeploys.
+
+  '
+tags:
+- agent
+- rust
+- channels
+- memory
+links:
+- label: GitHub
+  url: https://github.com/zeroclaw-labs/zeroclaw
+- label: Container guide
+  url: https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/setup/container.md
+deploy:
+  runtime: docker-app
+  # The debian variant, not :latest: :latest is distroless, with no shell,
+  # so the guest's Console tab (and zeroclaw gateway get-paircode in it)
+  # would not open.
+  image: ghcr.io/zeroclaw-labs/zeroclaw:debian
+  port: 42617
+  healthcheck: /health
+  volumes:
+  - zeroclaw:/zeroclaw-data
+  # The image's own config has pairing off, so as it ships anyone who finds
+  # the domain could read its config and memory and talk to it. Here pairing
+  # is on; environment variables win over the config file, so a config edited
+  # in the dashboard cannot turn it off by accident.
+  envFile: |
+    ZEROCLAW_gateway__require_pairing=true
+    ZEROCLAW_gateway__host=[::]
+    ZEROCLAW_gateway__allow_public_bind=true
+  # Left empty, these never become environment (an empty value would override
+  # whatever is set later in the dashboard).
+  env:
+  - key: ZEROCLAW_providers__models__openrouter__default__api_key
+    label: OpenRouter API key
+    type: password
+    description: Optional. Without it, set a provider in the dashboard after pairing
+  - key: ZEROCLAW_providers__models__openrouter__default__model
+    label: Model (OpenRouter)
+    type: text
+    description: Optional, e.g. anthropic/claude-sonnet-4.5. Empty keeps the image's default

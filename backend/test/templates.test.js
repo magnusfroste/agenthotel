@@ -229,3 +229,24 @@ test('the lobby template is a place: its MCP path and the variable its token is 
   assert.ok(config.LOBBY_API_TOKEN && config.LOBBY_API_TOKEN.length >= 32);
   assert.match(meta.agentUse, /reception/);
 });
+
+test('the zeroclaw template turns pairing on and leaves an empty model key out of the environment', () => {
+  // The image ships with require_pairing = false: on a public domain anyone
+  // could read its config and memory (checked 2026-11-24).
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/zeroclaw/meta.yaml'), 'utf8'));
+  const deploy = normalizeDeploy(meta.deploy);
+  const { runtime, image, port, config } = materializeDeploy(deploy, { DOMAIN: 'zeroclaw.example.com', AGENT_NAME: 'zeroclaw' });
+  assert.strictEqual(runtime, 'docker-app');
+  // Not the distroless :latest, which has no shell for the Console tab.
+  assert.strictEqual(image, 'ghcr.io/zeroclaw-labs/zeroclaw:debian');
+  assert.strictEqual(port, 42617);
+  assert.strictEqual(config.HEALTHCHECK_PATH, '/health');
+  assert.strictEqual(config.VOLUMES, 'zeroclaw:/zeroclaw-data');
+  assert.strictEqual(config.ZEROCLAW_gateway__require_pairing, 'true');
+  // Empty on the form, it never becomes environment, which would win over a
+  // key set later in the dashboard.
+  assert.ok(!('ZEROCLAW_providers__models__openrouter__default__api_key' in config));
+  const withKey = materializeDeploy(deploy, { DOMAIN: 'zeroclaw.example.com', ZEROCLAW_providers__models__openrouter__default__api_key: 'sk-or-example' }).config;
+  assert.strictEqual(withKey.ZEROCLAW_providers__models__openrouter__default__api_key, 'sk-or-example');
+});
