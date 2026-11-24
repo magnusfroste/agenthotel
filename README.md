@@ -75,6 +75,7 @@ The film above was directed, filmed and cut by a Hermes agent on this hotel, wit
 
 ### Domains & TLS
 - **Automatic HTTPS** — Caddy issues and renews Let's Encrypt certificates for every agent subdomain
+- **A domain for new guests** — set one on Domains (`hotel.example.com`) and point `*.hotel.example.com` at the server once: every new guest's domain is filled in from its name (`zeroclaw.hotel.example.com`) and needs no DNS change. The page says whether the wildcard record points here
 - **Live domains view** — real container status, orphaned-route detection and cleanup
 - **Certificates panel** — issuer, validity dates, SANs and fingerprints, read live from Caddy's cert store
 - **NetBird (optional)** — the European alternative: the hotel joins a NetBird WireGuard mesh (NetBird Cloud's free plan, or your own NetBird server), publishes hostnames through NetBird's reverse proxy with no open ports, and gives you a private way in ([manual](docs/MANUAL.md#netbird))
@@ -122,7 +123,10 @@ See the [Providers & Models manual chapter](docs/MANUAL.md#providers--models) fo
 first time a domain is requested, and that fails if the name does not already
 resolve to this server. You need an A record for the panel (`panel.example.com`)
 and one per agent (`myagent.example.com`) — or a single wildcard `*.example.com`,
-which is simpler since every agent gets its own subdomain.
+which is simpler since every agent gets its own subdomain. Set that zone as the
+guest domain on Domains and the create form fills each guest's domain in. Behind
+Cloudflare, keep a wildcard record more than one level deep (`*.hotel.example.com`)
+DNS only: the free proxy certificate covers just one level below the zone.
 
 Then, on a fresh VPS (Ubuntu/Debian), as root:
 
@@ -203,8 +207,8 @@ AgentHotel exposes an MCP endpoint so your own agents can manage the platform:
 
 **Fleet** — `list_agents`, `get_agent`, `create_agent`, `update_agent`, `delete_agent`, `redeploy_agent`, `get_agent_logs`, `get_deploy_log`
 
-**Names** — `list_domains` shows the zones the hotel already has guests under and
-whether a new name there works without a DNS change (a wildcard record).
+**Names** — `list_domains` shows the hotel's guest domain, the zones it already
+has guests under and whether a new name there works without a DNS change (a wildcard record).
 `check_domain` says, before a deploy, whether one name is free and reaches the
 hotel. `create_agent` takes a template id as `runtime`, warns when the name has
 no DNS record, and keeps a guest whose first deploy failed so it can be fixed

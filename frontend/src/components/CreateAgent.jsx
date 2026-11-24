@@ -3,6 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { authFetch } from '../lib/auth'
 import { AlertTriangle, Bot, PawPrint, Layers, Container, Zap, ArrowRight, GitBranch, GitMerge } from 'lucide-react'
 import { templateIcon } from '../lib/templateIcons'
+import { suggestDomain } from '../lib/guestDomain'
 
 const RUNTIME_ICON = {
   hermes: Zap,
@@ -25,6 +26,17 @@ function CreateAgent() {
   const [error, setError] = useState('')
 
   const [capacity, setCapacity] = useState(null)
+  // The hotel's domain for guests (Domains page): the domain follows the name
+  // until someone edits the domain field itself.
+  const [guestDomain, setGuestDomain] = useState('')
+  const [domainTouched, setDomainTouched] = useState(false)
+  useEffect(() => {
+    authFetch('/api/settings').then(r => r.json()).then(s => setGuestDomain(s.guest_domain || '')).catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (!guestDomain || domainTouched) return
+    setFormData(prev => ({ ...prev, domain: suggestDomain(prev.name, guestDomain) }))
+  }, [formData.name, guestDomain, domainTouched])
 
   useEffect(() => { fetchRuntimes(); fetchProviders() }, [])
   useEffect(() => {
@@ -80,6 +92,7 @@ function CreateAgent() {
 
   function handleChange(e) {
     const { name, value } = e.target
+    if (name === 'domain') setDomainTouched(true)
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
@@ -215,8 +228,12 @@ function CreateAgent() {
 
         <div className="form-group">
           <label>Domain (optional)</label>
-          <input type="text" name="domain" value={formData.domain} onChange={handleChange} placeholder="myagent.froste.eu" />
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>FQDN gets automatic HTTPS via Caddy/Let's Encrypt.</div>
+          <input type="text" name="domain" value={formData.domain} onChange={handleChange} placeholder={guestDomain ? suggestDomain('my-agent', guestDomain) : 'myagent.example.com'} />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+            {guestDomain && !domainTouched
+              ? <>Follows the name under {guestDomain}, the hotel's domain for guests: no DNS change needed. Edit it for a name of your own, or clear it for no public address.</>
+              : <>FQDN gets automatic HTTPS via Caddy/Let's Encrypt.</>}
+          </div>
         </div>
 
         {!isCompose && (() => {

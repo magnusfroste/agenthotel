@@ -2,10 +2,34 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch, authFetchOk } from '../lib/auth'
 import { useToast } from './Toast'
-import { ExternalLink, Trash2, RefreshCw, Globe } from 'lucide-react'
+import { ExternalLink, Trash2, RefreshCw, Globe, Wand2, CheckCircle2, AlertTriangle, HelpCircle } from 'lucide-react'
 import SettingCard from './SettingCard'
 
+// Whether *.<guest domain> points here, asked when the page opens and after a
+// save. The verdict is the backend's (lib/guestDomain.js).
+function GuestDomainStatus({ version }) {
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    setStatus({ checking: true })
+    authFetch('/api/guest-domain/check')
+      .then(r => r.json())
+      .then(setStatus)
+      .catch(() => setStatus(null))
+  }, [version])
+  if (!status || status.state === 'unset') return null
+  if (status.checking) return <div className="form-help" style={{ marginTop: '-0.5rem', marginBottom: '1.5rem' }}>Checking DNS…</div>
+  const Icon = status.ok === true ? CheckCircle2 : status.ok === false ? AlertTriangle : HelpCircle
+  const color = status.ok === true ? 'var(--accent-green, #10b981)' : status.ok === false ? 'var(--accent-yellow, #f59e0b)' : 'var(--text-secondary)'
+  return (
+    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginTop: '-0.5rem', marginBottom: '1.5rem', fontSize: '0.85rem', color }}>
+      <Icon size={16} color="currentColor" style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+      <span>{status.error || status.verdict}</span>
+    </div>
+  )
+}
+
 function Domains() {
+  const [guestDomainVersion, setGuestDomainVersion] = useState(0)
   const [domains, setDomains] = useState([])
   const [loading, setLoading] = useState(true)
   const toast = useToast()
@@ -63,6 +87,12 @@ function Domains() {
         { name: 'panel_domain_aliases', label: 'Also answers on', placeholder: 'agenthotel.eu1.netbird.services',
           help: 'More hostnames for the panel, comma-separated — for instance the name a NetBird or Cloudflare front door publishes it under. The panel keeps its own domain as well.' },
       ]} />
+
+      <SettingCard title="Domain for new guests" icon={Wand2} onSaved={() => setGuestDomainVersion(v => v + 1)} fields={[
+        { name: 'guest_domain', label: 'Guest domain', placeholder: 'hotel.example.com',
+          help: 'A new guest gets its name under this one: zeroclaw becomes zeroclaw.hotel.example.com. Point *.hotel.example.com at this server once, as an A record (DNS only, not proxied, in Cloudflare), and new guests need no DNS change. The create form fills the domain in; it can still be changed per guest. Empty turns it off.' },
+      ]} />
+      <GuestDomainStatus version={guestDomainVersion} />
 
       {domains.length === 0 ? (
         <div style={{ 
