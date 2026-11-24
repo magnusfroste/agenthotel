@@ -4,9 +4,10 @@
 // export. Each night every guest gets a backup: a folder holding agent.json
 // (what the export carries) and one .tar.gz per volume. The volume is copied
 // as a plain tar while the guest's containers are paused, so the copy is
-// consistent without a restart, and compressed after they run again. The newest few stay on the host; with an S3
-// bucket configured (Hetzner Object Storage, Cloudflare R2, Backblaze, MinIO:
-// any S3 API) each backup is uploaded too and the bucket keeps more.
+// consistent without a restart, and compressed after they run again. The
+// newest few stay on the host; with an S3 bucket configured (Hetzner Object
+// Storage, Cloudflare R2, Backblaze, MinIO: any S3 API) each backup is queued
+// for upload too, and the bucket keeps more.
 //
 // What here does not touch Docker or the network is pure and tested.
 
@@ -76,11 +77,107 @@ function resumable(record, now = Date.now()) {
 // (agent.json's verifiedAt), so one without it is what a cut-short run left
 // behind. Counted with the others, three of those could push out the last
 // good copy.
-function localToRemove(list, keep, current = null) {
+// `spare` is the stamp being written, or a list of stamps never to remove:
+// that one and those still waiting to be copied to S3 (see the queue below).
+function localToRemove(list, keep, spare = null) {
+  const keepAlso = new Set([].concat(spare || []));
   const verified = list.filter(x => x.verified).map(x => x.stamp);
   const drop = new Set(beyondKeep(verified, keep));
-  for (const x of list) if (!x.verified && x.stamp !== current && STAMP_RE.test(x.stamp)) drop.add(x.stamp);
+  for (const x of list) if (!x.verified && STAMP_RE.test(x.stamp)) drop.add(x.stamp);
+  for (const st of keepAlso) drop.delete(st);
   return [...drop].sort();
+}
+
+// ---- The upload queue (2026-11-24) ----------------------------------------
+//
+// Copying a backup to S3 is no longer part of the run. On 2026-11-24 the run
+// took 96 minutes, most of it waiting on Contabo's bucket: measured that
+// morning, a 1 KB PUT took 103 s and 16 MB parts anywhere from 0.9 s to 91 s,
+// every one HTTP 200 on the first try, so neither more parallel parts nor
+// retries make it faster. An upgrade waits for a backup, so for an hour and a
+// half each night the panel could not be upgraded.
+//
+// Now the run makes the local copies (pause, tar, gzip, check) and puts each
+// one on a queue kept in the settings table. Uploads go one backup at a time,
+// alongside the next guest's copy; an upgrade does not wait for them, and
+// after a restart the queue carries on, skipping files the bucket already
+// has. A failed upload is tried again later, a few times, before it is given
+// up and reported.
+
+const UPLOAD_ATTEMPTS = 4;
+const UPLOAD_RETRY_MS = 15 * 60 * 1000;
+
+function parseQueue(raw) {
+  let q = raw;
+  if (typeof q === 'string') { try { q = JSON.parse(q); } catch (_) { return []; } }
+  return Array.isArray(q) ? q.filter(x => x && x.name && STAMP_RE.test(x.stamp || '')) : [];
+}
+
+const sameItem = (a, b) => a.name === b.name && a.stamp === b.stamp;
+
+// The queue with one more backup at the end (once: a resumed run may add it again).
+function queueAdd(queue, { name, stamp: st }, now = Date.now()) {
+  const q = parseQueue(queue);
+  if (q.some(x => sameItem(x, { name, stamp: st }))) return q;
+  return [...q, { name, stamp: st, queuedAt: now, attempts: 0 }];
+}
+
+function queueRemove(queue, item) {
+  return parseQueue(queue).filter(x => !sameItem(x, item));
+}
+
+// The next backup to upload: the first in line that is not waiting to be
+// tried again.
+function nextUpload(queue, now = Date.now()) {
+  return parseQueue(queue).find(x => !x.notBefore || x.notBefore <= now) || null;
+}
+
+// After a failed upload: back in line with a later time, or, after
+// UPLOAD_ATTEMPTS, out of it (gaveUp).
+function afterFailure(queue, item, error, now = Date.now()) {
+  const q = parseQueue(queue);
+  const i = q.findIndex(x => sameItem(x, item));
+  if (i < 0) return { queue: q, gaveUp: true };
+  const attempts = (q[i].attempts || 0) + 1;
+  if (attempts >= UPLOAD_ATTEMPTS) return { queue: q.filter((_, j) => j !== i), gaveUp: true };
+  const next = [...q];
+  next[i] = { ...q[i], attempts, error: String(error).slice(0, 300), notBefore: now + UPLOAD_RETRY_MS * attempts };
+  return { queue: next, gaveUp: false };
+}
+
+// The stamps of one guest still waiting, which its local pruning must spare.
+function queuedStamps(queue, name) {
+  return parseQueue(queue).filter(x => x.name === name).map(x => x.stamp);
+}
+
+// What became of each upload, by stamp then guest: { s3, seconds, at }. Only
+// the newest few stamps are kept.
+function recordUpload(map, st, name, result, keepStamps = 3) {
+  let m = map;
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch (_) { m = {}; } }
+  const out = { ...(m && typeof m === 'object' ? m : {}) };
+  out[st] = { ...(out[st] || {}), [name]: result };
+  for (const old of Object.keys(out).sort().reverse().slice(keepStamps)) delete out[old];
+  return out;
+}
+
+// The last run's summary as the Backups card shows it: each guest's S3 state
+// from the upload record or the queue, since the run itself only queued it.
+function withUploads(summary, uploaded, queue) {
+  if (!summary || !Array.isArray(summary.results)) return summary;
+  let m = uploaded;
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch (_) { m = {}; } }
+  const done = (m && m[summary.stamp]) || {};
+  const q = parseQueue(queue);
+  return {
+    ...summary,
+    results: summary.results.map(r => {
+      if (done[r.name]) return { ...r, s3: done[r.name].s3, uploadSeconds: done[r.name].seconds };
+      const waiting = q.find(x => sameItem(x, { name: r.name, stamp: summary.stamp }));
+      if (waiting) return { ...r, s3: waiting.attempts ? `retrying (${waiting.error || 'failed'})` : 'queued' };
+      return r;
+    })
+  };
 }
 
 // The settings, with defaults, numbers parsed, and whether S3 is complete.
@@ -183,23 +280,42 @@ async function testS3(c) {
   return { ok: true };
 }
 
-// Uploads one backup folder, file by file (multipart for the large ones).
-async function uploadBackup(c, agentName, backupStamp, dir) {
+// Uploads one backup folder, file by file (multipart for the large ones). A
+// file the bucket already has at the same size is skipped, so an upload a
+// restart cut off carries on with the file it was on; parts that upload left
+// behind are aborted first, or the bucket keeps (and bills) them.
+// onProgress(bytesDone, bytesTotal) follows it.
+async function uploadBackup(c, agentName, backupStamp, dir, { onProgress = () => {} } = {}) {
   const { Upload } = require('@aws-sdk/lib-storage');
+  const { HeadObjectCommand, ListMultipartUploadsCommand, AbortMultipartUploadCommand } = require('@aws-sdk/client-s3');
   const client = s3Client(c);
-  let bytes = 0;
-  for (const f of fs.readdirSync(dir)) {
-    const file = path.join(dir, f);
-    bytes += fs.statSync(file).size;
+  const base = `${remotePrefix(c.prefix, agentName)}${backupStamp}/`;
+  const files = fs.readdirSync(dir).map(f => ({ f, size: fs.statSync(path.join(dir, f)).size }));
+  const total = files.reduce((n, x) => n + x.size, 0);
+  try {
+    const open = await client.send(new ListMultipartUploadsCommand({ Bucket: c.bucket, Prefix: base }));
+    for (const u of open.Uploads || []) {
+      await client.send(new AbortMultipartUploadCommand({ Bucket: c.bucket, Key: u.Key, UploadId: u.UploadId })).catch(() => {});
+    }
+  } catch (_) { /* a bucket that cannot list them has none we made */ }
+  let done = 0;
+  let skipped = 0;
+  for (const { f, size } of files) {
+    const Key = `${base}${f}`;
+    const have = await client.send(new HeadObjectCommand({ Bucket: c.bucket, Key })).catch(() => null);
+    if (have && Number(have.ContentLength) === size) { done += size; skipped++; onProgress(done, total); continue; }
     const upload = new Upload({
       client,
-      params: { Bucket: c.bucket, Key: `${remotePrefix(c.prefix, agentName)}${backupStamp}/${f}`, Body: fs.createReadStream(file) },
+      params: { Bucket: c.bucket, Key, Body: fs.createReadStream(path.join(dir, f)) },
       partSize: 16 * 1024 * 1024,
       queueSize: 2,
     });
+    upload.on('httpUploadProgress', p => { if (p && typeof p.loaded === 'number') onProgress(done + p.loaded, total); });
     await doneOrStalled(upload, { label: f });
+    done += size;
+    onProgress(done, total);
   }
-  return bytes;
+  return { bytes: total, skipped };
 }
 
 // The stamps of a guest's backups in the bucket.
@@ -238,4 +354,5 @@ module.exports = {
   BACKUP_ROOT, DEFAULTS, SECRET_KEY, KEYS, STAMP_RE,
   stamp, isDue, beyondKeep, readSettings, remotePrefix, listLocal, resumable, localToRemove, RESUME_WITHIN_MS,
   testS3, uploadBackup, listRemote, pruneRemote, doneOrStalled,
+  UPLOAD_ATTEMPTS, UPLOAD_RETRY_MS, parseQueue, queueAdd, queueRemove, nextUpload, afterFailure, queuedStamps, recordUpload, withUploads,
 };

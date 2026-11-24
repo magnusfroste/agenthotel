@@ -1685,6 +1685,11 @@ const backups = require('./lib/backups');
 const backupState = { running: false, current: null };
 // The run in progress, written after each guest (lib/backups.js resumable).
 const BACKUP_RUN_KEY = 'backup_run';
+// Backups waiting to be copied to S3, and what became of those that were
+// (lib/backups.js, the upload queue). The queue does not hold an upgrade back.
+const BACKUP_UPLOADS_KEY = 'backup_uploads';
+const BACKUP_UPLOADED_KEY = 'backup_uploaded';
+const uploadState = { running: false, current: null };
 
 function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
@@ -1899,20 +1904,16 @@ async function runBackups(trigger = 'schedule') {
         if (deployQueue.has(agent.id)) throw new Error('skipped: a deploy is running');
         const b = await backupAgent(agent, st);
         Object.assign(r, { ok: true, volumes: b.volumes, bytes: dirBytes(b.dir), pausedSeconds: b.pausedSeconds, tarSeconds: b.tarSeconds, verifySeconds: b.verifySeconds });
-        for (const old of backups.localToRemove(backups.listLocal(agent.name), settings.keepLocal, st)) {
+        if (settings.s3Configured) {
+          queueUpload(agent.name, st);
+          r.s3 = 'queued';
+        }
+        const spare = [st, ...backups.queuedStamps(getSetting(BACKUP_UPLOADS_KEY), agent.name)];
+        for (const old of backups.localToRemove(backups.listLocal(agent.name), settings.keepLocal, spare)) {
           fs.rmSync(path.join(backups.BACKUP_ROOT, agent.name, old), { recursive: true, force: true });
         }
-        if (settings.s3Configured) {
-          const upStart = Date.now();
-          try {
-            await backups.uploadBackup(settings.s3, agent.name, st, b.dir);
-            await backups.pruneRemote(settings.s3, agent.name, settings.keepRemote);
-            r.s3 = 'uploaded';
-          } catch (err) { r.s3 = `failed: ${err.message}`; }
-          r.uploadSeconds = Math.round((Date.now() - upStart) / 1000);
-        }
       } catch (err) { r.error = err.message; }
-      console.log(`[Backup] ${agent.name}: ${r.ok ? `${r.volumes} volume(s), ${Math.round((r.bytes || 0) / 1048576)} MB, paused ${r.pausedSeconds} s, tar and gzip ${r.tarSeconds} s, check ${r.verifySeconds} s${r.s3 ? `, S3 ${r.s3} in ${r.uploadSeconds} s` : ''}` : r.error}`);
+      console.log(`[Backup] ${agent.name}: ${r.ok ? `${r.volumes} volume(s), ${Math.round((r.bytes || 0) / 1048576)} MB, paused ${r.pausedSeconds} s, tar and gzip ${r.tarSeconds} s, check ${r.verifySeconds} s${r.s3 ? ', queued for S3' : ''}` : r.error}`);
       results.push(r);
       saveProgress();
     }
@@ -1925,14 +1926,84 @@ async function runBackups(trigger = 'schedule') {
   putSetting('backup_last_run', summary.at);
   putSetting('backup_last_result', JSON.stringify(summary));
   db.prepare('DELETE FROM settings WHERE key = ?').run(BACKUP_RUN_KEY);
-  const bad = results.filter(r => !r.ok || (r.s3 && r.s3 !== 'uploaded'));
+  const bad = results.filter(r => !r.ok);
   const okCount = results.filter(r => r.ok).length;
-  logEvent('backup.run', null, `Backed up ${okCount} of ${results.length} guest(s)${settings.s3Configured ? ' (host and S3)' : ' (host only)'}${bad.length ? `; problems: ${bad.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}` : ''}`);
-  if (bad.length) sendNotification(db, `AgentHotel: backup problems: ${bad.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}`).catch(() => {});
+  logEvent('backup.run', null, `Backed up ${okCount} of ${results.length} guest(s) on this host${settings.s3Configured ? ', each queued for S3' : ''}${bad.length ? `; problems: ${bad.map(r => `${r.name}: ${r.error}`).join('; ')}` : ''}`);
+  if (bad.length) sendNotification(db, `AgentHotel: backup problems: ${bad.map(r => `${r.name}: ${r.error}`).join('; ')}`).catch(() => {});
+  if (settings.s3Configured) reportUploads(st);
   return summary;
 }
 
+function queueUpload(name, st) {
+  putSetting(BACKUP_UPLOADS_KEY, JSON.stringify(backups.queueAdd(getSetting(BACKUP_UPLOADS_KEY), { name, stamp: st })));
+  drainUploads().catch(err => console.error('[Backup] Upload queue failed:', err.message));
+}
+
+// One upload's outcome: off the queue, into the record, and once a stamp has
+// nothing left waiting, one event (and a notification for any that failed).
+function finishUpload(item, result) {
+  putSetting(BACKUP_UPLOADS_KEY, JSON.stringify(backups.queueRemove(getSetting(BACKUP_UPLOADS_KEY), item)));
+  const record = backups.recordUpload(getSetting(BACKUP_UPLOADED_KEY), item.stamp, item.name, { ...result, at: new Date().toISOString() });
+  putSetting(BACKUP_UPLOADED_KEY, JSON.stringify(record));
+  console.log(`[Backup] ${item.name}: S3 ${result.s3}${result.seconds != null ? ` in ${result.seconds} s` : ''}${result.skipped ? ` (${result.skipped} file(s) already there)` : ''}`);
+  reportUploads(item.stamp);
+}
+
+// Once a run is over and nothing of its stamp is left waiting: one event for
+// its uploads, and a notification for any that failed. Called by the last
+// upload, or by the run's end when the uploads kept up with it.
+function reportUploads(st) {
+  if (backupState.running) return;
+  if (backups.parseQueue(getSetting(BACKUP_UPLOADS_KEY)).some(x => x.stamp === st)) return;
+  let record = {};
+  try { record = JSON.parse(getSetting(BACKUP_UPLOADED_KEY) || '{}'); } catch (_) {}
+  const all = Object.entries(record[st] || {});
+  if (!all.length) return;
+  const failed = all.filter(([, r]) => r.s3 !== 'uploaded');
+  const minutes = Math.round((Date.now() - Date.parse(st.replace(/T(\d\d)-(\d\d)-(\d\d)Z$/, 'T$1:$2:$3Z'))) / 60000);
+  logEvent('backup.upload', null, `Copied ${all.length - failed.length} of ${all.length} backup(s) of ${st} to S3, done ${minutes} min after the run began${failed.length ? `; problems: ${failed.map(([n, r]) => `${n}: ${r.s3}`).join('; ')}` : ''}`);
+  if (failed.length) sendNotification(db, `AgentHotel: S3 upload problems: ${failed.map(([n, r]) => `${n}: ${r.s3}`).join('; ')}`).catch(() => {});
+}
+
+// Works through the upload queue, one backup at a time, until nothing in it
+// is ready. Started when a backup is queued, at start-up (a restart carries
+// on) and every ten minutes (for retries).
+async function drainUploads() {
+  if (uploadState.running) return;
+  const settings = backupSettings();
+  if (!settings.s3Configured) return;
+  uploadState.running = true;
+  try {
+    for (;;) {
+      const item = backups.nextUpload(getSetting(BACKUP_UPLOADS_KEY));
+      if (!item) break;
+      const dir = path.join(backups.BACKUP_ROOT, item.name, item.stamp);
+      if (!fs.existsSync(dir)) { finishUpload(item, { s3: 'failed: the copy on this host is gone' }); continue; }
+      const started = Date.now();
+      uploadState.current = { name: item.name, stamp: item.stamp, done: 0, total: dirBytes(dir), startedAt: new Date(started).toISOString() };
+      try {
+        const up = await backups.uploadBackup(settings.s3, item.name, item.stamp, dir, {
+          onProgress: (done, total) => { uploadState.current = { ...uploadState.current, done, total }; }
+        });
+        await backups.pruneRemote(settings.s3, item.name, settings.keepRemote);
+        finishUpload(item, { s3: 'uploaded', seconds: Math.round((Date.now() - started) / 1000), skipped: up.skipped });
+      } catch (err) {
+        const { queue, gaveUp } = backups.afterFailure(getSetting(BACKUP_UPLOADS_KEY), item, err.message);
+        if (gaveUp) finishUpload(item, { s3: `failed: ${err.message}`, seconds: Math.round((Date.now() - started) / 1000) });
+        else {
+          putSetting(BACKUP_UPLOADS_KEY, JSON.stringify(queue));
+          console.log(`[Backup] ${item.name}: S3 upload failed (${err.message}), trying again later`);
+        }
+      }
+    }
+  } finally {
+    uploadState.running = false;
+    uploadState.current = null;
+  }
+}
+
 function checkBackupSchedule() {
+  drainUploads().catch(err => console.error('[Backup] Upload queue failed:', err.message));
   const s = backupSettings();
   if (!s.enabled || backupState.running) return;
   // Due tonight, or a run (tonight's or one started from the panel) that a
@@ -1962,9 +2033,16 @@ app.get('/api/backups', requireAuth, (req, res) => {
   const agentsByName = Object.fromEntries(db.prepare('SELECT id, name FROM agents').all().map(a => [a.name, a.id]));
   let last = null;
   try { last = JSON.parse(getSetting('backup_last_result') || 'null'); } catch (_) {}
+  const queue = backups.parseQueue(getSetting(BACKUP_UPLOADS_KEY));
+  last = backups.withUploads(last, getSetting(BACKUP_UPLOADED_KEY), queue);
   res.json({
     settings: backupSettingsView(),
     running: backupState.running, current: backupState.current, last,
+    uploads: {
+      current: uploadState.current,
+      waiting: queue.filter(x => !uploadState.current || x.name !== uploadState.current.name || x.stamp !== uploadState.current.stamp)
+        .map(x => ({ name: x.name, stamp: x.stamp, attempts: x.attempts || 0, error: x.error || null, notBefore: x.notBefore || null }))
+    },
     guests: [...names].sort().map(name => ({ name, agentId: agentsByName[name] || null, backups: backups.listLocal(name) }))
   });
 });
@@ -6313,6 +6391,8 @@ listen(async () => {
   setInterval(modelErrorsRound, 5 * 60 * 1000);
   // Nightly backups (lib/backups.js): due once a day at the configured hour.
   setInterval(checkBackupSchedule, 10 * 60 * 1000);
+  // Uploads a restart cut off carry on (lib/backups.js, the upload queue).
+  setTimeout(() => drainUploads().catch(err => console.error('[Backup] Upload queue failed:', err.message)), 30 * 1000);
   setInterval(() => {
     runHealthChecks().catch(err => console.error('[Health] Error:', err.message));
     // Caddy holds its routes only in memory, so anything that restarts it —

@@ -80,7 +80,12 @@ export default function BackupsCard() {
 
   const s3 = form.s3
   const last = data.last
-  const problems = last ? last.results.filter(r => !r.ok || (r.s3 && r.s3 !== 'uploaded')) : []
+  // 'queued' and 'retrying (…)' are on their way (backend/lib/backups.js, the
+  // upload queue); only a failed one is a problem.
+  const problems = last ? last.results.filter(r => !r.ok || (r.s3 && r.s3.startsWith('failed'))) : []
+  const inS3 = last ? last.results.filter(r => r.s3 === 'uploaded').length : 0
+  const up = data.uploads || { current: null, waiting: [] }
+  const retrying = up.waiting.filter(w => w.attempts > 0)
 
   return (
     <section className="settings-section">
@@ -100,8 +105,18 @@ export default function BackupsCard() {
       {last && (
         <div className="form-help" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', color: problems.length ? 'var(--accent-yellow)' : 'var(--text-secondary)' }}>
           {problems.length ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} color="var(--accent-green)" />}
-          Last run {formatDateTime(last.at)} ({last.trigger}, {last.seconds}s): {last.results.filter(r => r.ok).length} of {last.results.length} guests{last.s3 ? ', copied to S3' : ''}
+          Last run {formatDateTime(last.at)} ({last.trigger}, {last.seconds}s): {last.results.filter(r => r.ok).length} of {last.results.length} guests{last.s3 ? `, ${inS3} in S3` : ''}
           {problems.length > 0 && ` — ${problems.map(r => `${r.name}: ${r.error || r.s3}`).join('; ')}`}
+        </div>
+      )}
+      {(up.current || up.waiting.length > 0) && (
+        <div className="form-help" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+          <CloudUpload size={14} />
+          {up.current
+            ? `Copying to S3: ${up.current.name}, ${mb(up.current.done)} of ${mb(up.current.total)}${up.current.total ? ` (${Math.round(100 * up.current.done / up.current.total)} %)` : ''}`
+            : 'Waiting to copy to S3'}
+          {up.waiting.length > 0 && `${up.current ? ', ' : ': '}${up.waiting.length} more waiting`}
+          {retrying.length > 0 && ` — trying again later: ${retrying.map(w => `${w.name} (${w.error})`).join('; ')}`}
         </div>
       )}
 
