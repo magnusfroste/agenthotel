@@ -183,6 +183,7 @@ Ready-made templates on top of those runtimes, each deployed from one form with 
 | **Reports** | Where agents put what they found: they publish reports over MCP, people read them on a generated start page behind a password; every publish a version ([AgentReports](https://github.com/magnusfroste/agentreports)) |
 | **Fortnox** | Fortnox for your agents, for one company or several: they read the books and write vouchers, invoices and payments over MCP, each agent key reaches exactly one company, every write logged with the agent's name ([agentmcp-fortnox](https://github.com/magnusfroste/agentmcp-fortnox)) |
 | **n8n** | Workflow automation: a person builds a workflow once, an agent calls it as an MCP tool or a webhook, and the integrations' credentials stay in n8n |
+| **ZeroClaw** | A small autonomous assistant in Rust ([zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw)) with a dashboard, channels and any model provider; deployed with pairing on, since the image ships with it off |
 | **Sluss** | A self-hosted LLM gateway for EU organisations: every prompt classified and routed under a fail-closed policy, with an audit trail — put the hotel's agents behind it as a provider |
 
 ## MCP Integration
