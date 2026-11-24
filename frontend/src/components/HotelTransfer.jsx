@@ -77,7 +77,7 @@ export function MoveOut({ agent }) {
 
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes > 100 * 1024 * 1024 ? 0 : 1)} MB`
 
-// The receiving half: shown in Fleet's Import Agent dialog.
+// The receiving half: shown in the Import Agent dialog on Agents & apps.
 export function MoveIn({ onDone }) {
   const [url, setUrl] = useState('')
   const [job, setJob] = useState(null)

@@ -236,6 +236,9 @@ db.exec(`
     latency_ms INTEGER
   )
 `);
+// The dashboard sums the last day of probes for every guest at once; without
+// this it read the whole week's table (2026-11-24).
+db.exec('CREATE INDEX IF NOT EXISTS idx_uptime_checks_time ON uptime_checks(checked_at, agent_id, ok)');
 
 // Lightweight activity log, shown in the System page "Recent Activity" card.
 // agent_id may outlive the agent row (deleted agents) — query with LEFT JOIN.
@@ -1298,8 +1301,70 @@ app.get('/api/agents', requireAuth, (req, res) => {
   // and this endpoint is polled every few seconds by the sidebar/dashboard.
   // The detail endpoint below serves config when it's actually needed.
   const agents = db.prepare('SELECT id, name, runtime, template, domain, image, port, status, health, created_at, updated_at FROM agents ORDER BY created_at DESC').all();
-  res.json(agents.map(a => ({ ...a, modelErrors: modelErrors.summarize(modelErrorState.get(a.id)?.errors || []) })));
+  const events = attention.lastEvents(db.prepare(`
+    SELECT agent_id, type, MAX(ts) AS ts FROM events
+    WHERE agent_id IS NOT NULL AND type IN (${attentionEventTypes.map(() => '?').join(',')})
+    GROUP BY agent_id, type
+  `).all(...attentionEventTypes));
+  const meta = guestKindMeta();
+  res.json(agents.map(a => {
+    const summary = modelErrors.summarize(modelErrorState.get(a.id)?.errors || []);
+    return {
+      ...a,
+      kind: require('./lib/activity').kindOf(a, meta),
+      modelErrors: summary,
+      // What the sidebar lists, and why (lib/attention.js); null when nothing.
+      attention: attention.assess(a, {
+        lastLifecycle: events.lifecycle[a.id] || null,
+        lastProblemAt: events.problem[a.id] || null,
+        uptimeDown: uptimeState.get(a.id)?.up === false,
+        modelErrors: summary
+      })
+    };
+  }));
 });
+
+// The dashboard's numbers over time (lib/fleetOverview.js): events per day
+// for the last week and each guest's uptime over the last day and week.
+let overviewCache = { at: 0, value: null };
+app.get('/api/system/overview', requireAuth, (req, res) => {
+  if (overviewCache.value && Date.now() - overviewCache.at < 60 * 1000) return res.json(overviewCache.value);
+  try {
+    const overview = require('./lib/fleetOverview');
+    const types = Object.values(overview.DAY_COLUMNS).flat();
+    const dayRows = db.prepare(`
+      SELECT date(ts) AS day, type, COUNT(*) AS n FROM events
+      WHERE ts >= datetime('now', '-7 days') AND type IN (${types.map(() => '?').join(',')})
+      GROUP BY day, type
+    `).all(...types);
+    // The last day only: a week is most of the table (175 000 probes on
+    // 2026-11-24) and took 0.4 s with the event loop blocked, index or not.
+    const uptime24h = overview.uptimeByAgent(db.prepare(`
+      SELECT agent_id, COUNT(*) AS total, SUM(ok) AS ok FROM uptime_checks
+      WHERE checked_at >= datetime('now', '-1 day') GROUP BY agent_id
+    `).all());
+    overviewCache = { at: Date.now(), value: { days: overview.byDay(dayRows), uptime24h } };
+    res.json(overviewCache.value);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const attention = require('./lib/attention');
+const attentionEventTypes = [...attention.STOP_EVENTS, ...attention.RUN_EVENTS, ...attention.PROBLEM_EVENTS];
+
+// The template library's categories, which say whether a guest is an agent, a
+// tool or an app (lib/activity.js kindOf). Read from disk, so kept a minute:
+// the list endpoint is polled every five seconds.
+let guestKindCache = { at: 0, meta: {} };
+function guestKindMeta() {
+  if (Date.now() - guestKindCache.at > 60 * 1000) {
+    try {
+      guestKindCache = { at: Date.now(), meta: Object.fromEntries(listTemplates(runtimes).map(t => [t.id, { category: t.category }])) };
+    } catch (_) { guestKindCache.at = Date.now(); }
+  }
+  return guestKindCache.meta;
+}
 
 // The replies that failed at the model in the last week, newest first, for
 // the agent page. `checked` is false until the first read after a restart.

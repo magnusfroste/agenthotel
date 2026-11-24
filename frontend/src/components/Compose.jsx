@@ -180,7 +180,7 @@ volumes:
         throw new Error(err.error || 'Failed to deploy compose')
       }
 
-      navigate('/')
+      navigate('/agents')
     } catch (err) {
       setError(err.message)
     } finally {
