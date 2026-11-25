@@ -1,6 +1,6 @@
 // Replies that failed at the model (lib/modelErrors.js), read from Hermes'
-// agent.log. Lines are as Hermes wrote them on peter, torbjorn, davida and
-// matthias in October 2026, with ids shortened.
+// agent.log. Lines are as Hermes wrote them on bo, cleo, ada and
+// dan in October 2026, with ids shortened.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseHermesLog, classify, summarize, notification, redact } = require('../lib/modelErrors');
@@ -52,9 +52,9 @@ test('the dashboard counts the last 24 hours, and the phone hears what to do', (
   assert.deepStrictEqual(s.kinds, { budget: 1 });
   assert.match(s.last.advice, /budget/);
   assert.deepStrictEqual(summarize([], now), { count: 0 });
-  const msg = notification('peter', [errors[0]]);
-  assert.match(msg, /^peter could not answer: the budget for its key at the model gateway is used up at api\.garageai\.eu\. 1 reply failed, the last at 08:56 UTC/);
-  assert.strictEqual(notification('peter', []), null);
+  const msg = notification('bo', [errors[0]]);
+  assert.match(msg, /^bo could not answer: the budget for its key at the model gateway is used up at api\.garageai\.eu\. 1 reply failed, the last at 08:56 UTC/);
+  assert.strictEqual(notification('bo', []), null);
 });
 
 test('a log without failures, or no log at all, is no failures', () => {

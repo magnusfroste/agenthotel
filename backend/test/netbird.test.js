@@ -14,7 +14,7 @@ test('a management URL is normalised; empty means NetBird Cloud', () => {
 });
 
 test('a peer name is one NetBird accepts', () => {
-  assert.strictEqual(netbird.peerName('Panel.Froste.eu'), 'panel-froste-eu');
+  assert.strictEqual(netbird.peerName('Panel.Example.com'), 'panel-example-com');
   assert.strictEqual(netbird.peerName(''), 'agenthotel');
   assert.strictEqual(netbird.peerName('--x--'), 'x');
 });

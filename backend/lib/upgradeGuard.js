@@ -2,8 +2,8 @@
 // and deploys, backups and agent moves all run inside that process.
 //
 // Moves were not on the list: an upgrade on this hotel killed an import of
-// priscilla half way through its pull (2026-10-29), and an upgrade on the
-// other hotel killed the pull of davida an hour later. A pull spends its
+// gun half way through its pull (2026-10-29), and an upgrade on the
+// other hotel killed the pull of ada an hour later. A pull spends its
 // one-time ticket and stops the agent at its old hotel, so both had to be
 // started over with a new ticket.
 

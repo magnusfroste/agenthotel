@@ -106,14 +106,14 @@ test('a run cut short is taken up again under its own stamp, with what was done'
     stamp: '2026-11-24T03-05-29Z', startedAt: '2026-11-24T03:05:29.000Z', trigger: 'schedule',
     results: [
       { name: 'agent-take', ok: true, volumes: 1 },
-      { name: 'christer', ok: true, volumes: 3 },
-      { name: 'david', ok: false, error: 'skipped: a deploy is running' },
+      { name: 'eva', ok: true, volumes: 3 },
+      { name: 'finn', ok: false, error: 'skipped: a deploy is running' },
     ]
   });
   const r = b.resumable(record, now);
   assert.strictEqual(r.stamp, '2026-11-24T03-05-29Z');
   // A guest that failed is tried again, so only the ones that worked count as done.
-  assert.deepStrictEqual(r.results.map(x => x.name), ['agent-take', 'christer']);
+  assert.deepStrictEqual(r.results.map(x => x.name), ['agent-take', 'eva']);
 });
 
 test('nothing to take up: no record, a broken one, or one from another night', () => {

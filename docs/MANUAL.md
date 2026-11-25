@@ -433,10 +433,10 @@ its domain. It is in step within a minute of a change; *Sync now* does it at
 once.
 
 - A guest whose domain falls under a **custom domain you validated in NetBird**
-  keeps its own name (`reel.froste.eu`). Point the name — or a wildcard,
-  `*.froste.eu` — at the proxy cluster the card shows, with a CNAME.
+  keeps its own name (`reel.example.com`). Point the name — or a wildcard,
+  `*.example.com` — at the proxy cluster the card shows, with a CNAME.
 - Any other guest gets a name under NetBird's **free domain**,
-  `reel-froste-eu.eu1.netbird.services`, which the panel adds to the guest's
+  `reel-example-com.eu1.netbird.services`, which the panel adds to the guest's
   route by itself.
 - Wildcard guests (`*.sites.example.com`) are not published; a proxy service is
   one name.

@@ -1,13 +1,13 @@
 // Which guests need the operator, and why, in words (2026-11-24).
 //
 // The sidebar used to list every guest. With 18 of them, and 32 the week the
-// skolappar were here, the one that was broken was a red dot somewhere in a
+// game apps were here, the one that was broken was a red dot somewhere in a
 // long list. Now the sidebar shows only the guests that need something, worst
 // first, each with one line saying what is wrong, and the Agents & apps page
 // lists everyone.
 //
 // What does not count:
-// - A guest stopped on purpose. Fourteen skolappar were stopped on 2026-11-21
+// - A guest stopped on purpose. Fourteen game apps were stopped on 2026-11-21
 //   when they moved to Shipholm; listing them would have filled the sidebar
 //   with guests nobody had to do anything about. A guest whose container
 //   stopped by itself does count: its last lifecycle event is a start, not a

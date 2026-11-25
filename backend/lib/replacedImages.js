@@ -4,7 +4,7 @@
 // rebuilds on every redeploy, and <runtime>-agenthotel:latest for a template
 // rebuilt on request. The image the tag pointed to before becomes dangling,
 // and nothing removed it but the manual prune. Six redeploys of reel-studio
-// (~2.5 GB each) filled panel.froste.eu's 38 GB disk to 37 MB free; the prune
+// (~2.5 GB each) filled panel.example.com's 38 GB disk to 37 MB free; the prune
 // then reclaimed 12 GB (2026-10-09).
 //
 // Two conditions guard the removal, and both must hold:
