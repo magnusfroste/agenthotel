@@ -23,10 +23,11 @@ test('a guest name becomes one label under the guest domain', () => {
   assert.strictEqual(g.suggestDomain('zeroclaw', ''), '');
 });
 
-function fakeCheck(state, extra = {}) {
+function fakeCheck(state, extra = {}, zone = false) {
   const asked = [];
   return {
     asked,
+    isZone: async () => zone,
     check: async (name, opts) => { asked.push({ name, opts }); return { state, addresses: ['192.0.2.10'], hotelAddresses: ['192.0.2.10'], error: null, ...extra }; }
   };
 }
@@ -49,4 +50,28 @@ test('the wildcard check says what is wrong', async () => {
   assert.match(proxied.verdict, /DNS only/);
   const unset = await g.checkGuestDomain('', fakeCheck('here'));
   assert.strictEqual(unset.state, 'unset');
+});
+
+test('a proxied wildcard is fine when the guest domain is the zone itself', async () => {
+  const apex = await g.checkGuestDomain('example.com', fakeCheck('proxied', {}, true));
+  assert.strictEqual(apex.ok, true);
+  assert.match(apex.verdict, /zone itself/);
+  const deeper = await g.checkGuestDomain('hotel.example.com', fakeCheck('proxied', {}, false));
+  assert.strictEqual(deeper.ok, null);
+  assert.match(deeper.verdict, /DNS only/);
+  const unknown = await g.checkGuestDomain('hotel.example.com', fakeCheck('proxied', {}, null));
+  assert.strictEqual(unknown.ok, null);
+});
+
+test('a name with NS records is a zone; one without is not; no answer is unknown', async () => {
+  const { createDomainCheck } = require('../lib/domainCheck');
+  const fail = code => Object.assign(new Error(code), { code });
+  const dc = createDomainCheck({ resolver: { resolveNs: async name => {
+    if (name === 'example.com') return ['ns1.example.net'];
+    if (name === 'hotel.example.com') throw fail('ENODATA');
+    throw fail('ETIMEOUT');
+  } } });
+  assert.strictEqual(await dc.isZone('example.com'), true);
+  assert.strictEqual(await dc.isZone('hotel.example.com'), false);
+  assert.strictEqual(await dc.isZone('slow.example.org'), null);
 });

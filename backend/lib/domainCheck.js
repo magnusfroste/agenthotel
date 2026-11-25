@@ -102,6 +102,21 @@ function createDomainCheck({ servers = PUBLIC_RESOLVERS, timeoutMs = 3000, resol
     return found.addresses.length > 0;
   }
 
+  // Whether the name is a zone of its own: it has NS records. Behind
+  // Cloudflare's proxy that decides whether one level below it is covered by
+  // the free certificate: guest.example.com is, guest.hotel.example.com is not
+  // unless hotel.example.com is a zone. true, false, or null when DNS did not
+  // answer.
+  async function isZone(name) {
+    const r = resolverNow();
+    if (typeof r.resolveNs !== 'function') return null;
+    try {
+      return (await r.resolveNs(name)).length > 0;
+    } catch (err) {
+      return NO_SUCH_NAME.has(err && err.code) ? false : null;
+    }
+  }
+
   // What the name answers from outside, through the address public DNS gives:
   // { status } or { error }. The uptime probe asks the server's own resolver,
   // which is the one that lags behind a new record.
@@ -120,7 +135,7 @@ function createDomainCheck({ servers = PUBLIC_RESOLVERS, timeoutMs = 3000, resol
     });
   }
 
-  return { lookup, check, hasWildcard, answers };
+  return { lookup, check, hasWildcard, isZone, answers };
 }
 
 module.exports = { createDomainCheck, isCloudflare, parentOf, PUBLIC_RESOLVERS };

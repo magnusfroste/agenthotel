@@ -90,7 +90,7 @@ function Domains() {
 
       <SettingCard title="Domain for new guests" icon={Wand2} onSaved={() => setGuestDomainVersion(v => v + 1)} fields={[
         { name: 'guest_domain', label: 'Guest domain', placeholder: 'hotel.example.com',
-          help: 'A new guest gets its name under this one: zeroclaw becomes zeroclaw.hotel.example.com. Point *.hotel.example.com at this server once, as an A record (DNS only, not proxied, in Cloudflare), and new guests need no DNS change. The create form fills the domain in; it can still be changed per guest. Empty turns it off.' },
+          help: 'A new guest gets its name under this one: zeroclaw becomes zeroclaw.hotel.example.com. Point *.hotel.example.com at this server once, as an A record, and new guests need no DNS change. In Cloudflare it can be proxied when the guest domain is the zone itself (example.com); a level deeper (hotel.example.com) it has to be DNS only, since the free certificate covers one level below the zone. The create form fills the domain in; it can still be changed per guest. Empty turns it off.' },
       ]} />
       <GuestDomainStatus version={guestDomainVersion} />
 
