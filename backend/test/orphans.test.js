@@ -41,6 +41,18 @@ test('only the whole hostname is replaced', () => {
   assert.deepStrictEqual(changed, ['C']);
 });
 
+test('a wildcard alias under the old domain follows it, a plain subdomain does not', () => {
+  const { config, changed } = withDomainChanged({
+    DOMAIN_ALIASES: '*.pages.example.org, www.example.net',
+    SITE_DOMAIN: 'pages.example.org',
+    OTHER: 'https://x.pages.example.org/',
+  }, 'pages.example.org', 'pages.example.com');
+  assert.strictEqual(config.DOMAIN_ALIASES, '*.pages.example.com, www.example.net');
+  assert.strictEqual(config.SITE_DOMAIN, 'pages.example.com');
+  assert.strictEqual(config.OTHER, 'https://x.pages.example.org/');
+  assert.deepStrictEqual(changed.sort(), ['DOMAIN_ALIASES', 'SITE_DOMAIN']);
+});
+
 test('no domain before or after means nothing to carry over', () => {
   assert.deepStrictEqual(withDomainChanged({ A: 'x' }, null, 'a.example').changed, []);
   assert.deepStrictEqual(withDomainChanged({ A: 'x' }, 'a.example', '').changed, []);
