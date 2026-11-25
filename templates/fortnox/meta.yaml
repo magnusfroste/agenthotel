@@ -14,12 +14,12 @@ instructions: |
   One company. After the deploy, a system administrator of the company opens `https://<domain>/oauth/start/<OAUTH_START_TOKEN>` (the token is under Credentials) and approves, in that same browser and within ten minutes. The first sync starts at once and then runs every 6 hours and after writes. The guest stays tied to that company.
 
   Several companies, with the same integration and the same redirect URI:
-  1. Give each agent key a company as a third part in MCP_KEYS under Environment, e.g. `peter:<key>:optic,fredrik:<key>:resta` (a company is a-z, 0-9 and -), and redeploy. A key reaches that company and no other. A key without a company part reaches the single company above.
+  1. Give each agent key a company as a third part in MCP_KEYS under Environment, e.g. `anna:<key>:alfa,erik:<key>:beta` (a company is a-z, 0-9 and -), and redeploy. A key reaches that company and no other. A key without a company part reaches the single company above.
   2. Open `https://<domain>/health/<OAUTH_START_TOKEN>`. It lists every company: signed in or waiting, its name once signed in, and its `sign_in_link`.
   3. Send each link to a system administrator of that company. They open it, pick the company in Fortnox, approve, and land on a page that names the company that was connected. A link works for its own company only, and the approval must come from the browser that opened it, within ten minutes. Keep OAUTH_START_TOKEN to yourself: it opens every company's sign-in and the overview.
   4. Each company gets its own folder, tokens, sync and write log (/data/companies/<company>) and stays tied to the Fortnox company that first signed in there. Try a test company in a place of its own first, never in a real company's place.
 
-  Agents use `https://<domain>/mcp` with their key as `Authorization: Bearer <key>`. One key per agent and company: append `,name:key` or `,name:key:company` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy. FORTNOX_READ_ONLY=true lets only reads reach Fortnox.
+  Agents use `https://<domain>/mcp` with their key as `Authorization: Bearer <key>`. One key per agent and company: append `,name:key` or `,name:key:company` to MCP_KEYS under Environment (a key is 32+ characters, e.g. `openssl rand -hex 32`) and redeploy. FORTNOX_READ_ONLY=true lets only reads reach Fortnox; a list of companies (`alfa,beta`) does it for those only, so a new company can start read-only.
 
   The data volume holds a copy of each company's books, the PDFs and the refresh tokens: it is as sensitive as a Fortnox login, and the hotel's backups include it.
 tags:
