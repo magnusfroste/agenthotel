@@ -44,10 +44,17 @@ function orphanBuildDirs(dirNames, agentIds) {
 // refused every MCP request with 421, since its allowed host is taken from
 // that URL (2026-10-01). Only the old domain as a whole hostname is replaced,
 // so reel.froste.eu does not rewrite reelstudio.froste.eu.
+//
+// A wildcard alias under the old domain follows it too: *.pages.agenthotel.org
+// becomes *.pages.pezcms.com. Pages moved to pages.pezcms.com and kept its
+// sites' wildcard on the old zone, so the panel went on routing and asking
+// certificates for names nobody would use any more (2026-11-25). Only "*." is
+// taken as a prefix, never a plain label: x.pages.agenthotel.org is another
+// name, not this one.
 function withDomainChanged(config, oldDomain, newDomain) {
   if (!oldDomain || !newDomain || oldDomain === newDomain) return { config, changed: [] };
   const esc = oldDomain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const host = new RegExp(`(^|[/@=,\\s"'])${esc}(?=$|[/:?#,\\s"'])`, 'g');
+  const host = new RegExp(`(^|[/@=,\\s"']|\\*\\.)${esc}(?=$|[/:?#,\\s"'])`, 'g');
   const out = { ...config };
   const changed = [];
   for (const [key, value] of Object.entries(config || {})) {
