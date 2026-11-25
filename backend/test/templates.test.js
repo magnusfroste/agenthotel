@@ -251,6 +251,23 @@ test('the zeroclaw template turns pairing on and leaves an empty model key out o
   assert.strictEqual(withKey.ZEROCLAW_providers__models__openrouter__default__api_key, 'sk-or-example');
 });
 
+test('the zeroclaw template raises the runtime limits a real task runs out of', () => {
+  // A guest asked to build a small web app stopped at 10 tool steps, at 20
+  // actions an hour, and at a context window it guessed at 32,000 tokens
+  // (2026-11-25, zeroclaw-labs/zeroclaw#12014).
+  const fs = require('fs'); const path = require('path'); const yaml = require('js-yaml');
+  const meta = yaml.load(fs.readFileSync(path.join(__dirname, '../../templates/zeroclaw/meta.yaml'), 'utf8'));
+  const deploy = normalizeDeploy(meta.deploy);
+  const { config } = materializeDeploy(deploy, { DOMAIN: 'zeroclaw.example.com', AGENT_NAME: 'zeroclaw' });
+  assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__context_compact_ratio, '0.8');
+  assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__max_tool_iterations, '40');
+  assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__max_actions_per_hour, '200');
+  // Empty, the context window stays out, and ZeroClaw keeps its own guess.
+  const windowKey = 'ZEROCLAW_providers__models__openrouter__default__context_window';
+  assert.ok(!(windowKey in config));
+  assert.strictEqual(materializeDeploy(deploy, { DOMAIN: 'zeroclaw.example.com', [windowKey]: '200000' }).config[windowKey], '200000');
+});
+
 test('every variable a docker-app or git-app template sets reaches the container', () => {
   // The ZeroClaw template's ZEROCLAW_gateway__require_pairing was stored and
   // never passed on, because the passthrough took UPPER_SNAKE keys only
