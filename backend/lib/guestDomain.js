@@ -69,6 +69,12 @@ async function checkGuestDomain(base, domainCheck, { hotel = [], addresses = [] 
     'resolves': [null, `*.${domain} resolves; this server's own address is not known to compare with`],
     'unknown': [null, `DNS did not answer (${dns.error}). Try again`]
   };
+  // Proxied is fine when the domain is the zone itself: *.example.com is one
+  // level below it, which Cloudflare's free certificate covers. agenthotel.org
+  // was set this way and the page warned about it all the same (2026-11-25).
+  if (dns.state === 'proxied' && typeof domainCheck.isZone === 'function' && await domainCheck.isZone(domain) === true) {
+    verdicts.proxied = [true, `*.${domain} goes through Cloudflare's proxy, and ${domain} is the zone itself, so its free certificate covers every guest name one level below it`];
+  }
   const [ok, verdict] = verdicts[dns.state] || [null, ''];
   return { domain, state: dns.state, ok, verdict, addresses: dns.addresses };
 }
