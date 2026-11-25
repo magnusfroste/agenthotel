@@ -262,6 +262,11 @@ test('the zeroclaw template raises the runtime limits a real task runs out of', 
   assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__context_compact_ratio, '0.8');
   assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__max_tool_iterations, '40');
   assert.strictEqual(config.ZEROCLAW_runtime_profiles__default__max_actions_per_hour, '200');
+  // web_fetch refuses .js and .css, and an unanswered approval is denied
+  // after 120 s; shell still asks.
+  const approved = config.ZEROCLAW_risk_profiles__default__auto_approve.split(',');
+  assert.ok(approved.includes('http_request') && approved.includes('file_read'));
+  assert.ok(!approved.includes('shell'));
   // Empty, the context window stays out, and ZeroClaw keeps its own guess.
   const windowKey = 'ZEROCLAW_providers__models__openrouter__default__context_window';
   assert.ok(!(windowKey in config));

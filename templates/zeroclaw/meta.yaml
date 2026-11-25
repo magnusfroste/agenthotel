@@ -18,7 +18,7 @@ instructions: 'Pairing is on: until you pair, the dashboard and API answer nobod
   The context window: ZeroClaw asks a provider how large it is only in its own setup wizard, which the hotel does not run, and never asks a custom provider. Unless the provider in the config has context_window set, it assumes 32,000 tokens and refuses a longer turn itself with "This request exceeds the selected model''s context window", however large the model really is. With every tool on, the tools alone are about 16,000 of those, so two or three web fetches fill it. For the OpenRouter model, fill in the context window on the form; for any other provider, set context_window on it in the config editor (for a custom provider: providers.models.custom.<name>.context_window). The template also trims history at 80 % of that window, and raises ZeroClaw''s own budgets of 10 tool steps a turn and 20 actions an hour, which a task such as building a small web app runs out of; all three are on the Environment tab.
 
 
-  The image approves only reading tools by itself; writing a file or storing a memory waits for someone to approve it in the dashboard. For an agent that works on its own, add file_write, file_edit and memory_store to risk_profiles.default.auto_approve.
+  The template approves the image''s reading tools and http_request by itself (web_fetch refuses .js and .css files, so the model uses http_request for them; it can call any public address, also with POST, but not private ones). Writing a file, storing a memory or running a shell command waits for someone to approve it in the dashboard, and is denied after 120 seconds when nobody does: a task sent over the webhook or by another agent stops there. The list is ZEROCLAW_risk_profiles__default__auto_approve on the Environment tab, comma-separated; it wins over the config, so "always allow" in the dashboard lasts only until the next restart. For an agent that works on its own, add file_write, file_edit and memory_store to it.
 
 
   Config, memory and pairing live in the guest''s zeroclaw volume and survive redeploys.
@@ -54,6 +54,13 @@ deploy:
   # context window it had guessed at 32,000 tokens. The ratio trims history
   # at 80 % of the provider's context_window instead of at a fixed 32,000.
   # Upstream: zeroclaw-labs/zeroclaw#12014.
+  #
+  # auto_approve is the image's own list plus http_request. web_fetch refuses
+  # .js and .css, so the model falls back to http_request, and an approval
+  # nobody answers waits 120 s and is then denied: a task sent over the
+  # webhook or by another agent stalled on every file (2026-11-25).
+  # http_request still cannot reach private addresses (allow_private_hosts
+  # is off by default); shell keeps asking.
   envFile: |
     ZEROCLAW_gateway__require_pairing=true
     ZEROCLAW_gateway__host=[::]
@@ -61,6 +68,7 @@ deploy:
     ZEROCLAW_runtime_profiles__default__context_compact_ratio=0.8
     ZEROCLAW_runtime_profiles__default__max_tool_iterations=40
     ZEROCLAW_runtime_profiles__default__max_actions_per_hour=200
+    ZEROCLAW_risk_profiles__default__auto_approve=file_read,memory_recall,web_search_tool,web_fetch,calculator,glob_search,content_search,image_info,weather,tool_search,browser_open,http_request
   # Left empty, these never become environment (an empty value would override
   # whatever is set later in the dashboard).
   env:
