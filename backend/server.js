@@ -1829,7 +1829,7 @@ async function backupAgent(agent, backupStamp) {
     let verifyMs = 0;
     // Paused, only what needs the volume to hold still: a plain tar (a copy
     // at disk speed) and the volume's census. Compressing it is done after
-    // the guest is running again. It used to be done paused: davida's 4.8 GB
+    // the guest is running again. It used to be done paused: ada's 4.8 GB
     // went through gzip for over eight minutes with the guest frozen, every
     // night (2026-11-24).
     for (const id of paused) await docker.getContainer(id).pause().catch(() => {});
@@ -1905,7 +1905,7 @@ async function runBackups(trigger = 'schedule') {
     const agents = db.prepare('SELECT * FROM agents ORDER BY name').all();
     for (const [i, agent] of agents.entries()) {
       if (done.has(agent.name)) continue;
-      // "davida, 5 of 18": an upgrade refused because of it says how far along it is.
+      // "ada, 5 of 18": an upgrade refused because of it says how far along it is.
       backupState.current = `${agent.name}, ${i + 1} of ${agents.length}`;
       const r = { name: agent.name, ok: false };
       try {
@@ -2692,7 +2692,7 @@ async function ensureAgentImage(id, name, runtime, image, config, plugin, { rebu
         // answers to it, so the check below passed and the agent came back
         // on the previous build with the deploy marked succeeded. A Hermes
         // rebuild that ran out of disk at apt-get looked exactly like an
-        // upgrade that worked (agenthotel.froste.eu, 2026-10-17).
+        // upgrade that worked (agenthotel.example.com, 2026-10-17).
         const failed = (buildOutput || []).find(o => o && (o.error || o.errorDetail));
         if (failed) {
           const message = String(failed.error || failed.errorDetail?.message || 'build step failed').trim();
@@ -3450,7 +3450,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     // providers added since, the same way: only keys it does not have yet.
     // Without this an agent whose settings were saved after a provider was
     // added never got it — the operator's "redeploy" was a save, and nothing
-    // in the panel told the two apart (davida, 2026-10-17). Keys removed in
+    // in the panel told the two apart (ada, 2026-10-17). Keys removed in
     // this same request stay removed.
     updatedConfig = await injectProviderEnv(db, updatedConfig, runtimes[agent.runtime]);
     if (Array.isArray(removeKeys)) for (const key of removeKeys) delete updatedConfig[key];
@@ -3509,7 +3509,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
         // Separately: stopping a container that is already stopped throws
         // (304), and in one try that skipped the remove — the new container
         // then collided with the old one's name and a stopped agent could
-        // not be redeployed (matthias, 2026-10-17).
+        // not be redeployed (dan, 2026-10-17).
         try { await container.stop(); } catch (e) {}
         try { await container.remove({ force: true }); } catch (e) {}
 
@@ -3751,7 +3751,7 @@ async function runRedeploy(agent, plugin, savedConfig, rebuildImage, gateEntry, 
         // Separately: stopping a container that is already stopped throws
         // (304), and in one try that skipped the remove — the new container
         // then collided with the old one's name and a stopped agent could
-        // not be redeployed (matthias, 2026-10-17).
+        // not be redeployed (dan, 2026-10-17).
         try { await container.stop(); } catch (e) {}
         try { await container.remove({ force: true }); } catch (e) {}
 
@@ -5840,7 +5840,7 @@ async function upgradeHandler(req, res) {
   // The upgrade builds two images on the host. With too little room the
   // build dies part-way ("no space left on device"), the panel stays on the
   // old version, and what the build wrote fills the disk the rest of the way
-  // — panel.froste.eu went to 100% that way on 2026-10-17. Refuse up front.
+  // — panel.example.com went to 100% that way on 2026-10-17. Refuse up front.
   try {
     const { disk } = await require('./lib/observability').collectHostMetrics();
     const free = disk.total - disk.used;

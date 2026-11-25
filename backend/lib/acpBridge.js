@@ -20,7 +20,7 @@
 // and the pane restores the conversation with ACP session/load in a new one —
 // the agent keeps its own transcript. An attached session idle for IDLE_MS
 // with no turn running is ended the same way, so a forgotten tab stops
-// holding a Hermes in memory (davida held eleven, 2026-10-10).
+// holding a Hermes in memory (ada held eleven, 2026-10-10).
 //
 // Ending a session: stdin is closed, and the process is sent SIGTERM if it has
 // not gone a few seconds later.

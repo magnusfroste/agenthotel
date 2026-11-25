@@ -43,7 +43,7 @@ function orphanBuildDirs(dirNames, agentIds) {
 // to another hostname left it pointing at the old one: reel-studio then
 // refused every MCP request with 421, since its allowed host is taken from
 // that URL (2026-10-01). Only the old domain as a whole hostname is replaced,
-// so reel.froste.eu does not rewrite reelstudio.froste.eu.
+// so reel.example.com does not rewrite reelstudio.example.com.
 //
 // A wildcard alias under the old domain follows it too: *.pages.agenthotel.org
 // becomes *.pages.pezcms.com. Pages moved to pages.pezcms.com and kept its

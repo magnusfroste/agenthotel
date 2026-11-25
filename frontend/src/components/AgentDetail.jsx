@@ -508,7 +508,7 @@ function AgentDetail() {
           <AgentRename agent={agent} onRenamed={fetchAgent} />
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Domain (subdomain or FQDN)</label>
-            <input type="text" value={settings.domain} placeholder="myapp.froste.eu" onChange={(e) => setSettings({ ...settings, domain: e.target.value })} style={{ width: '100%', marginTop: '0.3rem' }} />
+            <input type="text" value={settings.domain} placeholder="myapp.example.com" onChange={(e) => setSettings({ ...settings, domain: e.target.value })} style={{ width: '100%', marginTop: '0.3rem' }} />
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>Changing the domain provisions a new HTTPS route via Caddy.</div>
           </div>
           <div style={{ marginBottom: '1rem' }}>
@@ -742,7 +742,7 @@ function AgentSkillhub({ agentId, onChanged }) {
 // that looks stuck gets pressed again.
 // Which version of its runtime this agent runs, and whether a newer one is a
 // redeploy or a rebuild away. One quiet line when all is current; a hint with
-// the button that fixes it when not. agenthotel.froste.eu ran a month-old
+// the button that fixes it when not. agenthotel.example.com ran a month-old
 // Hermes on every agent and nothing here said so.
 function AgentRuntimeVersion({ agentId, onRebuild, onRedeploy }) {
   const [info, setInfo] = useState(null)

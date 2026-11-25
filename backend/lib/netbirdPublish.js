@@ -15,8 +15,8 @@
 // - its own domain, when that falls under a custom domain validated in NetBird
 //   (the operator then CNAMEs the name to the proxy cluster, once per name or
 //   with a wildcard);
-// - otherwise a name under NetBird's free domain, `reel-froste-eu.eu1.netbird.services`
-//   for `reel.froste.eu`. Caddy routes on Host, so that name is added to the
+// - otherwise a name under NetBird's free domain, `reel-example-com.eu1.netbird.services`
+//   for `reel.example.com`. Caddy routes on Host, so that name is added to the
 //   guest's route as an extra host (`extraHosts`).
 
 const STATE_KEY = 'netbird_published';

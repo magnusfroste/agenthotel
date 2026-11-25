@@ -14,7 +14,7 @@ test('a healthy guest needs nothing', () => {
 
 test('a guest stopped on purpose is quiet; one that stopped by itself is not', () => {
   const stopped = { name: 'game', status: 'stopped', health: 'stopped: container exited' };
-  // The fourteen skolappar stopped for their move to Shipholm (2026-11-21).
+  // The fourteen game apps stopped for their move to Shipholm (2026-11-21).
   assert.strictEqual(assess(stopped, { lastLifecycle: 'agent.stop' }), null);
   assert.strictEqual(assess(stopped, { lastLifecycle: 'agent.transfer' }), null);
   // Nothing in the log at all: stopped longer ago than the log keeps.

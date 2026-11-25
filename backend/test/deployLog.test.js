@@ -11,7 +11,7 @@ const { createDeployLog, note, KEEP_PER_AGENT } = require('../lib/deployLog');
 function fresh() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploylog-'));
   const db = new Database(':memory:');
-  db.exec("CREATE TABLE agents (id TEXT, name TEXT); INSERT INTO agents VALUES ('a1', 'davida')");
+  db.exec("CREATE TABLE agents (id TEXT, name TEXT); INSERT INTO agents VALUES ('a1', 'ada')");
   return { db, dir, log: createDeployLog(db, dir) };
 }
 
@@ -19,7 +19,7 @@ test('a deploy is queued, runs, succeeds and keeps its log', async () => {
   const { log } = fresh();
   const id = log.queued('a1', { kind: 'redeploy', trigger: 'panel' });
   assert.strictEqual(log.get(id).status, 'queued');
-  assert.strictEqual(log.get(id).agent_name, 'davida');
+  assert.strictEqual(log.get(id).agent_name, 'ada');
   const result = await log.run(id, 'a1', async () => {
     log.line('Building image: hermes-agenthotel:latest');
     return 42;
@@ -30,7 +30,7 @@ test('a deploy is queued, runs, succeeds and keeps its log', async () => {
   assert.ok(row.finished_at >= row.started_at);
   const { text, done } = log.read(id);
   assert.ok(done);
-  assert.match(text, /redeploy of davida queued \(panel\)/);
+  assert.match(text, /redeploy of ada queued \(panel\)/);
   assert.match(text, /Building image/);
   assert.match(text, /Deploy finished/);
 });

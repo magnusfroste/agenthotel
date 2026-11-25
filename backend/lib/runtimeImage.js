@@ -2,7 +2,7 @@
 //
 // A runtime's image is built once from templates/<runtime>/Dockerfile and then
 // reused, which is why a second agent starts in a second. It also meant
-// agenthotel.froste.eu ran a month-old Hermes on every agent and nothing in the
+// agenthotel.example.com ran a month-old Hermes on every agent and nothing in the
 // panel said so; the model picker simply showed fewer models than elsewhere
 // (2026-10-03). Three questions, answered here:
 //
@@ -56,7 +56,7 @@ function upstreamIsNewer(localDigests, remoteDigest) {
 // answer is cached, never the verdict: the local side is read every time. A
 // rebuild pulls the new base, and the agents it rebuilt kept "a newer version
 // is published upstream" for up to six hours after, while the deploy log said
-// the base was up to date (david, 2026-11-11).
+// the base was up to date (finn, 2026-11-11).
 const UPSTREAM_TTL_MS = 6 * 60 * 60 * 1000;
 const upstreamCache = new Map(); // base image → { at, remote, error, checkedAt }
 

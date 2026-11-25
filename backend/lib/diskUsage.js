@@ -1,7 +1,7 @@
 // Where the host's disk goes, per agent.
 //
 // The panel showed one number — "Disk 87%" — and Docker's own totals, so
-// "has davida grown?" had no answer short of a shell (2026-10-17). This
+// "has ada grown?" had no answer short of a shell (2026-10-17). This
 // splits `docker system df` by owner: each agent's data (its volumes) and its
 // container's writable layer, with the image it runs beside them; then the
 // panel itself, what nothing owns, and the build cache.

@@ -1,6 +1,6 @@
 // Reads a service-export zip without holding it in memory. adm-zip reads the
 // whole file into one Buffer, and Node refuses a file over 2 GiB: a 3.2 GB
-// export from agenthotel.froste.eu failed with "File size (3241345902) is
+// export from agenthotel.example.com failed with "File size (3241345902) is
 // greater than 2 GiB" (2026-10-29). Entries are read from disk as streams.
 const yauzl = require('yauzl');
 

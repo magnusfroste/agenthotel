@@ -9,7 +9,7 @@ test('no domain is fine', () => {
 });
 
 test('ordinary domains are fine', () => {
-  for (const d of ['take-01.agenthotel.org', 'magnus.froste.eu', 'a.b', 'xn--bcher-kva.example', '1.example.com']) {
+  for (const d of ['take-01.agenthotel.org', 'magnus.example.com', 'a.b', 'xn--bcher-kva.example', '1.example.com']) {
     assert.strictEqual(domainProblem(d), null, d);
   }
 });

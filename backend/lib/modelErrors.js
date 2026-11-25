@@ -1,6 +1,6 @@
-// An agent can be "healthy" and still unable to think. peter and torbjorn
+// An agent can be "healthy" and still unable to think. bo and cleo
 // answered every health probe with HTTP 302 while every reply they tried died
-// at the model gateway with "ExceededBudget" (2026-10-30). Peter got the error
+// at the model gateway with "ExceededBudget" (2026-10-30). Bo got the error
 // message in WhatsApp, and the panel showed nothing. These are the replies
 // that failed at the model, read from the agent's own log.
 

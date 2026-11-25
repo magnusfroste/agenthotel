@@ -21,23 +21,23 @@ test('an image or checkout is an orphan only when its agent is gone', () => {
 
 test('values derived from the old domain follow it to the new one', () => {
   const { config, changed } = withDomainChanged({
-    REEL_PUBLIC_BASE_URL: 'https://reelstudio.froste.eu',
-    LINKS: 'https://reelstudio.froste.eu/watch, https://other.example',
+    REEL_PUBLIC_BASE_URL: 'https://reelstudio.example.com',
+    LINKS: 'https://reelstudio.example.com/watch, https://other.example',
     REEL_API_TOKEN: 'abc',
-  }, 'reelstudio.froste.eu', 'reel.froste.eu');
-  assert.strictEqual(config.REEL_PUBLIC_BASE_URL, 'https://reel.froste.eu');
-  assert.strictEqual(config.LINKS, 'https://reel.froste.eu/watch, https://other.example');
+  }, 'reelstudio.example.com', 'reel.example.com');
+  assert.strictEqual(config.REEL_PUBLIC_BASE_URL, 'https://reel.example.com');
+  assert.strictEqual(config.LINKS, 'https://reel.example.com/watch, https://other.example');
   assert.strictEqual(config.REEL_API_TOKEN, 'abc');
   assert.deepStrictEqual(changed.sort(), ['LINKS', 'REEL_PUBLIC_BASE_URL']);
 });
 
 test('only the whole hostname is replaced', () => {
   const { config, changed } = withDomainChanged({
-    A: 'https://xreel.froste.eu', B: 'https://reel.froste.eu.evil.example', C: 'https://reel.froste.eu:8443/mcp',
-  }, 'reel.froste.eu', 'video.froste.eu');
-  assert.strictEqual(config.A, 'https://xreel.froste.eu');
-  assert.strictEqual(config.B, 'https://reel.froste.eu.evil.example');
-  assert.strictEqual(config.C, 'https://video.froste.eu:8443/mcp');
+    A: 'https://xreel.example.com', B: 'https://reel.example.com.evil.example', C: 'https://reel.example.com:8443/mcp',
+  }, 'reel.example.com', 'video.example.com');
+  assert.strictEqual(config.A, 'https://xreel.example.com');
+  assert.strictEqual(config.B, 'https://reel.example.com.evil.example');
+  assert.strictEqual(config.C, 'https://video.example.com:8443/mcp');
   assert.deepStrictEqual(changed, ['C']);
 });
 
